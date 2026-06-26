@@ -1,0 +1,31 @@
+[project]
+name = "natsune"
+version = "0.1.0"
+description = "Higher Order Concurrency in python"
+requires-python = ">=3.14"
+authors = [{ name = "Zachary Collins", email = "recursive.cookie.jar@gmail.com" }]
+license = { text = "Apache-2" }
+dependencies = [
+]
+
+[project.scripts]
+
+[project.optional-dependencies]
+dev = [
+    "ty>=0.0.49",
+    "black>=26.5.1",
+    "pytest>=9.1.1"
+]
+
+[build-system]
+requires = ["hatchling", "editables"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel.force-include]
+[tool.uv.sources]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/natsune"]
+
+[dependency-groups]
+dev = []
