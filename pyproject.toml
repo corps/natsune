@@ -14,7 +14,8 @@ dependencies = [
 dev = [
     "ty>=0.0.49",
     "black>=26.5.1",
-    "pytest>=9.1.1"
+    "pytest>=9.1.1",
+    "pre-commit>=4.0.0"
 ]
 
 [build-system]
@@ -29,3 +30,25 @@ packages = ["src/natsune"]
 
 [dependency-groups]
 dev = []
+
+# Black code formatter configuration
+[tool.black]
+line-length = 88
+target-version = ["py314"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.venv
+    | build
+    | dist
+)/
+'''
+
+# pytest configuration
+[tool.pytest.ini_options]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+testpaths = ["tests", "src"]

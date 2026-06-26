@@ -261,14 +261,18 @@ class InetFunctionCompiler:
         return self.new_branch().parse_statement_body(self.func_def.body)
 
     def compile(self) -> None:
-        getattr(self, 'compiled')
+        getattr(self, "compiled")
 
-    def invocation(self, connector: Connector) -> tuple[Sequence[ToRegister], FromRegister]:
+    def invocation(
+        self, connector: Connector
+    ) -> tuple[Sequence[ToRegister], FromRegister]:
         with self.compiled.invocation(connector) as invocation:
             variable_inputs = invocation.inputs.i_variables.readin().split()
-            for input in variable_inputs[len(self.args):]:
+            for input in variable_inputs[len(self.args) :]:
                 input.close()
-            return variable_inputs[:len(self.args)], invocation.control.o_return.readout(True)
+            return variable_inputs[
+                : len(self.args)
+            ], invocation.control.o_return.readout(True)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -329,7 +333,9 @@ class InetBranchCompiler:
     ) -> FromRegister | None:
         if isinstance(expr, ast.Call):
             if expr.keywords:
-                raise self.function_compiler.syntax_error(expr, "Keyword arguments are currently not supported")
+                raise self.function_compiler.syntax_error(
+                    expr, "Keyword arguments are currently not supported"
+                )
 
             inet = self.function_compiler.lookup_inet(expr)
             if inet:
@@ -392,26 +398,28 @@ class InetBranchCompiler:
 
         if isinstance(expr, ast.BoolOp):
             op = expr.op
-            merger: Callable[[Any, Any], Any] = (
-                lambda x, y: x & y
-                if isinstance(op, ast.And)
-                else lambda x, y: x | y
+            merger: Callable[[Any, Any], Any] = lambda x, y: (
+                x & y if isinstance(op, ast.And) else lambda x, y: x | y
             )
-            should_shortcircuit = (lambda x: not x) if isinstance(op, ast.And) else lambda x: bool(x)
+            should_shortcircuit = (
+                (lambda x: not x) if isinstance(op, ast.And) else lambda x: bool(x)
+            )
             acc = self.evaluate_from_expression(expr.values[0])
             for n in expr.values[1:]:
-                invocation = ConcurrentMerge(should_shortcircuit, merger).invocation(self.flow.buffer)
+                invocation = ConcurrentMerge(should_shortcircuit, merger).invocation(
+                    self.flow.buffer
+                )
                 send_value(acc, invocation.i_value_1.readin())
-                send_value(self.evaluate_from_expression(n), invocation.i_value_2.readin())
+                send_value(
+                    self.evaluate_from_expression(n), invocation.i_value_2.readin()
+                )
                 acc = invocation.o_value.readout(True)
 
             return acc
 
         return None
 
-    def evaluate_from_expression(
-        self, expr: ast.expr | None
-    ) -> FromRegister:
+    def evaluate_from_expression(self, expr: ast.expr | None) -> FromRegister:
         if expr is None:
             return as_constant_register(None, self.flow.buffer)
 
@@ -491,23 +499,24 @@ class InetBranchCompiler:
                             self.evaluate_to_expression(stmt.target),
                         )
                 elif isinstance(stmt, (ast.For, ast.While)):
-                    with Loop(
-                        (
-                            self.parse_deconstructor(stmt.target)
-                            if isinstance(stmt, ast.For)
-                            else self.parse_test(stmt.test)
-                        ),
+                    with (
+                        Loop(
+                            (
+                                self.parse_deconstructor(stmt.target)
+                                if isinstance(stmt, ast.For)
+                                else self.parse_test(stmt.test)
+                            ),
+                            self.function_compiler.new_branch().parse_statement_body(
+                                stmt.body
+                            ),
+                            self.function_compiler.new_branch().parse_statement_body(
+                                stmt.orelse
+                            ),
+                        ).invocation(self.flow.buffer) as for_invocation,
                         self.function_compiler.new_branch().parse_statement_body(
-                            stmt.body
-                        ),
-                        self.function_compiler.new_branch().parse_statement_body(
-                            stmt.orelse
-                        ),
-                    ).invocation(
-                        self.flow.buffer
-                    ) as for_invocation, self.function_compiler.new_branch().parse_statement_body(
-                        body_iter
-                    ) as continuation:
+                            body_iter
+                        ) as continuation,
+                    ):
 
                         if isinstance(stmt, ast.For):
                             send_value(
@@ -569,17 +578,17 @@ class InetBranchCompiler:
                         return self.flow
 
                 elif isinstance(stmt, ast.If):
-                    with IfThenElse(self.flow.variables.adapter).invocation(
-                        self.flow.buffer
-                    ) as if_invocation, self.function_compiler.new_branch().parse_statement_body(
-                        stmt.body
-                    ).invocation(
-                        self.flow.buffer
-                    ) as body_invocation, self.function_compiler.new_branch().parse_statement_body(
-                        stmt.orelse
-                    ).invocation(
-                        self.flow.buffer
-                    ) as orelse_invocation:
+                    with (
+                        IfThenElse(self.flow.variables.adapter).invocation(
+                            self.flow.buffer
+                        ) as if_invocation,
+                        self.function_compiler.new_branch()
+                        .parse_statement_body(stmt.body)
+                        .invocation(self.flow.buffer) as body_invocation,
+                        self.function_compiler.new_branch()
+                        .parse_statement_body(stmt.orelse)
+                        .invocation(self.flow.buffer) as orelse_invocation,
+                    ):
                         send_value(
                             self.evaluate_from_expression(stmt.test),
                             if_invocation.i_value.readin(),
@@ -714,21 +723,21 @@ def eval_expression(expr_str: str, context: tuple[dict, dict]) -> Any:
 
 def inet[C: Callable](f: C) -> C:
     g = sys._getframe(1).f_globals
-    compiler = InetFunctionCompiler(f, g, g.get('__file__', '<anonymous>'))
+    compiler = InetFunctionCompiler(f, g, g.get("__file__", "<anonymous>"))
     compiler.compile()
-    setattr(f, '__inet__', compiler)
+    setattr(f, "__inet__", compiler)
 
     @functools.wraps(f)
     def impl(*args: Any) -> Any:
         outputs: list = []
         executor = SynchronizedExecutor()
-        inputs, output = compiler.invocation(
-            executor
-        )
+        inputs, output = compiler.invocation(executor)
         for to_register, arg in zip(inputs, args):
             send_value(as_constant_register(arg, executor), to_register)
 
-        to_register, from_register = filter_invocation(lambda x: outputs.append(x), executor)
+        to_register, from_register = filter_invocation(
+            lambda x: outputs.append(x), executor
+        )
         from_register.close()
         send_value(output, to_register)
 

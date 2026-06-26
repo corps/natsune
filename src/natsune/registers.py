@@ -1,6 +1,6 @@
 import copy
 
-from python.inet.executor import Executor
+from .executor import Executor
 import dataclasses
 from typing import Sequence, Protocol, Any, Literal, Callable
 
@@ -322,7 +322,7 @@ def parallelize_value(
     value_in, cur_iter = filter_invocation(iter, connector)
 
     for _ in range(count):
-        (next_value, cur_iter) = fold_split(unroll, cur_iter)
+        next_value, cur_iter = fold_split(unroll, cur_iter)
         result.append(next_value)
     cur_iter.close()
     return value_in, result

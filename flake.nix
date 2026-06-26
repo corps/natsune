@@ -25,6 +25,7 @@
           buildInputs = with pkgs; [
             uv
             pkgs.python314
+            pkgs.pre-commit
           ];
 
           shellHook = ''
@@ -32,13 +33,15 @@
             export XDG_CONFIG_HOME="$HOME/.config"
             export REPO_ROOT=$(pwd)
 
-
             uv sync --all-extras
             unset PYTHONPATH
             source .venv/bin/activate
-            sparse-load-sample-datasets
+
+            pre-commit install -t pre-commit || true
           '';
         };
+
+        checks = {};
       }
     );
 }

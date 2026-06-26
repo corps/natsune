@@ -1,4 +1,4 @@
-from python.inet.executor import Executor
+from .executor import Executor
 from .connector import Connector
 import copy
 import dataclasses

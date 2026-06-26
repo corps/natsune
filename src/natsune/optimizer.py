@@ -1,4 +1,4 @@
-from python.inet.connector import BufferingConnector
+from .connector import BufferingConnector
 
 __all__ = ["optimize"]
 

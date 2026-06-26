@@ -1,0 +1,20 @@
+repos:
+  - repo: local
+    hooks:
+      # Black code formatting check
+      - id: black
+        name: black
+        entry: black
+        language: system
+        types: [python]
+        args: [--check, --diff]
+        # Only check Python files in src/ directory
+        files: ^src/.*\.py$
+        
+      # ty type checking
+      - id: ty
+        name: ty
+        entry: ty
+        language: system
+        types: [python]
+        args: [check]

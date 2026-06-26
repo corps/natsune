@@ -1,4 +1,4 @@
-from python.inet.executor import Executor
+from .executor import Executor
 from typing import Protocol, Callable, Any, Sequence, overload
 
 from .adapters import Adapter, ValueAdapter, ParValueAdapter

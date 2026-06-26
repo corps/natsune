@@ -41,7 +41,7 @@ class AmbiguousPair(Expansion):
                 copy=None,
                 second_amb_half=None,
             )
-        return self.copy  # type: ignore
+        return self.copy
 
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
         if self.second_amb_half is not None:
