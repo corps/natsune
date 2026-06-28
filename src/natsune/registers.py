@@ -1,6 +1,3 @@
-import copy
-
-from .executor import Executor
 import dataclasses
 from typing import Sequence, Protocol, Any, Literal, Callable
 

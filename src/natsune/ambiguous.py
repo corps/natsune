@@ -1,14 +1,12 @@
-from multiprocessing import Value
 import dataclasses
-from functools import cached_property
 from typing import Any, Self, Sequence
 
-from .adapters import ParValueAdapter, Adapter, ValueAdapter
+from .adapters import ValueAdapter
 from .connector import Connector
-from .ports import Expansion
-from .registers import as_from_register, as_to_register, FromRegister, ToRegister
 from .executor import Executor
+from .ports import Expansion
 from .ports import ForkPort, Graft, Wire, Port, WirePort
+from .registers import as_from_register, as_to_register, FromRegister, ToRegister
 
 
 @dataclasses.dataclass(slots=True)

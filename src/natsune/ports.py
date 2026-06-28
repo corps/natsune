@@ -1,8 +1,17 @@
 import copy
 import dataclasses
-from typing import Self, MutableSequence, Any, Callable, Protocol, Sequence
+from typing import (
+    Self,
+    MutableSequence,
+    Any,
+    Callable,
+    Protocol,
+    Sequence,
+    TYPE_CHECKING,
+)
 
-from .executor import Executor
+if TYPE_CHECKING:
+    from .executor import Executor
 
 
 class Port:
@@ -66,7 +75,7 @@ class ConstantValuePort(ValuePort):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class Erasure(ValuePort):
+class Erasure(Port):
     # May contain exception data
     value: Any = None
 

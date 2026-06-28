@@ -1,4 +1,4 @@
-from .executor import Executor
+from typing import TYPE_CHECKING
 from .connector import Connector
 import copy
 import dataclasses
@@ -15,6 +15,9 @@ from .ports import (
     ForkPort,
     Graft,
 )
+
+if TYPE_CHECKING:
+    from .executor import Executor
 
 __all__ = [
     "execute_ext_merge_func",
@@ -72,10 +75,10 @@ def execute_commute_or_anihilate(
         connector.connect(l.wires[1], r.wires[1])
         return
 
-    l1 = dataclasses.replace(l, aux1=Wire(), aux2=Wire())
-    l2 = dataclasses.replace(l, aux1=Wire(), aux2=Wire())
-    r1 = dataclasses.replace(r, aux1=Wire(), aux2=Wire())
-    r2 = dataclasses.replace(r, aux1=Wire(), aux2=Wire())
+    l1 = dataclasses.replace(l, wires=[Wire(), Wire()])
+    l2 = dataclasses.replace(l, wires=[Wire(), Wire()])
+    r1 = dataclasses.replace(r, wires=[Wire(), Wire()])
+    r2 = dataclasses.replace(r, wires=[Wire(), Wire()])
 
     connector.connect(l1.wires[0], r1.wires[1])
     connector.connect(l1.wires[1], r2.wires[1])
@@ -132,6 +135,13 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         execute_read_wire(executor, l, r)
         return
 
+    if isinstance(l, ForkPort):
+        execute_fork(executor, r, l)
+        return
+    elif isinstance(r, ForkPort):
+        execute_fork(executor, l, r)
+        return
+
     if isinstance(l, Graft):
         try:
             l.execute(executor, r, l.wires)
@@ -153,14 +163,6 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         r, (ExtSplitFuncPort, ExtMergeFuncPort, CombPort)
     ):
         execute_commute_or_anihilate(executor, l, r)
-        return
-
-    if isinstance(l, ForkPort):
-        execute_fork(executor, r, l)
-        return
-
-    elif isinstance(r, ForkPort):
-        execute_fork(executor, l, r)
         return
 
     if isinstance(l, ValuePort):

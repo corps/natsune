@@ -1,4 +1,3 @@
-from .registers import FromRegister
 import dataclasses
 from enum import IntEnum
 from functools import cached_property

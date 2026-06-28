@@ -111,6 +111,8 @@ class Loop(ExpansionWithAdapters):
         if not isinstance(port, ValuePort):
             for wire in wires:
                 executor.annihilate(wire, port)
+            for wire in port.wires:
+                executor.annihilate(wire)
             return
 
         inputs, outputs = unpack_port_and_wires(self, port, wires, executor)
