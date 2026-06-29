@@ -242,6 +242,7 @@ def send_values(
                 source_register.connector, len(to_registers)
             )
             send_value(source_register, input_register)
+            send_values(from_registers, to_registers)
         elif len(to_registers) == 1 and len(from_registers) > 1:
             destination_register = to_registers[0]
             assert isinstance(destination_register, _ToRegister)
@@ -249,6 +250,7 @@ def send_values(
                 destination_register.connector, len(from_registers)
             )
             send_value(output_register, destination_register)
+            send_values(from_registers, to_registers)
         else:
             raise SyntaxError(
                 f"Cannot commute values because they have incompatible shapes."

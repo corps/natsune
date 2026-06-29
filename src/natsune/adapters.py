@@ -197,7 +197,7 @@ class InverseAdapter(Adapter):
         return LinearWiringType.INVERSE
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass
 class Variables(MutableMapping[str, Adapter]):
     variables: dict[str, Adapter]
 

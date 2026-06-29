@@ -475,7 +475,7 @@ class FlowInvocation:
         self.close()
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(frozen=True)
 class FlowInput:
     i_variables: InterfaceRegister
     i_value: InterfaceRegister

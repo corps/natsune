@@ -135,7 +135,7 @@ class ReplaceWithSerializedVariables(ast.NodeTransformer):
         )
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass
 class InetFunctionCompiler:
     func: Any
     globals: dict[str, Any]
@@ -143,11 +143,13 @@ class InetFunctionCompiler:
 
     variables: dict[str, Adapter] = dataclasses.field(default_factory=dict)
     used_as_globals: set[str] = dataclasses.field(default_factory=set)
+    lineno: int = dataclasses.field(init=False)
 
     def __post_init__(self):
         for k, te in self.args:
             self.variables[k] = adapter_from_type(te)
-        InetVariablesEvaluator(self).visit(self.func_def)
+        for stmt in self.func_def.body:
+            InetVariablesEvaluator(self).visit(stmt)
 
     def new_branch(self) -> InetBranchCompiler:
         return InetBranchCompiler(
@@ -169,7 +171,9 @@ class InetFunctionCompiler:
             lineno = cast(int, node.lineno)
         if hasattr(node, "col_offset"):
             offset = cast(int, node.col_offset)
-        return SyntaxError(message, (self.filename, lineno, offset, None))
+        return SyntaxError(
+            message, (self.filename, lineno + self.lineno - 1, offset, None)
+        )
 
     def evaluate_call_adapter(self, node: ast.Call) -> Adapter:
         inet = self.lookup_inet(node)
@@ -228,7 +232,7 @@ class InetFunctionCompiler:
 
     @cached_property
     def func_def(self) -> ast.FunctionDef:
-        lines, lineno = inspect.getsourcelines(self.func)
+        lines, self.lineno = inspect.getsourcelines(self.func)
         module = ast.parse("".join(lines))
         func = module.body[0]
         assert isinstance(func, ast.FunctionDef)
@@ -646,8 +650,6 @@ class InetVariablesEvaluator(ast.NodeVisitor):
     def visit_Name(self, node):
         if node.id not in self.compiler.variables:
             self.compiler.used_as_globals.add(node.id)
-
-        super().visit_Name(node)
 
     def mark_assign_target(self, target: ast.Name, adapter: Adapter):
         if target.id in self.compiler.used_as_globals:
