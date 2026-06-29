@@ -19,6 +19,7 @@ from .registers import (
     as_from_register,
     send_value,
     InterfaceRegister,
+    as_constant_register,
 )
 
 
@@ -91,7 +92,7 @@ def filter_invocation(
     fn: Callable[[Any], Any], connector: Connector
 ) -> tuple[ToRegister, FromRegister]:
     (a, b), c = merge_invocation(lambda x, _: fn(x), connector)
-    b.close()
+    send_value(as_constant_register(None, connector), b)
     return a, c
 
 

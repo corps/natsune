@@ -77,8 +77,9 @@ class Connector(abc.ABC):
 
         def iter() -> Iterator[Wire]:
             nonlocal open_end
-            next_wire, open_end = factory_function(open_end)
-            yield next_wire
+            while True:
+                next_wire, open_end = factory_function(open_end)
+                yield next_wire
 
         yield iter()
         self.annihilate(open_end)

@@ -1,3 +1,13 @@
+from curses.ascii import alt
+from natsune.adapters import Adapter, ValueAdapter
+from natsune.registers import (
+    InterfaceRegister,
+    ToRegister,
+    as_to_register,
+    FromRegister,
+    as_from_register,
+    as_constant_register,
+)
 import dataclasses
 import os
 import tempfile
@@ -45,6 +55,7 @@ class TraceExpansion(Expansion):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Calculus:
+    _targets: list[Target] = dataclasses.field(default_factory=list)
     _wires: dict[int, Wire] = dataclasses.field(
         default_factory=lambda: defaultdict(Wire)
     )
@@ -64,6 +75,7 @@ class Calculus:
         if not isinstance(key, int):
             port_id = id(key)
             if port_id not in self._wires:
+                self._targets.append(key)
                 wire = self._wires[port_id]
                 self.executor.connect(wire, key)
             return self._wires[port_id]
@@ -186,3 +198,18 @@ class Calculus:
 
     def e(self) -> Wire:
         return self[Erasure()]
+
+    def to_key(self, key: int | Target, adapter: Adapter | None = None) -> ToRegister:
+        return as_to_register(
+            WirePort([self[key]]), adapter or ValueAdapter(), self.executor
+        )
+
+    def from_key(
+        self, key: int | Target, adapter: Adapter | None = None
+    ) -> FromRegister:
+        return as_from_register(
+            WirePort([self[key]]), adapter or ValueAdapter(), self.executor
+        )
+
+    def const(self, value: Any) -> FromRegister:
+        return as_constant_register(value, self.executor)
