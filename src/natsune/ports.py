@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class Port:
-    wires: MutableSequence[Wire] = []
+    wires: MutableSequence[Wire]
 
     def __copy__(self) -> Self:
         return copy.replace(self, wires=[*self.wires] if self.wires else self.wires)
@@ -61,6 +61,7 @@ class WirePort(Port):
 @dataclasses.dataclass(frozen=True, slots=True)
 class ValuePort(Port):
     value: Any
+    wires: MutableSequence[Wire] = dataclasses.field(default_factory=list)
 
     def __copy__(self) -> ValuePort:
         return ValuePort(copy.copy(self.value))
@@ -78,6 +79,7 @@ class ConstantValuePort(ValuePort):
 class Erasure(Port):
     # May contain exception data
     value: Any = None
+    wires: MutableSequence[Wire] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

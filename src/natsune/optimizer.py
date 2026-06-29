@@ -1,4 +1,4 @@
-from .connector import BufferingConnector
+from .connector import BufferingConnector, Connector
 
 __all__ = ["optimize"]
 
@@ -8,11 +8,10 @@ from .interactions import (
     execute_erasure,
 )
 
-from .ports import CombPort, WirePort, Erasure
+from .ports import CombPort, WirePort, Erasure, Port
 
 
-def optimize(c: BufferingConnector) -> None:
-    new_active_pairs = []
+def optimize(c: Connector, active_pairs: list[tuple[Port, Port]]) -> None:
     potential_optimization = True
 
     # We pre-reduce wire port reads and combinator annihilations and cascade erasures where
@@ -22,7 +21,8 @@ def optimize(c: BufferingConnector) -> None:
     # These are generally knowably safe and demonstrably reduce the graph.
     while potential_optimization:
         potential_optimization = False
-        for l, r in c.active_pairs:
+        new_active_pairs = []
+        for l, r in active_pairs:
             if isinstance(l, CombPort) and isinstance(r, CombPort) and l.label_eq(r):
                 potential_optimization = True
                 execute_commute_or_anihilate(c, l, r)
@@ -36,6 +36,15 @@ def optimize(c: BufferingConnector) -> None:
                 potential_optimization = True
                 execute_erasure(c, l, r)
             else:
+                for i, wire in enumerate(l.wires):
+                    if isinstance(wire.target, WirePort):
+                        l.wires[i] = wire.target.wires[0]
+                        potential_optimization = True
+                for i, wire in enumerate(r.wires):
+                    if isinstance(wire.target, WirePort):
+                        r.wires[i] = wire.target.wires[0]
+                        potential_optimization = True
                 new_active_pairs.append((l, r))
 
-        c.active_pairs = new_active_pairs
+        active_pairs.clear()
+        active_pairs.extend(new_active_pairs)

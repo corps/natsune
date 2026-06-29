@@ -40,7 +40,7 @@ class SynchronizedExecutor(Executor):
         yield
 
     def fork(self) -> Executor:
-        return self
+        return SynchronizedExecutor(self.active_pairs)
 
     def connect_ports(self, l: Port, r: Port) -> None:
         with self.lock():

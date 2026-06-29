@@ -47,10 +47,32 @@ def test_split_fn(c: Calculus) -> None:
     assert list(c.readout(c.tup(c[2], c[0]))) == [8, 9]
 
 def test_fork(c: Calculus) -> None:
-    c[c.v(9)] = c.split(lambda x: (x, 8), c[2], c[0])
-    assert list(c.readout(c.fork(c[2], c[0]))) == [8, 9]
+    c[c.fork(c.v(1), c.v(2))] = c.tup(c.v(3), c.v(4))
+    c.optimize()
+    assert c.serialize_active_pairs() == [
+        "(4, 3)x = fork(1, 2)"
+    ]
+    c.process_next_interaction()
+    c.optimize()
+    c.process_next_interaction()
+    c.process_next_interaction()
+    assert c.serialize_active_pairs() == [
+        '3 = fork(1, 2)',
+        '4 = fork(1, 2)',
+    ]
 
 def test_amb(c: Calculus) -> None:
     c.amb(c.v(1), c.v(2), c[1], c[2])
     c[1] = c.merge(lambda x, y: (x, y), c[2], c[0])
-    assert list(c.show_interactions()) == []
+    assert list(c.readout(0)) == [(2, 1), (1, 2)]
+
+def test_amb_just_one(c: Calculus) -> None:
+    c.amb(c.v(1), c[3], c[1], c.e())
+    c[1] = c.merge(lambda x, _: x, c.v(9), c[0])
+    assert list(c.readout(0)) == [1]
+
+def test_amb_of_amb(c: Calculus) -> None:
+    c.amb(c.v(1), c.v(2), c[0], c[1])
+    c.amb(c[0], c[1], c[2], c[3])
+    c[2] = c.merge(lambda x, y: (x, y), c[3], c[4])
+    assert list(c.readout(4)) == [1]

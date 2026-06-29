@@ -108,6 +108,11 @@ def execute_read_wire(connector: Connector, l: Port, r: WirePort) -> None:
 
 
 def execute_fork(connector: Connector, p: Port, l: ForkPort) -> None:
+    if isinstance(p, ForkPort) and p.fork == l.fork:
+        connector.connect(p.wires[0], l.wires[0])
+        connector.connect(p.wires[1], l.wires[1])
+        return
+
     new_p = copy.copy(p)
 
     for i in range(len(p.wires)):

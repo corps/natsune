@@ -1,10 +1,13 @@
-from natsune.interactions import execute_interaction
-from natsune.ambiguous import AmbiguousPair
 import dataclasses
+import os
+import tempfile
+import time
 from collections import defaultdict
 from typing import Any, Iterator, Self, Sequence, Callable
 
+from natsune.ambiguous import AmbiguousPair
 from natsune.executor import SynchronizedExecutor, Executor
+from natsune.optimizer import optimize
 from natsune.ports import (
     Wire,
     Port,
@@ -76,17 +79,22 @@ class Calculus:
             yield from self.tracer.buffer
             self.tracer.buffer.clear()
 
-    def show_interactions(self) -> Iterator[str]:
+    def optimize(self) -> None:
+        optimize(self.executor, self.executor.active_pairs)
+
+    def serialize_active_pairs(self) -> list[str]:
+        parts: list[str] = []
         cache: dict[Wire, int] = defaultdict(lambda: len(cache))
-        while self.executor.active_pairs:
-            for l, r in self.executor.active_pairs:
-                yield self.serialize_calculus(
-                    l, cache, True
-                ) + " = " + self.serialize_calculus(r, cache, False)
-            yield ""
-            yield ""
-            l, r = self.executor.active_pairs.pop()
-            execute_interaction(self.executor, l, r)
+        for l, r in self.executor.active_pairs:
+            parts.append(
+                self.serialize_port(l, cache, True)
+                + " = "
+                + self.serialize_port(r, cache, False)
+            )
+        return parts
+
+    def process_next_interaction(self) -> None:
+        self.executor.process_pair()
 
     def find_target(self, w: Wire) -> Port | None:
         target = w.target
@@ -94,7 +102,7 @@ class Calculus:
             target = target.wires[0].target
         return target
 
-    def serialize_calculus(
+    def serialize_port(
         self, port: Port, wires_cache: dict[Wire, int], reverse: bool
     ) -> str:
         if isinstance(port, ValuePort):
@@ -151,7 +159,7 @@ class Calculus:
     ) -> str:
         if wire.target is None:
             return "w" + str(wires_cache[wire])
-        return self.serialize_calculus(wire.target, wires_cache, reverse)
+        return self.serialize_port(wire.target, wires_cache, reverse)
 
     def tup(self, a: Wire, b: Wire) -> Wire:
         return self[CombPort("x", [a, b])]
