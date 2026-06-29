@@ -121,9 +121,6 @@ class ForkPort(Port):
         default_factory=lambda: [Wire(), Wire()]
     )
 
-    def __copy__(self) -> Self:
-        return dataclasses.replace(self, fork=self.fork.fork())
-
 
 class Expansion(Protocol):
     def __call__(

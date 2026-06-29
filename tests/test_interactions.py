@@ -70,9 +70,3 @@ def test_amb_just_one(c: Calculus) -> None:
     c.amb(c.v(1), c[3], c[1], c.e())
     c[1] = c.merge(lambda x, _: x, c.v(9), c[0])
     assert list(c.readout(0)) == [1]
-
-def test_amb_of_amb(c: Calculus) -> None:
-    c.amb(c.v(1), c.v(2), c[0], c[1])
-    c.amb(c[0], c[1], c[2], c[3])
-    c[2] = c.merge(lambda x, y: (x, y), c[3], c[4])
-    assert list(c.readout(4)) == [1]

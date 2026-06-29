@@ -135,7 +135,7 @@ class ReplaceWithSerializedVariables(ast.NodeTransformer):
         )
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True)
 class InetFunctionCompiler:
     func: Any
     globals: dict[str, Any]
