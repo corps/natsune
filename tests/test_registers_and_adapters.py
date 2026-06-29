@@ -1,7 +1,16 @@
+from natsune.optimizer import optimize
+from typing import Sequence, Self
+
+from natsune.executor import Executor
+from natsune.invocations import ExpansionWithAdapters, expansion_invocation, unpack_port_and_wires
+from natsune.ports import ValuePort, Port, Wire
+from natsune.control_flow import VariablesFlow, FlowInvocation
+from natsune.adapters import ValueAdapter, ReferenceAdapter, Variables, InverseAdapter, ParValueAdapter, Adapter
 from natsune.calculus import Calculus
 import pytest
 
-from natsune.registers import serialize_values, send_value, send_values, parallelize_value
+from natsune.registers import serialize_values, send_value, send_values, parallelize_value, InterfaceRegister, \
+    as_from_register, as_to_register, as_constant_register
 
 
 @pytest.fixture(scope="function")
@@ -33,3 +42,93 @@ def test_parallelize_value(c: Calculus) -> None:
     send_value(outputs[2], c.to_key(2))
     assert c.serialize_active_pairs() == ['3>- = -<w0']
     assert list(c.readout(2)) == [3]
+
+def test_interface_register(c: Calculus) -> None:
+    register = InterfaceRegister(ValueAdapter(), c.executor)
+    send_value(register.readout(False), c.to_key(0))
+    assert list(c.readout(0)) == []
+
+    send_value(c.const(40), register.interface_readin())
+    assert list(c.continue_readout()) == [40]
+
+    register = InterfaceRegister(ValueAdapter(), c.executor)
+    send_value(c.const(11), register.readin())
+    send_value(c.from_key(33), register.interface_readin())
+    assert list(c.readout(33)) == [11]
+
+
+def test_interface_register_with_multiple_accesses(c: Calculus) -> None:
+    register = InterfaceRegister(ValueAdapter(), c.executor)
+    send_value(register.readout(False), c.to_key(0))
+    send_value(register.readout(False), c.to_key(1))
+    send_value(register.readout(False), c.to_key(3))
+    assert list(c.readout(0)) == []
+
+    send_value(c.const(40), register.interface_readin())
+    assert list(c.continue_readout()) == [40]
+
+    register = InterfaceRegister(ValueAdapter(), c.executor)
+    send_value(c.const(11), register.readin())
+    send_value(c.const(52), register.readin())
+    send_value(c.from_key(33), register.interface_readin())
+    assert list(c.readout(33)) == [11]
+
+def test_flow_invocation_simple(c: Calculus) -> None:
+    variables = Variables(dict(a=ValueAdapter(), b=ReferenceAdapter(ValueAdapter()), c=InverseAdapter(ValueAdapter()), d=ParValueAdapter([ValueAdapter(), ValueAdapter()])))
+    flow = VariablesFlow(variables, ValueAdapter())
+
+    send_value(as_from_register(ValuePort(10), ValueAdapter(), flow.buffer), flow.o_control.o_return.readin())
+    with flow.invocation(c.executor) as invocation:
+        send_value(invocation.control.o_return.readout(False), c.to_key(0))
+    c.optimize()
+    assert list(c.readout(0)) == [10]
+
+def test_interface_register_split(c: Calculus) -> None:
+    register = InterfaceRegister(ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor)
+    parts = register.split(True)
+
+    send_value(as_constant_register((1, 2), c.executor), register.interface_readin())
+    send_value(parts[0].readout(True), c.to_key(0))
+    send_value(parts[0].readout(True), c.to_key(1))
+
+    assert list(c.readout(0)) == [1]
+    assert list(c.readout(1)) == [2]
+
+
+def test_variables_flow_invocation(c: Calculus) -> None:
+    variables = Variables(dict(a=ValueAdapter(), b=ReferenceAdapter(ValueAdapter()), c=InverseAdapter(ValueAdapter()), d=ParValueAdapter([ValueAdapter(), ValueAdapter()])))
+    flow = VariablesFlow(variables, ValueAdapter())
+
+    send_value(as_from_register(ValuePort(10), ValueAdapter(), flow.buffer), flow.o_control.o_return.readin())
+    optimize(flow.buffer, flow.buffer.active_pairs)
+    with flow.invocation(c.executor) as invocation:
+        send_value(invocation.control.o_return.readout(False), c.to_key(0))
+    while any('graft' in line for line in c.serialize_active_pairs()):
+        c.process_next_interaction()
+    assert c.serialize_active_pairs() == []
+    assert list(c.readout(0)) == [10]
+
+class TestExpansion(ExpansionWithAdapters):
+    @property
+    def input_adapter(self) -> Adapter:
+        return ValueAdapter()
+
+    @property
+    def output_adapter(self) -> Adapter:
+        return ValueAdapter()
+
+    def __call__(
+            self, executor: Executor, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        inputs, outputs = unpack_port_and_wires(self, port, wires, executor)
+        send_value(inputs.readout(True), outputs.readin())
+
+    def __copy__(self) -> Self:
+        return self
+
+def test_expansion_invocation(c: Calculus) -> None:
+    inputs, outputs = expansion_invocation(TestExpansion(), c.executor)
+    send_value(c.const(10), inputs.readin())
+    send_value(outputs.readout(True), c.to_key(0))
+    assert list(c.readout(0)) == [10]
+

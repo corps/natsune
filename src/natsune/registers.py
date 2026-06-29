@@ -277,7 +277,7 @@ def send_value(from_register: FromRegister, to_register: ToRegister) -> None:
     else:
         i += 1
 
-    if i == -1:
+    if i == 0:
         if not isinstance(from_register.adapter, ParValueAdapter) and not isinstance(
             to_register.adapter, ParValueAdapter
         ):

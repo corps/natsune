@@ -49,7 +49,7 @@ def expansion_invocation(
         outputs.interface_readin(),
     )
 
-    return (inputs, outputs)
+    return inputs, outputs
 
 
 def unpack_wires(
