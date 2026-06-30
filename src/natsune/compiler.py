@@ -89,6 +89,8 @@ class ReplaceWithSerializedVariables(ast.NodeTransformer):
                     not in self.branch_compiler.function_compiler.used_as_globals
                 ):
                     self.used_names[name] = special_form
+            else:
+                return super().generic_visit(node)
         return node
 
     def random_identifier(self, length=8) -> str:
@@ -199,7 +201,7 @@ class InetFunctionCompiler:
 
         if is_decidable:
             try:
-                global_f = eval(ast.unparse(node), self.globals)
+                global_f = eval(ast.unparse(node.func), self.globals)
             except Exception as e:
                 raise self.syntax_error(
                     node, "Could not evaluate global function invocation"
@@ -274,9 +276,10 @@ class InetFunctionCompiler:
             variable_inputs = invocation.inputs.i_variables.readin().split()
             for input in variable_inputs[len(self.args) :]:
                 input.close()
-            return variable_inputs[
-                : len(self.args)
-            ], invocation.control.o_return.readout(True)
+            return (
+                variable_inputs[: len(self.args)],
+                invocation.control.o_return.readout(),
+            )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -357,7 +360,7 @@ class InetBranchCompiler:
 
         if isinstance(expr, ast.Name):
             if expr.id not in self.function_compiler.used_as_globals:
-                return self.flow.variable_registers[expr.id].readout(False)
+                return self.flow.variable_registers[expr.id].readout()
 
         if isinstance(expr, ast.Subscript):
             inner_adapter = self.function_compiler.infer_expression_adapter(expr.value)
@@ -417,7 +420,7 @@ class InetBranchCompiler:
                 send_value(
                     self.evaluate_from_expression(n), invocation.i_value_2.readin()
                 )
-                acc = invocation.o_value.readout(True)
+                acc = invocation.o_value.readout()
 
             return acc
 
@@ -448,7 +451,7 @@ class InetBranchCompiler:
     def parse_deconstructor(self, deconstructor_expr: ast.expr) -> VariablesFlow:
         branch = self.function_compiler.new_branch()
         send_value(
-            branch.flow.flow_input.i_value.readout(True),
+            branch.flow.flow_input.i_value.readout(),
             branch.evaluate_to_expression(deconstructor_expr),
         )
         send_value(
@@ -480,7 +483,6 @@ class InetBranchCompiler:
                 if isinstance(stmt, ast.Return):
                     from_register = self.evaluate_from_expression(stmt.value)
                     send_value(from_register, self.flow.o_control.o_return.readin())
-                    self.flow.close()
                     return self.flow
                 elif isinstance(stmt, ast.Assign):
                     for from_expr, to_expr in zip(
@@ -537,13 +539,13 @@ class InetBranchCompiler:
                         )
 
                         send_value(
-                            for_invocation.control.o_finish.readout(False),
+                            for_invocation.control.o_finish.readout(),
                             continuation.flow_input.i_variables.readin(),
                         )
 
                         # This finishes iff the continuation finishes
                         send_value(
-                            continuation.o_control.o_finish.readout(False),
+                            continuation.o_control.o_finish.readout(),
                             self.flow.o_control.o_finish.readin(),
                         )
 
@@ -551,31 +553,27 @@ class InetBranchCompiler:
                             self.flow.o_control.o_return.readin(), self.flow.buffer
                         )
                         send_value(
-                            for_invocation.control.o_return.readout(False), o_return_1
+                            for_invocation.control.o_return.readout(), o_return_1
                         )
                         send_value(
-                            continuation.o_control.o_return.readout(False), o_return_1
+                            continuation.o_control.o_return.readout(), o_return_1
                         )
 
                         o_break_1, o_break_2 = OneOf.share(
                             self.flow.o_control.o_break.readin(), self.flow.buffer
                         )
-                        send_value(
-                            for_invocation.control.o_break.readout(False), o_break_1
-                        )
-                        send_value(
-                            continuation.o_control.o_break.readout(False), o_break_1
-                        )
+                        send_value(for_invocation.control.o_break.readout(), o_break_1)
+                        send_value(continuation.o_control.o_break.readout(), o_break_1)
 
                         o_continue_1, o_continue_2 = OneOf.share(
                             self.flow.o_control.o_continue.readin(), self.flow.buffer
                         )
                         send_value(
-                            for_invocation.control.o_continue.readout(False),
+                            for_invocation.control.o_continue.readout(),
                             o_continue_1,
                         )
                         send_value(
-                            continuation.o_control.o_continue.readout(False),
+                            continuation.o_control.o_continue.readout(),
                             o_continue_1,
                         )
 
@@ -602,11 +600,11 @@ class InetBranchCompiler:
                             if_invocation.i_context.readin(),
                         )
                         send_value(
-                            if_invocation.o_body.readout(True),
+                            if_invocation.o_body.readout(),
                             body_invocation.inputs.i_variables.readin(),
                         )
                         send_value(
-                            if_invocation.o_orelse.readout(True),
+                            if_invocation.o_orelse.readout(),
                             orelse_invocation.inputs.i_variables.readin(),
                         )
                         return self.flow
@@ -666,8 +664,6 @@ class InetVariablesEvaluator(ast.NodeVisitor):
             if isinstance(target, ast.Name):
                 self.mark_assign_target(target, adapter)
 
-        super().visit_For(node)
-
     def visit_AnnAssign(self, node):
         if not node.simple:
             raise self.compiler.syntax_error(
@@ -684,15 +680,11 @@ class InetVariablesEvaluator(ast.NodeVisitor):
                 adapter = adapter_from_type(te)
                 self.mark_assign_target(target, adapter)
 
-        super().visit_AnnAssign(node)
-
     def visit_AugAssign(self, node):
         for target in ast.walk(node.target):
             if isinstance(target, ast.Name):
                 adapter = ValueAdapter()
                 self.mark_assign_target(target, adapter)
-
-        super().visit_AugAssign(node)
 
     def visit_Assign(self, node):
         adapter = self.infer_expression_adapter(node.value)
@@ -701,11 +693,9 @@ class InetVariablesEvaluator(ast.NodeVisitor):
                 if isinstance(subnode, ast.Name):
                     self.mark_assign_target(subnode, adapter)
 
-        super().visit_Assign(node)
-
     def infer_expression_adapter(self, node: ast.expr) -> Adapter:
         if isinstance(node, ast.Call):
-            self.visit_Call(node)
+            self.generic_visit(node)
         return self.compiler.infer_expression_adapter(node)
 
 

@@ -58,8 +58,8 @@ class OneOf(ExpansionWithAdapters):
         self, invoker: Connector
     ) -> tuple[ToRegister, ToRegister, FromRegister]:
         inputs, outputs = expansion_invocation(self, invoker)
-        alt, result = outputs.split(True)
-        return inputs.readin(), alt.readin(), result.readout(True)
+        alt, result = outputs.split()
+        return inputs.readin(), alt.readin(), result.readout()
 
     def __copy__(self) -> Self:
         return self
@@ -125,11 +125,11 @@ class Loop(ExpansionWithAdapters):
             self.orelse.invocation(executor) as orelse_invocation,
             self.invocation(executor) as recurse,
         ):
-            iter_input_1, iter_input_2 = this_invocation.inputs.i_value.readout(
-                True
-            ).duplicate()
+            iter_input_1, iter_input_2 = (
+                this_invocation.inputs.i_value.readout().duplicate()
+            )
             send_value(
-                this_invocation.inputs.i_variables.readout(True),
+                this_invocation.inputs.i_variables.readout(),
                 iterable_invocation.inputs.i_variables.readin(),
             )
             send_value(iter_input_1, iterable_invocation.inputs.i_value.readin())
@@ -139,48 +139,48 @@ class Loop(ExpansionWithAdapters):
                 executor
             )
             send_value(
-                iterable_invocation.control.o_return.readout(True),
+                iterable_invocation.control.o_return.readout(),
                 cond_invocation.i_value.readin(),
             )
             send_value(
-                iterable_invocation.control.o_finish.readout(True),
+                iterable_invocation.control.o_finish.readout(),
                 cond_invocation.i_context.readin(),
             )
 
             send_value(
-                cond_invocation.o_orelse.readout(True),
+                cond_invocation.o_orelse.readout(),
                 orelse_invocation.inputs.i_variables.readin(),
             )
             send_value(
-                cond_invocation.o_body.readout(True),
+                cond_invocation.o_body.readout(),
                 body_invocation.inputs.i_variables.readin(),
             )
 
-            orelse_invocation.control.send_to(orelse_result, True)
+            orelse_invocation.control.send_to(orelse_result)
 
             # Option to return from parent
             o_return_1, o_return_2 = OneOf.share(
                 body_result.o_return.readin(), executor
             )
             # We return if either the current body returns or the recursion returns
-            send_value(body_invocation.control.o_return.readout(True), o_return_1)
-            send_value(recurse.control.o_return.readout(True), o_return_2)
+            send_value(body_invocation.control.o_return.readout(), o_return_1)
+            send_value(recurse.control.o_return.readout(), o_return_2)
 
             # Option to finish through parent
             o_finished_1, o_finished_2 = OneOf.share(
                 body_result.o_finish.readin(), executor
             )
             # We are finished if either the current body breaks or the recursion finishes.
-            send_value(body_invocation.control.o_break.readout(True), o_finished_1)
-            send_value(recurse.control.o_finish.readout(True), o_finished_2)
+            send_value(body_invocation.control.o_break.readout(), o_finished_1)
+            send_value(recurse.control.o_finish.readout(), o_finished_2)
 
             # Option to recurse again
             o_continue_1, o_continue_2 = OneOf.share(
                 recurse.inputs.i_variables.readin(), executor
             )
             # We reurse if either the current body continues or finishes
-            send_value(body_invocation.control.o_continue.readout(True), o_continue_1)
-            send_value(body_invocation.control.o_finish.readout(True), o_continue_2)
+            send_value(body_invocation.control.o_continue.readout(), o_continue_1)
+            send_value(body_invocation.control.o_finish.readout(), o_continue_2)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -210,8 +210,8 @@ class IfThenElse(ExpansionWithAdapters):
 
     def invocation(self, invoker: Connector) -> IfThenElseInvocation:
         inputs, outputs = expansion_invocation(self, invoker)
-        context, alternatives = outputs.split(True)
-        a, b = alternatives.split(True)
+        context, alternatives = outputs.split()
+        a, b = alternatives.split()
         return IfThenElseInvocation(inputs, context, a, b)
 
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
@@ -295,11 +295,11 @@ class ConcurrentMerge(ExpansionWithAdapters):
 
         send_value(first_value_2, if_invocation.i_context.readin())
 
-        send_value(if_invocation.o_body.readout(True), result1)
+        send_value(if_invocation.o_body.readout(), result1)
         send_value(
             send_parameters(
                 merge_invocation(self.merge_operation, exec),
-                (if_invocation.o_orelse.readout(True), pair_invocation.o_second_value),
+                (if_invocation.o_orelse.readout(), pair_invocation.o_second_value),
             ),
             result2,
         )
@@ -315,7 +315,7 @@ class ConcurrentMergeInvocation:
     def split(
         cls, inputs: InterfaceRegister, outputs: InterfaceRegister
     ) -> ConcurrentMergeInvocation:
-        a, b = inputs.split(True)
+        a, b = inputs.split()
         return cls(a, b, outputs)
 
 
@@ -331,17 +331,17 @@ class VariablesFlow(ExpansionWithAdapters):
 
     def __post_init__(self) -> None:
         for name, variable_input in zip(
-            self.variables.keys(), self.flow_input.i_variables.split(True)
+            self.variables.keys(), self.flow_input.i_variables.split()
         ):
             flow_register = self.variable_registers[name] = FlowRegister(
                 self.variables[name], self.buffer
             )
-            send_value(variable_input.readout(True), flow_register.interface_readin())
+            send_value(variable_input.readout(), flow_register.interface_readin())
 
     def variables_readout(self, owned: bool) -> FromRegister:
         x1, x2 = Wire.as_interface()
         send_values(
-            [r.readout(owned) for r in self.variable_registers.values()],
+            [r.readout() for r in self.variable_registers.values()],
             as_to_register(x1, self.variables.adapter, self.buffer).split(),
         )
 
@@ -492,7 +492,7 @@ class FlowInput:
 
     @classmethod
     def split(cls, source: InterfaceRegister) -> FlowInput:
-        return FlowInput(*source.split(True))
+        return FlowInput(*source.split())
 
     def close(self) -> None:
         self.i_variables.close()
@@ -519,15 +519,15 @@ class FlowControl:
 
     @classmethod
     def split(cls, source: InterfaceRegister) -> FlowControl:
-        return FlowControl(*source.split(True))
+        return FlowControl(*source.split())
 
-    def send_to(self, i_control: FlowControl, owned: bool) -> None:
+    def send_to(self, i_control: FlowControl) -> None:
         send_values(
             [
-                self.o_return.readout(owned),
-                self.o_continue.readout(owned),
-                self.o_break.readout(owned),
-                self.o_finish.readout(owned),
+                self.o_return.readout(),
+                self.o_continue.readout(),
+                self.o_break.readout(),
+                self.o_finish.readout(),
             ],
             [
                 i_control.o_return.readin(),

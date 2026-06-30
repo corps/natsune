@@ -157,7 +157,7 @@ class InterfaceRegister:
     def interface_readin(self) -> ToRegister:
         return _ToRegister(self.interface, self.adapter, self.connector)
 
-    def readout(self, owned: bool) -> FromRegister:
+    def readout(self) -> FromRegister:
         taken, given = self.extend()
         self.connector.annihilate(given)
         return _FromRegister(WirePort([taken]), self.adapter, self.connector)
@@ -167,9 +167,9 @@ class InterfaceRegister:
         self.connector.annihilate(given)
         return _ToRegister(WirePort([taken]), self.adapter, self.connector)
 
-    def split(self, owned: bool) -> Sequence[InterfaceRegister]:
+    def split(self) -> Sequence[InterfaceRegister]:
         if isinstance(self.adapter, ParValueAdapter):
-            out = self.readout(owned)
+            out = self.readout()
             result = [
                 InterfaceRegister(
                     adapter,
@@ -208,14 +208,10 @@ class InterfaceRegister:
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out
 # or readin multiple times, producing an extension (sharing) for each.
 class FlowRegister(InterfaceRegister):
-    def readout(self, owned: bool) -> FromRegister:
+    def readout(self) -> FromRegister:
         taken, given = self.extend()
         return _FromRegister(
-            (
-                WirePort([taken])
-                if owned
-                else self.adapter.produce_com(taken, given, self.connector)
-            ),
+            (self.adapter.produce_com(taken, given, self.connector)),
             self.adapter,
             self.connector,
         )
