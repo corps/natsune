@@ -11,7 +11,7 @@ from natsune.invocations import ExpansionWithAdapters, expansion_invocation, unp
 from natsune.optimizer import optimize
 from natsune.ports import ValuePort, Port, Wire
 from natsune.registers import serialize_values, send_value, send_values, parallelize_value, InterfaceRegister, \
-    as_from_register, as_constant_register, FlowRegister
+    as_from_register, as_constant_register, FlowRegister, join_to_registers, join_from_registers
 
 
 @pytest.fixture(scope="function")
@@ -157,3 +157,13 @@ def test_flow_register(c: Calculus) -> None:
     register.close()
 
     assert list(c.readout(1)) == [20]
+
+def test_join_registers_are_parallel(c: Calculus) -> None:
+    to_register = join_to_registers([c.to_key(0), c.to_key(1)], c.executor)
+    from_register = join_from_registers([c.from_key(2), c.from_key(3)], c.executor)
+
+    send_value(from_register, to_register)
+    send_value(c.const(10), c.to_key(2))
+
+    assert list(c.readout(0)) == [10]
+    assert list(c.readout(1)) == []

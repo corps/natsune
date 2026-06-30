@@ -333,6 +333,36 @@ def serialize_values(
     return result, cur_acc
 
 
+def join_to_registers(
+    registers: Sequence[ToRegister], connector: Connector
+) -> ToRegister:
+    par_adapter = ParValueAdapter([register.adapter for register in registers])
+    x1, x2 = Wire.as_interface()
+    from_register = as_from_register(x1, par_adapter, connector)
+    send_values(from_register.split(), registers)
+
+    return as_to_register(
+        x2,
+        par_adapter,
+        connector,
+    )
+
+
+def join_from_registers(
+    registers: Sequence[FromRegister], connector: Connector
+) -> FromRegister:
+    par_adapter = ParValueAdapter([register.adapter for register in registers])
+    x1, x2 = Wire.as_interface()
+    to_register = as_to_register(x1, par_adapter, connector)
+    send_values(registers, to_register.split())
+
+    return as_from_register(
+        x2,
+        par_adapter,
+        connector,
+    )
+
+
 def fold_split(
     fn: Callable[[Any], tuple[Any, Any]], acc: FromRegister
 ) -> tuple[FromRegister, FromRegister]:

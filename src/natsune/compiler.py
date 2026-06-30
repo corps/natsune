@@ -36,6 +36,7 @@ from .registers import (
     send_values,
     serialize_values,
     as_constant_register,
+    join_to_registers,
 )
 
 unsupported_expr: tuple[type[ast.expr], ...] = (
@@ -296,18 +297,7 @@ class InetBranchCompiler:
             inner_registers = [
                 self.evaluate_to_expression(element) for element in expr.elts
             ]
-            par_adapter = ParValueAdapter(
-                [register.adapter for register in inner_registers]
-            )
-            x1, x2 = Wire.as_interface()
-            from_register = as_from_register(x1, par_adapter, self.flow.buffer)
-            send_values(from_register.split(), inner_registers)
-
-            return as_to_register(
-                x2,
-                par_adapter,
-                self.flow.buffer,
-            )
+            return join_to_registers(inner_registers, self.flow.buffer)
 
         if isinstance(expr, ast.List):
             raise self.function_compiler.syntax_error(
@@ -669,29 +659,37 @@ class InetVariablesEvaluator(ast.NodeVisitor):
             raise self.compiler.syntax_error(
                 node, "Annotations must be simple in inet functions"
             )
-        for target in ast.walk(node.target):
-            if isinstance(target, ast.Name):
-                try:
-                    te = eval(ast.unparse(node.annotation), self.compiler.globals)
-                except Exception as e:
-                    raise self.compiler.syntax_error(
-                        node.target, "Could not evaluate annotation in inet"
-                    ) from e
-                adapter = adapter_from_type(te)
-                self.mark_assign_target(target, adapter)
+        if isinstance(node.target, ast.Name):
+            try:
+                te = eval(ast.unparse(node.annotation), self.compiler.globals)
+            except Exception as e:
+                raise self.compiler.syntax_error(
+                    node.target, "Could not evaluate annotation in inet"
+                ) from e
+            adapter = adapter_from_type(te)
+            self.mark_assign_target(node.target, adapter)
 
     def visit_AugAssign(self, node):
-        for target in ast.walk(node.target):
-            if isinstance(target, ast.Name):
-                adapter = ValueAdapter()
-                self.mark_assign_target(target, adapter)
+        if isinstance(node.target, ast.Name):
+            adapter = ValueAdapter()
+            self.mark_assign_target(node.target, adapter)
 
     def visit_Assign(self, node):
         adapter = self.infer_expression_adapter(node.value)
         for target in node.targets:
-            for subnode in ast.walk(target):
-                if isinstance(subnode, ast.Name):
-                    self.mark_assign_target(subnode, adapter)
+            if isinstance(target, ast.Name):
+                self.mark_assign_target(target, adapter)
+            elif isinstance(target, ast.Tuple):
+                if isinstance(adapter, ParValueAdapter) and len(
+                    adapter.concurrent_items
+                ) == len(target.elts):
+                    for target, adapter in zip(target.elts, adapter.concurrent_items):
+                        if isinstance(target, ast.Name):
+                            self.mark_assign_target(target, adapter)
+                else:
+                    for target in target.elts:
+                        if isinstance(target, ast.Name):
+                            self.mark_assign_target(target, ValueAdapter())
 
     def infer_expression_adapter(self, node: ast.expr) -> Adapter:
         if isinstance(node, ast.Call):
