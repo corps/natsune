@@ -167,3 +167,21 @@ def test_join_registers_are_parallel(c: Calculus) -> None:
 
     assert list(c.readout(0)) == [10]
     assert list(c.readout(1)) == []
+
+
+def test_reference_adapter(c: Calculus) -> None:
+    ref1 = FlowRegister(ReferenceAdapter(ValueAdapter()), c.executor)
+    ref2 = FlowRegister(ReferenceAdapter(ValueAdapter()), c.executor)
+
+    send_value(c.const(1), ref1.readin())
+    send_value(ref1.readout(), ref2.readin())
+    send_value(c.const(20), ref2.readin())
+    ref2.close()
+    #
+    send_value(ref1.readout(), c.to_key(0))
+    ref1.close()
+
+    c.optimize(2)
+    assert c.serialize_active_pairs() == []
+
+    assert list(c.readout(0)) == [20]

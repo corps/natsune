@@ -122,6 +122,7 @@ class ReferenceAdapter(Adapter):
             connector.connect(ref.wires[0], initial)
         else:
             connector.connect(ref.wires[0], Erasure())
+        # Self.inner.close?
         connector.connect(ref.wires[1], Erasure())
         return WirePort([connector.abstract_port(ref)])
 

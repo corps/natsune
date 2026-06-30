@@ -13,7 +13,7 @@ import os
 import tempfile
 import time
 from collections import defaultdict
-from typing import Any, Iterator, Self, Sequence, Callable
+from typing import Any, Iterator, Self, Sequence, Callable, Literal
 
 from natsune.ambiguous import AmbiguousPair
 from natsune.executor import SynchronizedExecutor, Executor
@@ -91,12 +91,17 @@ class Calculus:
             yield from self.tracer.buffer
             self.tracer.buffer.clear()
 
-    def optimize(self) -> None:
-        optimize(self.executor, self.executor.active_pairs)
+    def optimize(self, level: Literal[1, 2, 3] = 3) -> None:
+        optimize(self.executor, self.executor.active_pairs, level=level)
 
     def serialize_active_pairs(self) -> list[str]:
         parts: list[str] = []
-        cache: dict[Wire, int] = defaultdict(lambda: len(cache))
+        cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
+
+        for i, k in self._wires.items():
+            if i < 1000:
+                cache[k] = f"[{i}]"
+
         for l, r in self.executor.active_pairs:
             parts.append(
                 self.serialize_port(l, cache, True)
@@ -115,10 +120,14 @@ class Calculus:
         return target
 
     def serialize_port(
-        self, port: Port, wires_cache: dict[Wire, int], reverse: bool
+        self, port: Port, wires_cache: dict[Wire, str], reverse: bool
     ) -> str:
         if isinstance(port, ValuePort):
-            return str(port.value)
+            return (
+                str(port.value)
+                if isinstance(port.value, (int, str, type(None), bool, float))
+                else "value"
+            )
         elif isinstance(port, Erasure):
             return "Z"
         elif isinstance(port, ExtMergeFuncPort):
@@ -167,10 +176,10 @@ class Calculus:
         return front
 
     def serialize_calculus_wire(
-        self, wire: Wire, wires_cache: dict[Wire, int], reverse: bool
+        self, wire: Wire, wires_cache: dict[Wire, str], reverse: bool
     ) -> str:
         if wire.target is None:
-            return "w" + str(wires_cache[wire])
+            return wires_cache[wire]
         return self.serialize_port(wire.target, wires_cache, reverse)
 
     def tup(self, a: Wire, b: Wire) -> Wire:

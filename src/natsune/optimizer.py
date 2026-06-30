@@ -1,3 +1,5 @@
+from typing import Literal
+
 from .connector import BufferingConnector, Connector
 
 __all__ = ["optimize"]
@@ -11,7 +13,9 @@ from .interactions import (
 from .ports import CombPort, WirePort, Erasure, Port
 
 
-def optimize(c: Connector, active_pairs: list[tuple[Port, Port]]) -> None:
+def optimize(
+    c: Connector, active_pairs: list[tuple[Port, Port]], level: Literal[1, 2, 3] = 3
+) -> None:
     potential_optimization = True
 
     # We pre-reduce wire port reads and combinator annihilations and cascade erasures where
@@ -23,16 +27,21 @@ def optimize(c: Connector, active_pairs: list[tuple[Port, Port]]) -> None:
         potential_optimization = False
         new_active_pairs = []
         for l, r in active_pairs:
-            if isinstance(l, CombPort) and isinstance(r, CombPort) and l.label_eq(r):
+            if (
+                isinstance(l, CombPort)
+                and isinstance(r, CombPort)
+                and l.label_eq(r)
+                and level >= 2
+            ):
                 potential_optimization = True
                 execute_commute_or_anihilate(c, l, r)
-            elif isinstance(l, WirePort) and l.wires[0].target is not None:
+            elif isinstance(l, WirePort):
                 potential_optimization = True
                 execute_read_wire(c, r, l)
-            elif isinstance(r, WirePort) and r.wires[0].target is not None:
+            elif isinstance(r, WirePort):
                 potential_optimization = True
                 execute_read_wire(c, l, r)
-            elif isinstance(l, Erasure) or isinstance(r, Erasure):
+            elif isinstance(l, Erasure) or isinstance(r, Erasure) and level >= 3:
                 potential_optimization = True
                 execute_erasure(c, l, r)
             else:
