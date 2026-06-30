@@ -413,12 +413,13 @@ class VariablesFlow(ExpansionWithAdapters):
             head = q.pop()
 
             for i, wire in enumerate(head.wires):
-                if id(wire) in new_wire_identity:
-                    wire = new_wire_identity[id(wire)]
+                wire_id = id(wire)
+                if wire_id in new_wire_identity:
+                    wire = new_wire_identity[wire_id]
                     assert not wire.target
                 else:
                     wire = copy.copy(wire)
-                    new_wire_identity[id(wire)] = wire
+                    new_wire_identity[wire_id] = wire
                     if wire.target:
                         q.append(wire.target)
 

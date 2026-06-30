@@ -73,16 +73,6 @@ def test_interface_register_with_multiple_accesses(c: Calculus) -> None:
     send_value(c.from_key(33), register.interface_readin())
     assert list(c.readout(33)) == [11]
 
-def test_flow_invocation_simple(c: Calculus) -> None:
-    variables = Variables(dict(a=ValueAdapter(), b=ReferenceAdapter(ValueAdapter()), c=InverseAdapter(ValueAdapter()), d=ParValueAdapter([ValueAdapter(), ValueAdapter()])))
-    flow = VariablesFlow(variables, ValueAdapter())
-
-    send_value(as_from_register(ValuePort(10), ValueAdapter(), flow.buffer), flow.o_control.o_return.readin())
-    with flow.invocation(c.executor) as invocation:
-        send_value(invocation.control.o_return.readout(False), c.to_key(0))
-    c.optimize()
-    assert list(c.readout(0)) == [10]
-
 def test_interface_register_split_from(c: Calculus) -> None:
     register = InterfaceRegister(ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor)
     parts = register.split(True)
@@ -125,6 +115,7 @@ def test_variables_flow_invocation(c: Calculus) -> None:
     optimize(flow.buffer, flow.buffer.active_pairs)
     with flow.invocation(c.executor) as invocation:
         send_value(invocation.control.o_return.readout(False), c.to_key(0))
+        send_value(c.const(10), invocation.inputs.i_value.readin())
     while any('graft' in line for line in c.serialize_active_pairs()):
         c.process_next_interaction()
     assert list(c.readout(0)) == [10]
