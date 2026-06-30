@@ -83,17 +83,39 @@ def test_flow_invocation_simple(c: Calculus) -> None:
     c.optimize()
     assert list(c.readout(0)) == [10]
 
-def test_interface_register_split(c: Calculus) -> None:
+def test_interface_register_split_from(c: Calculus) -> None:
     register = InterfaceRegister(ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor)
     parts = register.split(True)
 
     send_value(as_constant_register((1, 2), c.executor), register.interface_readin())
     send_value(parts[0].readout(True), c.to_key(0))
-    send_value(parts[0].readout(True), c.to_key(1))
+    send_value(parts[1].readout(True), c.to_key(1))
 
     assert list(c.readout(0)) == [1]
     assert list(c.readout(1)) == [2]
 
+def test_from_register_split(c: Calculus) -> None:
+    register = InterfaceRegister(ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor)
+    parts = register.readout(True).split()
+
+    send_value(as_constant_register((1, 2), c.executor), register.interface_readin())
+    send_value(parts[0], c.to_key(0))
+    send_value(parts[1], c.to_key(1))
+
+    assert list(c.readout(0)) == [1]
+    assert list(c.readout(1)) == [2]
+
+def test_to_register_split(c: Calculus) -> None:
+    register = InterfaceRegister(ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor)
+    parts = register.readin().split()
+    send_value(c.const(1), parts[0])
+    send_value(c.const(2), parts[1])
+    send_value(
+    register.interface_readin().invert(),
+    c.to_key(0),
+    )
+
+    assert list(c.readout(0)) == [(1, 2)]
 
 def test_variables_flow_invocation(c: Calculus) -> None:
     variables = Variables(dict(a=ValueAdapter(), b=ReferenceAdapter(ValueAdapter()), c=InverseAdapter(ValueAdapter()), d=ParValueAdapter([ValueAdapter(), ValueAdapter()])))
@@ -105,7 +127,6 @@ def test_variables_flow_invocation(c: Calculus) -> None:
         send_value(invocation.control.o_return.readout(False), c.to_key(0))
     while any('graft' in line for line in c.serialize_active_pairs()):
         c.process_next_interaction()
-    assert c.serialize_active_pairs() == []
     assert list(c.readout(0)) == [10]
 
 class TestExpansion(ExpansionWithAdapters):

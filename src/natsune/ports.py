@@ -34,6 +34,9 @@ class Wire:
     def __hash__(self) -> int:
         return id(self)
 
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
     def __copy__(self) -> Self:
         return dataclasses.replace(
             self, target=copy.copy(self.target) if self.target else None

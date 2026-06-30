@@ -164,6 +164,13 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         execute_erasure(executor, l, r)
         return
 
+    if isinstance(l, (ExtSplitFuncPort, ExtMergeFuncPort)) and isinstance(
+        r, (ExtSplitFuncPort, ExtMergeFuncPort)
+    ):
+        raise ValueError(
+            "Cannot execute interactions between two ExtSplitFuncPort or ExtMergeFuncPort"
+        )
+
     if isinstance(l, (ExtSplitFuncPort, ExtMergeFuncPort, CombPort)) and isinstance(
         r, (ExtSplitFuncPort, ExtMergeFuncPort, CombPort)
     ):
