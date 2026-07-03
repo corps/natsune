@@ -31,14 +31,14 @@ def optimize(
                 isinstance(l, CombPort)
                 and isinstance(r, CombPort)
                 and l.label_eq(r)
-                and level >= 2
+                and level >= 1
             ):
                 potential_optimization = True
                 execute_commute_or_anihilate(c, l, r)
-            elif isinstance(l, WirePort):
+            elif isinstance(l, WirePort) and (level >= 2 or l.wires[0].target):
                 potential_optimization = True
                 execute_read_wire(c, r, l)
-            elif isinstance(r, WirePort):
+            elif isinstance(r, WirePort) and (level >= 2 or r.wires[0].target):
                 potential_optimization = True
                 execute_read_wire(c, l, r)
             elif isinstance(l, Erasure) or isinstance(r, Erasure) and level >= 3:

@@ -19,7 +19,7 @@ from .special_forms import Par, Ref, Inverse
 class LinearWiringType(IntEnum):
     VALUE = 0
     REFERENCE = 1
-    INVERSE = 2
+    # INVERSE = 2
 
 
 type AdapterWiringType = LinearWiringType | tuple[AdapterWiringType, ...]
@@ -32,9 +32,17 @@ class Adapter(Protocol):
 
     def close(self, target: Target, connector: Connector) -> None: ...
 
-    def produce_com(self, taken: Wire, given: Wire, connector: Connector) -> Port: ...
+    def produce_egression(
+        self, taken: Wire, given: Wire, connector: Connector
+    ) -> Port: ...
+
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector
+    ) -> Port: ...
 
     def unpack(self, target: Port, connector: Connector) -> Port: ...
+
+    def repack(self, target: Port, connector: Connector) -> Port: ...
 
     def __iter__(self) -> Iterator[Adapter]: ...
 
@@ -49,12 +57,21 @@ class ValueAdapter(Adapter):
     def close(self, target: Target, connector: Connector) -> None:
         connector.annihilate(target)
 
-    def produce_com(self, taken: Wire, given: Wire, connector: Connector) -> Port:
+    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
         left, right = connector.duplicate(taken)
         connector.connect(given, right)
         return WirePort([left])
 
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector
+    ) -> Port:
+        connector.annihilate(taken)
+        return WirePort([given])
+
     def unpack(self, target: Port, connector: Connector) -> Port:
+        return target
+
+    def repack(self, target: Port, connector: Connector) -> Port:
         return target
 
     def __iter__(self) -> Iterator[Adapter]:
@@ -82,7 +99,7 @@ class ParValueAdapter(Adapter):
             for adapter, wire in zip(self.concurrent_items, packing_iter):
                 adapter.close(wire, connector)
 
-    def produce_com(self, taken: Wire, given: Wire, connector: Connector) -> Port:
+    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
         x1, x2 = Wire.as_tautology()
         with (
             connector.sequenced_tuplate_from(x2) as packing_iter,
@@ -93,12 +110,34 @@ class ParValueAdapter(Adapter):
                 self.concurrent_items, packing_iter, given_iter, taken_iter
             ):
                 connector.connect(
-                    packing_wire, adapter.produce_com(taken_wire, given_wire, connector)
+                    packing_wire,
+                    adapter.produce_egression(taken_wire, given_wire, connector),
+                )
+        return x1
+
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector
+    ) -> Port:
+        x1, x2 = Wire.as_tautology()
+        with (
+            connector.sequenced_tuplate_from(x2) as packing_iter,
+            connector.sequenced_tuplate_from(given) as given_iter,
+            connector.sequenced_tuplate_from(taken) as taken_iter,
+        ):
+            for adapter, packing_wire, given_wire, taken_wire in zip(
+                self.concurrent_items, packing_iter, given_iter, taken_iter
+            ):
+                connector.connect(
+                    packing_wire,
+                    adapter.produce_ingression(taken_wire, given_wire, connector),
                 )
         return x1
 
     def unpack(self, target: Port, connector: Connector) -> Port:
         raise SyntaxError("Implicit unpack for par unsupported")
+
+    def repack(self, target: Port, connector: Connector) -> Port:
+        raise SyntaxError("Implicit repack for par unsupported")
 
     def __iter__(self) -> Iterator[Adapter]:
         yield self
@@ -122,15 +161,14 @@ class ReferenceAdapter(Adapter):
             connector.connect(ref.wires[0], initial)
         else:
             connector.connect(ref.wires[0], Erasure())
-        # Self.inner.close?
-        connector.connect(ref.wires[1], Erasure())
-        return WirePort([connector.abstract_port(ref)])
+        self.inner.close(ref.wires[1], connector)
+        return WirePort([connector.as_wire(ref)])
 
     def close(self, target: Target, connector: Connector) -> None:
         incoming, outgoing = connector.tuplate(target)
         connector.connect(incoming, outgoing)
 
-    def produce_com(self, taken: Wire, given: Wire, connector: Connector) -> Port:
+    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
         taken_incoming, taken_outgoing = connector.tuplate(taken)
         given_incoming, given_outgoing = connector.tuplate(given)
         readout = CombPort("x")
@@ -139,14 +177,29 @@ class ReferenceAdapter(Adapter):
         connector.connect(taken_outgoing, given_outgoing)
         return readout
 
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector
+    ) -> Port:
+        taken_incoming, taken_outgoing = connector.tuplate(taken)
+        given_incoming, given_outgoing = connector.tuplate(given)
+
+        given_outgoing1, given_outgoing2 = connector.duplicate(given_outgoing)
+        self.inner.close(taken_incoming, connector)
+
+        readout = CombPort("x")
+        connector.connect(readout.wires[0], given_incoming)
+        connector.connect(readout.wires[1], given_outgoing1)
+        connector.connect(taken_outgoing, given_outgoing2)
+        return readout
+
     def unpack(self, target: Port, connector: Connector) -> Port:
         taken_incoming, taken_outgoing = connector.tuplate(target)
         incoming1, incoming2 = connector.duplicate(taken_incoming)
-        continuation = CombPort("x")
-        connector.connect(continuation.wires[0], incoming1)
-        connector.connect(continuation.wires[1], taken_outgoing)
-        self.close(continuation, connector)
+        connector.connect(incoming1, taken_outgoing)
         return WirePort([incoming2])
+
+    def repack(self, target: Port, connector: Connector) -> Port:
+        return self.initialize(connector, connector.as_wire(target))
 
     def __iter__(self) -> Iterator[Adapter]:
         yield from self.inner
@@ -161,41 +214,34 @@ class InverseAdapter(Adapter):
     inner: Adapter
 
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
-        inv = CombPort("x")
-        connector.connect(inv.wires[0], inv.wires[1])
-        return WirePort([connector.abstract_port(inv)])
+        wp = WirePort()
+        self.inner.close(wp, connector)
+        return wp
 
     def close(self, target: Target, connector: Connector) -> None:
         connector.annihilate(target)
 
-    def produce_com(self, taken: Wire, given: Wire, connector: Connector) -> Port:
-        taken_work, taken_solution = connector.tuplate(taken)
-        given_work, given_solution = connector.tuplate(given)
-        readout = CombPort("x")
+    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
+        return self.inner.produce_egression(given, taken, connector)
 
-        sol1, a = connector.duplicate(given_solution)
-        sol2, sol3 = connector.duplicate(a)
-        connector.connect(sol1, given_work)
-        connector.connect(sol2, taken_solution)
-        connector.connect(sol3, readout.wires[1])
-        connector.connect(readout.wires[0], taken_work)
-        return readout
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector
+    ) -> Port:
+        return self.inner.produce_ingression(given, taken, connector)
 
     def unpack(self, target: Port, connector: Connector) -> Port:
-        taken_incoming, taken_outgoing = connector.tuplate(target)
-        incoming1, incoming2 = connector.duplicate(taken_incoming)
-        continuation = CombPort("x")
-        connector.connect(continuation.wires[0], incoming1)
-        connector.connect(continuation.wires[1], taken_outgoing)
-        self.close(continuation, connector)
-        return WirePort([incoming2])
+        return self.inner.unpack(target, connector)
+
+    def repack(self, target: Port, connector: Connector) -> Port:
+        return self.inner.repack(target, connector)
 
     def __iter__(self) -> Iterator[Adapter]:
-        yield from self.inner
+        parts = list(self.inner)
+        yield from parts[:-1]
         yield self
 
     def adapter_wiring_type(self) -> AdapterWiringType:
-        return LinearWiringType.INVERSE
+        return self.inner.adapter_wiring_type()
 
 
 @dataclasses.dataclass

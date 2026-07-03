@@ -54,7 +54,9 @@ class Connector(abc.ABC):
         self.connect(comb, target)
         return comb.wires[0], comb.wires[1]
 
-    def abstract_port(self, port: Port) -> Wire:
+    def as_wire(self, port: Target) -> Wire:
+        if isinstance(port, Wire):
+            return port
         p, w = Wire.as_tautology()
         self.connect_ports(port, p)
         return w
@@ -73,7 +75,7 @@ class Connector(abc.ABC):
     def sequenced_from(
         self, target: Target, factory_function: Callable[[Wire], tuple[Wire, Wire]]
     ) -> Generator[Iterator[Wire]]:
-        open_end = self.abstract_port(target) if isinstance(target, Port) else target
+        open_end = self.as_wire(target)
 
         def iter() -> Iterator[Wire]:
             nonlocal open_end

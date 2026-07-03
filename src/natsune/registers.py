@@ -211,15 +211,18 @@ class FlowRegister(InterfaceRegister):
     def readout(self) -> FromRegister:
         taken, given = self.extend()
         return _FromRegister(
-            (self.adapter.produce_com(taken, given, self.connector)),
+            (self.adapter.produce_egression(taken, given, self.connector)),
             self.adapter,
             self.connector,
         )
 
     def readin(self) -> ToRegister:
         taken, given = self.extend()
-        self.adapter.close(taken, self.connector)
-        return _ToRegister(WirePort([given]), self.adapter, self.connector)
+        return _ToRegister(
+            self.adapter.produce_ingression(taken, given, self.connector),
+            self.adapter,
+            self.connector,
+        )
 
     def is_assigned(self) -> bool:
         return self.state.wires[0] is not self.interface.wires[0]
@@ -287,9 +290,7 @@ def send_value(from_register: FromRegister, to_register: ToRegister) -> None:
         j -= 1
 
     while j < len(to_parts):
-        readout = to_parts[j].initialize(
-            to_register.connector, to_register.connector.abstract_port(readout)
-        )
+        readout = to_parts[j].repack(readout, to_register.connector)
         j += 1
 
     to_register.set(readout)
