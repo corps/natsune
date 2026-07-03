@@ -37,6 +37,7 @@ from .registers import (
     serialize_values,
     as_constant_register,
     join_to_registers,
+    InterfaceRegister,
 )
 
 unsupported_expr: tuple[type[ast.expr], ...] = (
@@ -277,9 +278,20 @@ class InetFunctionCompiler:
             variable_inputs = invocation.inputs.i_variables.readin().split()
             for input in variable_inputs[len(self.args) :]:
                 input.close()
+
+            result_interface = InterfaceRegister(
+                invocation.control.o_return.adapter, connector
+            )
+            a, b = OneOf.share_to_register(
+                result_interface.interface_readin(), connector
+            )
+
+            send_value(invocation.control.o_return.readout(), a)
+            send_value(invocation.control.o_finish.readout(), b)
+
             return (
                 variable_inputs[: len(self.args)],
-                invocation.control.o_return.readout(),
+                result_interface.readout(),
             )
 
 
@@ -509,9 +521,9 @@ class InetBranchCompiler:
                                 stmt.orelse
                             ),
                         ).invocation(self.flow.buffer) as for_invocation,
-                        self.function_compiler.new_branch().parse_statement_body(
-                            body_iter
-                        ) as continuation,
+                        self.function_compiler.new_branch()
+                        .parse_statement_body(body_iter)
+                        .invocation(self.flow.buffer) as continuation,
                     ):
 
                         if isinstance(stmt, ast.For):
@@ -530,32 +542,30 @@ class InetBranchCompiler:
 
                         send_value(
                             for_invocation.control.o_finish.readout(),
-                            continuation.flow_input.i_variables.readin(),
+                            continuation.inputs.i_variables.readin(),
                         )
 
                         # This finishes iff the continuation finishes
                         send_value(
-                            continuation.o_control.o_finish.readout(),
+                            continuation.control.o_finish.readout(),
                             self.flow.o_control.o_finish.readin(),
                         )
 
-                        o_return_1, o_return_2 = OneOf.share(
+                        o_return_1, o_return_2 = OneOf.share_to_register(
                             self.flow.o_control.o_return.readin(), self.flow.buffer
                         )
                         send_value(
                             for_invocation.control.o_return.readout(), o_return_1
                         )
-                        send_value(
-                            continuation.o_control.o_return.readout(), o_return_1
-                        )
+                        send_value(continuation.control.o_return.readout(), o_return_1)
 
-                        o_break_1, o_break_2 = OneOf.share(
+                        o_break_1, o_break_2 = OneOf.share_to_register(
                             self.flow.o_control.o_break.readin(), self.flow.buffer
                         )
                         send_value(for_invocation.control.o_break.readout(), o_break_1)
-                        send_value(continuation.o_control.o_break.readout(), o_break_1)
+                        send_value(continuation.control.o_break.readout(), o_break_1)
 
-                        o_continue_1, o_continue_2 = OneOf.share(
+                        o_continue_1, o_continue_2 = OneOf.share_to_register(
                             self.flow.o_control.o_continue.readin(), self.flow.buffer
                         )
                         send_value(
@@ -563,7 +573,7 @@ class InetBranchCompiler:
                             o_continue_1,
                         )
                         send_value(
-                            continuation.o_control.o_continue.readout(),
+                            continuation.control.o_continue.readout(),
                             o_continue_1,
                         )
 
@@ -653,6 +663,15 @@ class InetVariablesEvaluator(ast.NodeVisitor):
         for target in ast.walk(node.target):
             if isinstance(target, ast.Name):
                 self.mark_assign_target(target, adapter)
+
+        for target in ast.walk(node.iter):
+            if isinstance(target, ast.Name):
+                self.visit_Name(target)
+
+        for stmt in node.body:
+            self.visit(stmt)
+        for stmt in node.orelse:
+            self.visit(stmt)
 
     def visit_AnnAssign(self, node):
         if not node.simple:

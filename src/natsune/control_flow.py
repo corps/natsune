@@ -79,7 +79,7 @@ class OneOf(ExpansionWithAdapters):
         exec.annihilate(a)
 
     @classmethod
-    def share(
+    def share_to_register(
         cls, to: ToRegister, connector: Connector
     ) -> tuple[ToRegister, ToRegister]:
         a, b, c = cls(to.adapter).invocation(connector)
@@ -159,7 +159,7 @@ class Loop(ExpansionWithAdapters):
             orelse_invocation.control.send_to(orelse_result)
 
             # Option to return from parent
-            o_return_1, o_return_2 = OneOf.share(
+            o_return_1, o_return_2 = OneOf.share_to_register(
                 body_result.o_return.readin(), executor
             )
             # We return if either the current body returns or the recursion returns
@@ -167,7 +167,7 @@ class Loop(ExpansionWithAdapters):
             send_value(recurse.control.o_return.readout(), o_return_2)
 
             # Option to finish through parent
-            o_finished_1, o_finished_2 = OneOf.share(
+            o_finished_1, o_finished_2 = OneOf.share_to_register(
                 body_result.o_finish.readin(), executor
             )
             # We are finished if either the current body breaks or the recursion finishes.
@@ -175,7 +175,7 @@ class Loop(ExpansionWithAdapters):
             send_value(recurse.control.o_finish.readout(), o_finished_2)
 
             # Option to recurse again
-            o_continue_1, o_continue_2 = OneOf.share(
+            o_continue_1, o_continue_2 = OneOf.share_to_register(
                 recurse.inputs.i_variables.readin(), executor
             )
             # We reurse if either the current body continues or finishes
@@ -278,7 +278,7 @@ class ConcurrentMerge(ExpansionWithAdapters):
         pair = AmbiguousPair()
         pair_invocation = pair.invocation(exec)
         left, right = as_from_register(port, self.input_adapter, exec).split()
-        result1, result2 = OneOf.share(
+        result1, result2 = OneOf.share_to_register(
             as_to_register(WirePort([wires[0]]), self.output_adapter, exec), exec
         )
 
@@ -552,7 +552,9 @@ class FlowControl:
     def share(self) -> Generator[tuple[FlowControl, FlowControl]]:
         a, b = tuple(
             FlowControl(*parts)
-            for parts in zip(*(OneOf.share(i.readin(), i.connector) for i in self))
+            for parts in zip(
+                *(OneOf.share_to_register(i.readin(), i.connector) for i in self)
+            )
         )
         try:
             yield a, b

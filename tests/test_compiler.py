@@ -37,15 +37,16 @@ def use_references() -> int:
     take_reference(a)
     return a
 
-def test_compiled_functions(c: Calculus) -> None:
-    # assert basic(29) == 39
-    # assert invoke_an_inet() == 12
-    inet: InetFunctionCompiler = getattr(use_references, '__inet__')
-    inputs, outputs = inet.invocation(c.executor)
-    send_value(outputs, c.to_key(0))
-    c.optimize()
-    while any('graft' in line for line in c.serialize_active_pairs()):
-        c.process_next_interaction()
-    assert c.serialize_active_pairs() == []
+@inet
+def sum_it_up(start: int, end: int) -> int:
+    total = 0
+    for i in range(start, end):
+        print(i)
+        total += i
+    return total
 
+def test_compiled_functions(c: Calculus) -> None:
+    assert basic(29) == 39
+    assert invoke_an_inet() == 12
     assert use_references() == 30
+    assert sum_it_up(1, 10) == 45
