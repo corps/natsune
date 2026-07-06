@@ -148,16 +148,10 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         return
 
     if isinstance(l, Graft):
-        try:
-            l.execute(executor, r, l.wires)
-        except Exception as e:
-            execute_erasure(executor, l, Erasure(e))
+        l.execute(executor, r, l.wires)
         return
     elif isinstance(r, Graft):
-        try:
-            r.execute(executor, l, r.wires)
-        except Exception as e:
-            execute_erasure(executor, r, Erasure(e))
+        r.execute(executor, l, r.wires)
         return
 
     if isinstance(r, Erasure) or isinstance(l, Erasure):

@@ -8,6 +8,7 @@ from typing import (
     Protocol,
     Sequence,
     TYPE_CHECKING,
+    ClassVar,
 )
 
 if TYPE_CHECKING:
@@ -105,6 +106,9 @@ class ExtMergeFuncPort(Port):
     def label_eq(self, other: Port) -> bool:
         return isinstance(other, ExtMergeFuncPort) and self.fn == other.fn
 
+    def __repr__(self) -> str:
+        return f"ExtMergeFuncPort({getattr(self.fn, '__name__', str(self.fn))})"
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExtSplitFuncPort(Port):
@@ -115,6 +119,9 @@ class ExtSplitFuncPort(Port):
 
     def label_eq(self, other: Any) -> bool:
         return isinstance(other, ExtSplitFuncPort) and self.fn == other.fn
+
+    def __repr__(self) -> str:
+        return f"ExtSplitFuncPort({getattr(self.fn, '__name__', str(self.fn))})"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

@@ -18,7 +18,13 @@ from .adapters import (
     Variables,
 )
 from .connector import Connector
-from .control_flow import VariablesFlow, Loop, OneOf, IfThenElse, ConcurrentMerge
+from .control_flow import (
+    VariablesFlow,
+    Loop,
+    AffineSelection,
+    IfThenElse,
+    ConcurrentMerge,
+)
 from .executor import SynchronizedExecutor
 from .invocations import (
     merge_invocation,
@@ -282,8 +288,8 @@ class InetFunctionCompiler:
             result_interface = InterfaceRegister(
                 invocation.control.o_return.adapter, connector
             )
-            a, b = OneOf.share_to_register(
-                result_interface.interface_readin(), connector
+            a, b = AffineSelection.share_to_register(
+                result_interface.interface_readin()
             )
 
             send_value(invocation.control.o_return.readout(), a)
@@ -551,22 +557,22 @@ class InetBranchCompiler:
                             self.flow.o_control.o_finish.readin(),
                         )
 
-                        o_return_1, o_return_2 = OneOf.share_to_register(
-                            self.flow.o_control.o_return.readin(), self.flow.buffer
+                        o_return_1, o_return_2 = AffineSelection.share_to_register(
+                            self.flow.o_control.o_return.readin()
                         )
                         send_value(
                             for_invocation.control.o_return.readout(), o_return_1
                         )
                         send_value(continuation.control.o_return.readout(), o_return_1)
 
-                        o_break_1, o_break_2 = OneOf.share_to_register(
-                            self.flow.o_control.o_break.readin(), self.flow.buffer
+                        o_break_1, o_break_2 = AffineSelection.share_to_register(
+                            self.flow.o_control.o_break.readin()
                         )
                         send_value(for_invocation.control.o_break.readout(), o_break_1)
                         send_value(continuation.control.o_break.readout(), o_break_1)
 
-                        o_continue_1, o_continue_2 = OneOf.share_to_register(
-                            self.flow.o_control.o_continue.readin(), self.flow.buffer
+                        o_continue_1, o_continue_2 = AffineSelection.share_to_register(
+                            self.flow.o_control.o_continue.readin()
                         )
                         send_value(
                             for_invocation.control.o_continue.readout(),

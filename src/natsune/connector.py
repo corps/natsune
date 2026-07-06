@@ -5,7 +5,7 @@ import copy
 from contextlib import AbstractContextManager
 from typing import Generator, Iterator, Callable
 
-from .ports import Port, Wire, WirePort, Target, CombPort, Erasure
+from .ports import Port, Wire, WirePort, Target, CombPort, Erasure, Graft
 
 __all__ = [
     "Connector",
@@ -73,7 +73,7 @@ class Connector(abc.ABC):
 
     @contextlib.contextmanager
     def sequenced_from(
-        self, target: Target, factory_function: Callable[[Wire], tuple[Wire, Wire]]
+        self, target: Target, factory_function: Callable[[Target], tuple[Wire, Wire]]
     ) -> Generator[Iterator[Wire]]:
         open_end = self.as_wire(target)
 

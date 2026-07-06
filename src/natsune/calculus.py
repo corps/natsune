@@ -1,20 +1,8 @@
-from curses.ascii import alt
-from natsune.adapters import Adapter, ValueAdapter
-from natsune.registers import (
-    InterfaceRegister,
-    ToRegister,
-    as_to_register,
-    FromRegister,
-    as_from_register,
-    as_constant_register,
-)
 import dataclasses
-import os
-import tempfile
-import time
 from collections import defaultdict
 from typing import Any, Iterator, Self, Sequence, Callable, Literal
 
+from natsune.adapters import Adapter, ValueAdapter
 from natsune.ambiguous import AmbiguousPair
 from natsune.executor import SynchronizedExecutor, Executor
 from natsune.optimizer import optimize
@@ -31,6 +19,13 @@ from natsune.ports import (
     ExtMergeFuncPort,
     ForkPort,
     WirePort,
+)
+from natsune.registers import (
+    ToRegister,
+    as_to_register,
+    FromRegister,
+    as_from_register,
+    as_constant_register,
 )
 
 
@@ -91,12 +86,19 @@ class Calculus:
             yield from self.tracer.buffer
             self.tracer.buffer.clear()
 
+    def reduce(self, target: int | Target) -> Port | None:
+        list(self.continue_readout())
+        result = self[target].target
+        while isinstance(result, WirePort):
+            result = result.wires[0].target
+        return result
+
     def optimize(self, level: Literal[1, 2, 3] = 3) -> None:
         optimize(self.executor, self.executor.active_pairs, level=level)
 
     def serialize_active_pairs(self) -> list[str]:
         parts: list[str] = []
-        cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
+        cache = self.new_wires_cache()
 
         for i, k in self._wires.items():
             if i < 1000:
@@ -118,6 +120,10 @@ class Calculus:
         while isinstance(target, WirePort):
             target = target.wires[0].target
         return target
+
+    def new_wires_cache(self) -> dict[Wire, str]:
+        cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
+        return cache
 
     def serialize_port(
         self, port: Port, wires_cache: dict[Wire, str], reverse: bool
@@ -222,3 +228,6 @@ class Calculus:
 
     def const(self, value: Any) -> FromRegister:
         return as_constant_register(value, self.executor)
+
+    def erasure(self) -> FromRegister:
+        return as_from_register(Erasure(), ValueAdapter(), self.executor)

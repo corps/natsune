@@ -31,6 +31,7 @@ class FromRegister(Protocol):
     def split(self) -> Sequence[FromRegister]: ...
     def invert(self) -> ToRegister: ...
     def duplicate(self) -> tuple[FromRegister, FromRegister]: ...
+    def as_interface(self) -> InterfaceRegister: ...
 
 
 class ToRegister(Protocol):
@@ -43,6 +44,7 @@ class ToRegister(Protocol):
     def connector(self) -> Connector: ...
     def split(self) -> Sequence[ToRegister]: ...
     def invert(self) -> FromRegister: ...
+    def as_interface(self) -> InterfaceRegister: ...
 
 
 def as_constant_register(value: Any, connector: Connector) -> FromRegister:
@@ -98,6 +100,11 @@ class _FromRegister:
             _FromRegister(WirePort([x2]), self.adapter, self.connector),
         )
 
+    def as_interface(self) -> InterfaceRegister:
+        interface = InterfaceRegister(self.adapter, self.connector, self.alternative)
+        send_value(self, interface.interface_readin())
+        return interface
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class _ToRegister:
@@ -135,6 +142,11 @@ class _ToRegister:
     def invert(self) -> FromRegister:
         return _FromRegister(self.port, self.adapter, self.connector)
 
+    def as_interface(self) -> InterfaceRegister:
+        interface = InterfaceRegister(self.adapter, self.connector, self.alternative)
+        send_value(interface.interface_readin().invert(), self)
+        return interface
+
 
 @dataclasses.dataclass(slots=True)
 class InterfaceRegister:
@@ -155,7 +167,9 @@ class InterfaceRegister:
         return take, give
 
     def interface_readin(self) -> ToRegister:
-        return _ToRegister(self.interface, self.adapter, self.connector)
+        return _ToRegister(
+            self.interface, self.adapter, self.connector, self.alternative
+        )
 
     def readout(self) -> FromRegister:
         taken, given = self.extend()
@@ -189,6 +203,9 @@ class InterfaceRegister:
             self.connector.annihilate(self.state)
         else:
             self.adapter.close(self.state, self.connector)
+
+    def annihilate(self, p: Port | None = None) -> None:
+        self.connector.annihilate(self.state, p)
 
     @classmethod
     def from_to_register(cls, to_reg: ToRegister) -> InterfaceRegister:

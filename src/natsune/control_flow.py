@@ -1,8 +1,9 @@
+from multiprocessing.sharedctypes import synchronized
 import contextlib
 import copy
 import dataclasses
 from functools import cached_property
-from typing import Sequence, Self, Callable, Any, Iterator, cast, Generator
+from typing import Sequence, Self, Callable, Any, Iterator, Generator
 
 from .adapters import (
     Adapter,
@@ -19,12 +20,12 @@ from .invocations import (
     expansion_invocation,
     filter_invocation,
     send_parameter,
-    unpack_wires,
     merge_invocation,
     send_parameters,
     unpack_port_and_wires,
+    unpack_wires,
 )
-from .ports import Port, Wire, ValuePort, WirePort, Erasure
+from .ports import Port, Wire, ValuePort, WirePort, Erasure, CombPort, Expansion, Graft
 from .registers import (
     as_to_register,
     send_value,
@@ -38,7 +39,7 @@ from .registers import (
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class OneOf(ExpansionWithAdapters):
+class AffineSelection(ExpansionWithAdapters):
     adapter: Adapter
 
     @cached_property
@@ -65,24 +66,23 @@ class OneOf(ExpansionWithAdapters):
         return self
 
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
-        a, b = exec.tuplate(wires[0])
+        first_input, wire_interface = unpack_port_and_wires(self, port, wires, exec)
+        a, b = wire_interface.split()
 
         if isinstance(port, Erasure):
             if port.value is None:
-                exec.connect(a, b)
+                send_value(a.readout(), b.readin())
             else:
-                exec.annihilate(a, port)
-                exec.annihilate(b, port)
+                a.annihilate(port)
+                b.annihilate(port)
             return
 
-        exec.connect(port, b)
-        exec.annihilate(a)
+        send_value(first_input.readout(), b.readin())
+        a.annihilate()
 
     @classmethod
-    def share_to_register(
-        cls, to: ToRegister, connector: Connector
-    ) -> tuple[ToRegister, ToRegister]:
-        a, b, c = cls(to.adapter).invocation(connector)
+    def share_to_register(cls, to: ToRegister) -> tuple[ToRegister, ToRegister]:
+        a, b, c = cls(to.adapter).invocation(to.connector)
         send_value(c, to)
         return a, b
 
@@ -103,12 +103,16 @@ class Loop(ExpansionWithAdapters):
 
     def invocation(self, invoker: Connector) -> FlowInvocation:
         inputs, outputs = expansion_invocation(self, invoker)
-        return FlowInvocation.split(inputs, outputs)
+
+        return FlowInvocation(FlowInput(*inputs.split()), FlowControl(*outputs.split()))
+
+    def __copy__(self) -> Self:
+        return self
 
     def __call__(
         self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None:
-        if not isinstance(port, ValuePort):
+        if not isinstance(port, CombPort):
             for wire in wires:
                 executor.annihilate(wire, port)
             for wire in port.wires:
@@ -119,7 +123,10 @@ class Loop(ExpansionWithAdapters):
 
         with (
             FlowInvocation.split(inputs, outputs) as this_invocation,
-            this_invocation.control.share() as (orelse_result, body_result),
+            this_invocation.control.share_to_interface() as (
+                orelse_result,
+                body_result,
+            ),
             self.iteration.invocation(executor) as iterable_invocation,
             self.body.invocation(executor) as body_invocation,
             self.orelse.invocation(executor) as orelse_invocation,
@@ -159,24 +166,24 @@ class Loop(ExpansionWithAdapters):
             orelse_invocation.control.send_to(orelse_result)
 
             # Option to return from parent
-            o_return_1, o_return_2 = OneOf.share_to_register(
-                body_result.o_return.readin(), executor
+            o_return_1, o_return_2 = AffineSelection.share_to_register(
+                body_result.o_return.readin()
             )
             # We return if either the current body returns or the recursion returns
             send_value(body_invocation.control.o_return.readout(), o_return_1)
             send_value(recurse.control.o_return.readout(), o_return_2)
 
             # Option to finish through parent
-            o_finished_1, o_finished_2 = OneOf.share_to_register(
-                body_result.o_finish.readin(), executor
+            o_finished_1, o_finished_2 = AffineSelection.share_to_register(
+                body_result.o_finish.readin()
             )
             # We are finished if either the current body breaks or the recursion finishes.
             send_value(body_invocation.control.o_break.readout(), o_finished_1)
             send_value(recurse.control.o_finish.readout(), o_finished_2)
 
             # Option to recurse again
-            o_continue_1, o_continue_2 = OneOf.share_to_register(
-                recurse.inputs.i_variables.readin(), executor
+            o_continue_1, o_continue_2 = AffineSelection.share_to_register(
+                recurse.inputs.i_variables.readin()
             )
             # We reurse if either the current body continues or finishes
             send_value(body_invocation.control.o_continue.readout(), o_continue_1)
@@ -217,6 +224,8 @@ class IfThenElse(ExpansionWithAdapters):
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
         if not isinstance(port, ValuePort):
             for wire in port.wires:
+                exec.annihilate(wire, port)
+            for wire in wires:
                 exec.annihilate(wire, port)
             return
 
@@ -278,8 +287,8 @@ class ConcurrentMerge(ExpansionWithAdapters):
         pair = AmbiguousPair()
         pair_invocation = pair.invocation(exec)
         left, right = as_from_register(port, self.input_adapter, exec).split()
-        result1, result2 = OneOf.share_to_register(
-            as_to_register(WirePort([wires[0]]), self.output_adapter, exec), exec
+        result1, result2 = AffineSelection.share_to_register(
+            as_to_register(WirePort([wires[0]]), self.output_adapter, exec)
         )
 
         send_value(left, pair_invocation.i_value_1)
@@ -371,7 +380,7 @@ class VariablesFlow(ExpansionWithAdapters):
 
     @cached_property
     def flow_input(self) -> FlowInput:
-        return FlowInput.split(self.input_interface)
+        return FlowInput(*self.input_interface.split())
 
     @property
     def input_adapter(self) -> Adapter:
@@ -416,7 +425,6 @@ class VariablesFlow(ExpansionWithAdapters):
                 wire_id = id(wire)
                 if wire_id in new_wire_identity:
                     wire = new_wire_identity[wire_id]
-                    assert not wire.target
                 else:
                     wire = copy.copy(wire)
                     new_wire_identity[wire_id] = wire
@@ -451,19 +459,10 @@ class FlowInvocation:
     control: FlowControl
 
     @classmethod
-    def adapter(cls, return_adapter: Adapter, variables: Variables) -> Adapter:
-        return ParValueAdapter(
-            [
-                FlowInput.adapter(variables),
-                FlowControl.adapter(return_adapter, variables),
-            ]
-        )
-
-    @classmethod
     def split(
         cls, inputs: InterfaceRegister, outputs: InterfaceRegister
     ) -> FlowInvocation:
-        return FlowInvocation(FlowInput.split(inputs), FlowControl.split(outputs))
+        return FlowInvocation(FlowInput(*inputs.split()), FlowControl.split(outputs))
 
     def close(self) -> None:
         self.inputs.close()
@@ -490,10 +489,6 @@ class FlowInput:
             ]
         )
 
-    @classmethod
-    def split(cls, source: InterfaceRegister) -> FlowInput:
-        return FlowInput(*source.split())
-
     def close(self) -> None:
         self.i_variables.close()
         self.i_value.close()
@@ -505,6 +500,8 @@ class FlowControl:
     o_continue: InterfaceRegister
     o_break: InterfaceRegister
     o_finish: InterfaceRegister
+
+    # o_completion_errors: InterfaceRegister
 
     @classmethod
     def adapter(cls, return_adapter: Adapter, variables: Variables) -> Adapter:
@@ -544,17 +541,31 @@ class FlowControl:
         self.o_finish.close()
 
     def __iter__(self) -> Iterator[InterfaceRegister]:
-        for field in dataclasses.fields(self):
-            if field.type is InterfaceRegister:
-                yield cast(InterfaceRegister, getattr(self, field.name))
+        yield self.o_return
+        yield self.o_continue
+        yield self.o_break
+        yield self.o_finish
 
     @contextlib.contextmanager
-    def share(self) -> Generator[tuple[FlowControl, FlowControl]]:
-        a, b = tuple(
-            FlowControl(*parts)
-            for parts in zip(
-                *(OneOf.share_to_register(i.readin(), i.connector) for i in self)
-            )
+    def share_to_interface(self) -> Generator[tuple[FlowControl, FlowControl]]:
+        return1, return2 = AffineSelection.share_to_register(self.o_return.readin())
+        continue1, continue2 = AffineSelection.share_to_register(
+            self.o_continue.readin()
+        )
+        break1, break2 = AffineSelection.share_to_register(self.o_break.readin())
+        finish1, finish2 = AffineSelection.share_to_register(self.o_finish.readin())
+
+        a = FlowControl(
+            return1.as_interface(),
+            continue1.as_interface(),
+            break1.as_interface(),
+            finish1.as_interface(),
+        )
+        b = FlowControl(
+            return2.as_interface(),
+            continue2.as_interface(),
+            break2.as_interface(),
+            finish2.as_interface(),
         )
         try:
             yield a, b
