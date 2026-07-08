@@ -1,15 +1,18 @@
+from natsune.registers import InterfaceRegister
+from functools import cached_property
+from natsune.adapters import Adapter
 import dataclasses
 import abc
 import contextlib
 import copy
 from contextlib import AbstractContextManager
-from typing import Generator, Iterator, Callable
+from typing import Generator, Iterator, Callable, Sequence, Self
 
 from .ports import Port, Wire, WirePort, Target, CombPort, Erasure, Graft
 
 __all__ = [
     "Connector",
-    "BufferingConnector",
+    "ExpansionBuilder",
 ]
 
 
@@ -88,8 +91,64 @@ class Connector(abc.ABC):
 
 
 @dataclasses.dataclass(slots=True)
-class BufferingConnector(Connector):
+class ExpansionBuilder(Connector):
+    input_adapter: Adapter
+    output_adapter: Adapter
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
+
+    @cached_property
+    def input_interface(self) -> InterfaceRegister:
+        return InterfaceRegister(self.input_adapter, self)
+
+    @cached_property
+    def output_interface(self) -> InterfaceRegister:
+        return InterfaceRegister(self.output_adapter, self)
 
     def connect_ports(self, l: Port, r: Port) -> None:
         self.active_pairs.append((l, r))
+
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
+        new_wire_identity: dict[int, Wire] = {}
+        q: list[Port] = []
+        pairs: list[tuple[Port, Port]] = []
+
+        if isinstance(port, Erasure):
+            for wire in wires:
+                exec.annihilate(wire, port)
+            return
+
+        for l, r in self.active_pairs:
+            ll = copy.copy(l)
+            rr = copy.copy(r)
+            pairs.append((ll, rr))
+            q.append(ll)
+            q.append(rr)
+
+        return_port = copy.copy(self.output_interface.interface)
+        exec.connect(return_port, wires[0])
+        q.append(return_port)
+
+        args_port = copy.copy(self.input_interface.interface)
+        exec.connect(args_port, port)
+        q.append(args_port)
+
+        while q:
+            head = q.pop()
+
+            for i, wire in enumerate(head.wires):
+                wire_id = id(wire)
+                if wire_id in new_wire_identity:
+                    wire = new_wire_identity[wire_id]
+                else:
+                    wire = copy.copy(wire)
+                    new_wire_identity[wire_id] = wire
+                    if wire.target:
+                        q.append(wire.target)
+
+                head.wires[i] = wire
+
+        for l, r in pairs:
+            exec.connect_ports(l, r)
+
+    def __copy__(self) -> Self:
+        return self

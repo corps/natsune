@@ -1,6 +1,6 @@
 from typing import Literal
 
-from .connector import BufferingConnector, Connector
+from .connector import Connector
 
 __all__ = ["optimize"]
 

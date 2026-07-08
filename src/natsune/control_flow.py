@@ -1,4 +1,4 @@
-from multiprocessing.sharedctypes import synchronized
+from multiprocessing import Value
 import contextlib
 import copy
 import dataclasses
@@ -10,10 +10,9 @@ from .adapters import (
     ValueAdapter,
     ParValueAdapter,
     Variables,
-    AlternativesAdapter,
 )
 from .ambiguous import AmbiguousPair
-from .connector import Connector, BufferingConnector
+from .connector import Connector, ExpansionBuilder
 from .executor import Executor
 from .invocations import (
     ExpansionWithAdapters,
@@ -36,55 +35,6 @@ from .registers import (
     InterfaceRegister,
     send_values,
 )
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class AffineSelection(ExpansionWithAdapters):
-    adapter: Adapter
-
-    @cached_property
-    def input_adapter(self) -> Adapter:
-        return self.adapter
-
-    @cached_property
-    def output_adapter(self) -> Adapter:
-        return ParValueAdapter(
-            [
-                self.adapter,
-                self.adapter,
-            ]
-        )
-
-    def invocation(
-        self, invoker: Connector
-    ) -> tuple[ToRegister, ToRegister, FromRegister]:
-        inputs, outputs = expansion_invocation(self, invoker)
-        alt, result = outputs.split()
-        return inputs.readin(), alt.readin(), result.readout()
-
-    def __copy__(self) -> Self:
-        return self
-
-    def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
-        first_input, wire_interface = unpack_port_and_wires(self, port, wires, exec)
-        a, b = wire_interface.split()
-
-        if isinstance(port, Erasure):
-            if port.value is None:
-                send_value(a.readout(), b.readin())
-            else:
-                a.annihilate(port)
-                b.annihilate(port)
-            return
-
-        send_value(first_input.readout(), b.readin())
-        a.annihilate()
-
-    @classmethod
-    def share_to_register(cls, to: ToRegister) -> tuple[ToRegister, ToRegister]:
-        a, b, c = cls(to.adapter).invocation(to.connector)
-        send_value(c, to)
-        return a, b
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -123,14 +73,14 @@ class Loop(ExpansionWithAdapters):
 
         with (
             FlowInvocation.split(inputs, outputs) as this_invocation,
-            this_invocation.control.share_to_interface() as (
-                orelse_result,
-                body_result,
-            ),
+            # this_invocation.control.share_to_interface() as (
+            #     orelse_result,
+            #     body_result,
+            # ),
             self.iteration.invocation(executor) as iterable_invocation,
             self.body.invocation(executor) as body_invocation,
             self.orelse.invocation(executor) as orelse_invocation,
-            self.invocation(executor) as recurse,
+            # self.invocation(executor) as recurse,
         ):
             iter_input_1, iter_input_2 = (
                 this_invocation.inputs.i_value.readout().duplicate()
@@ -140,19 +90,27 @@ class Loop(ExpansionWithAdapters):
                 iterable_invocation.inputs.i_variables.readin(),
             )
             send_value(iter_input_1, iterable_invocation.inputs.i_value.readin())
-            send_value(iter_input_2, recurse.inputs.i_value.readin())
 
-            cond_invocation = IfThenElse(self.body.variables.adapter).invocation(
+            true_case = ExpansionBuilder(self.input_adapter, self.output_adapter)
+            false_case = ExpansionBuilder(self.input_adapter, self.output_adapter)
+
+            cond_invocation = IfThenElse(true_case, false_case).invocation(
                 executor
             )
+            cond_i_iter_context, cond_i_variables_context = cond_invocation.i_context.readin().split()
+
             send_value(
                 iterable_invocation.control.o_return.readout(),
-                cond_invocation.i_value.readin(),
+                cond_invocation.i_test_value.readin(),
             )
             send_value(
                 iterable_invocation.control.o_finish.readout(),
-                cond_invocation.i_context.readin(),
+                cond_i_variables_context,
             )
+            send_value(iter_input_2, cond_i_iter_context)
+
+            fi, fv = false_case.input_interface.readout().split()
+            fi.close()
 
             send_value(
                 cond_invocation.o_orelse.readout(),
@@ -166,33 +124,33 @@ class Loop(ExpansionWithAdapters):
             orelse_invocation.control.send_to(orelse_result)
 
             # Option to return from parent
-            o_return_1, o_return_2 = AffineSelection.share_to_register(
-                body_result.o_return.readin()
-            )
+            # o_return_1, o_return_2 = AffineSelection.share_to_register(
+            #     body_result.o_return.readin()
+            # )
             # We return if either the current body returns or the recursion returns
             send_value(body_invocation.control.o_return.readout(), o_return_1)
             send_value(recurse.control.o_return.readout(), o_return_2)
 
             # Option to finish through parent
-            o_finished_1, o_finished_2 = AffineSelection.share_to_register(
-                body_result.o_finish.readin()
-            )
+            # o_finished_1, o_finished_2 = AffineSelection.share_to_register(
+            #     body_result.o_finish.readin()
+            # )
             # We are finished if either the current body breaks or the recursion finishes.
             send_value(body_invocation.control.o_break.readout(), o_finished_1)
             send_value(recurse.control.o_finish.readout(), o_finished_2)
 
             # Option to recurse again
-            o_continue_1, o_continue_2 = AffineSelection.share_to_register(
-                recurse.inputs.i_variables.readin()
-            )
+            # o_continue_1, o_continue_2 = AffineSelection.share_to_register(
+            #     recurse.inputs.i_variables.readin()
+            # )
             # We reurse if either the current body continues or finishes
             send_value(body_invocation.control.o_continue.readout(), o_continue_1)
             send_value(body_invocation.control.o_finish.readout(), o_continue_2)
 
-
 @dataclasses.dataclass(slots=True, frozen=True)
 class IfThenElse(ExpansionWithAdapters):
-    context_adapter: Adapter
+    true_case: ExpansionWithAdapters
+    false_case: ExpansionWithAdapters
 
     def __copy__(self) -> Self:
         return self
@@ -202,24 +160,28 @@ class IfThenElse(ExpansionWithAdapters):
         return ValueAdapter()  # value
 
     @cached_property
+    def expansion_inputs_adapter(self) -> Adapter:
+        assert self.true_case.input_adapter == self.false_case.output_adapter
+        return self.true_case.input_adapter
+
+    @cached_property
+    def expansion_outputs_adapter(self) -> Adapter:
+        assert self.true_case.output_adapter == self.false_case.output_adapter
+        return self.true_case.output_adapter
+
+    @cached_property
     def output_adapter(self) -> Adapter:
         return ParValueAdapter(
             [
-                self.context_adapter,
-                AlternativesAdapter(
-                    [
-                        self.context_adapter,
-                        self.context_adapter,
-                    ]
-                ),
+                self.expansion_inputs_adapter,
+                self.expansion_outputs_adapter,
             ]
         )
 
     def invocation(self, invoker: Connector) -> IfThenElseInvocation:
-        inputs, outputs = expansion_invocation(self, invoker)
-        context, alternatives = outputs.split()
-        a, b = alternatives.split()
-        return IfThenElseInvocation(inputs, context, a, b)
+        cond, outputs = expansion_invocation(self, invoker)
+        case_inputs, case_outputs = outputs.split()
+        return IfThenElseInvocation(cond, case_inputs, case_outputs)
 
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
         if not isinstance(port, ValuePort):
@@ -229,35 +191,29 @@ class IfThenElse(ExpansionWithAdapters):
                 exec.annihilate(wire, port)
             return
 
-        context, alternatives = as_to_register(
-            WirePort([wires[0]]), self.output_adapter, exec
-        ).split()
-        i_context = context.invert()
-        a, b = alternatives.split()
+        case_inputs, case_outputs = unpack_wires(self, wires, exec).split()
 
         if port.value:
-            send_value(i_context, a)
-            b.close()
+            inputs, outputs = expansion_invocation(self.true_case, exec)
         else:
-            send_value(i_context, b)
-            a.close()
+            inputs, outputs = expansion_invocation(self.false_case, exec)
+        send_value(case_inputs.readout(), inputs.readin())
+        send_value(outputs.readout(), case_outputs.readin())
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class IfThenElseInvocation:
-    i_value: InterfaceRegister
+    i_test_value: InterfaceRegister
     i_context: InterfaceRegister
-    o_body: InterfaceRegister
-    o_orelse: InterfaceRegister
+    o_result: InterfaceRegister
 
     def __enter__(self) -> Self:
         return self
 
     def close(self) -> None:
-        self.i_value.close()
+        self.i_test_value.close()
         self.i_context.close()
-        self.o_body.close()
-        self.o_orelse.close()
+        self.o_result.close()
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
@@ -287,30 +243,48 @@ class ConcurrentMerge(ExpansionWithAdapters):
         pair = AmbiguousPair()
         pair_invocation = pair.invocation(exec)
         left, right = as_from_register(port, self.input_adapter, exec).split()
-        result1, result2 = AffineSelection.share_to_register(
-            as_to_register(WirePort([wires[0]]), self.output_adapter, exec)
-        )
 
         send_value(left, pair_invocation.i_value_1)
         send_value(right, pair_invocation.i_value_2)
 
         first_value_1, first_value_2 = pair_invocation.o_first_value.duplicate()
 
-        if_invocation = IfThenElse(ValueAdapter()).invocation(exec)
-        send_value(
-            send_parameter(filter_invocation(self.should_short, exec), first_value_1),
-            if_invocation.i_value.readin(),
+        true_case = ExpansionBuilder(
+            ParValueAdapter([ValueAdapter(), ValueAdapter()]),
+            ValueAdapter(),
         )
 
-        send_value(first_value_2, if_invocation.i_context.readin())
+        false_case = ExpansionBuilder(
+            ParValueAdapter([ValueAdapter(), ValueAdapter()]),
+            ValueAdapter(),
+        )
 
-        send_value(if_invocation.o_body.readout(), result1)
+        if_invocation = IfThenElse(
+            true_case,
+            false_case,
+        ).invocation(exec)
+
+        send_value(
+            send_parameter(filter_invocation(self.should_short, exec), first_value_1),
+            if_invocation.i_test_value.readin(),
+        )
+
+        if_first_value, if_second_value = if_invocation.i_context.readin().split()
+        send_value(first_value_2, if_first_value)
+        send_value(pair_invocation.o_second_value, if_second_value)
+
+        t1, t2 = true_case.input_interface.readout().split()
+        t2.close()
+        send_value(t1, true_case.output_interface.readin())
+
+        f1, f2 = false_case.input_interface.readout().split()
+
         send_value(
             send_parameters(
                 merge_invocation(self.merge_operation, exec),
-                (if_invocation.o_orelse.readout(), pair_invocation.o_second_value),
+                (f1, f2),
             ),
-            result2,
+            false_case.output_interface.readin(),
         )
 
 
@@ -328,50 +302,40 @@ class ConcurrentMergeInvocation:
         return cls(a, b, outputs)
 
 
-@dataclasses.dataclass(slots=True)
-class VariablesFlow(ExpansionWithAdapters):
+@dataclasses.dataclass(slots=True, kw_only=True)
+class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
 
+    input_adapter: Adapter = dataclasses.field(init=False)
+    output_adapter: Adapter = dataclasses.field(init=False)
     variable_registers: dict[str, FlowRegister] = dataclasses.field(
         default_factory=dict
     )
-    buffer: BufferingConnector = dataclasses.field(default_factory=BufferingConnector)
 
     def __post_init__(self) -> None:
+        self.input_adapter = FlowInput.adapter(self.variables)
+        self.output_adapter = FlowControl.adapter(self.return_adapter, self.variables)
+
         for name, variable_input in zip(
             self.variables.keys(), self.flow_input.i_variables.split()
         ):
             flow_register = self.variable_registers[name] = FlowRegister(
-                self.variables[name], self.buffer
+                self.variables[name], self
             )
             send_value(variable_input.readout(), flow_register.interface_readin())
 
-    def variables_readout(self, owned: bool) -> FromRegister:
+    def variables_readout(self) -> FromRegister:
         x1, x2 = Wire.as_interface()
         send_values(
             [r.readout() for r in self.variable_registers.values()],
-            as_to_register(x1, self.variables.adapter, self.buffer).split(),
+            as_to_register(x1, self.variables.adapter, self).split(),
         )
 
         return as_from_register(
             x2,
             self.variables.adapter,
-            self.buffer,
-        )
-
-    @cached_property
-    def input_interface(self) -> InterfaceRegister:
-        return InterfaceRegister(
-            FlowInput.adapter(self.variables),
-            self.buffer,
-        )
-
-    @cached_property
-    def output_interface(self) -> InterfaceRegister:
-        return InterfaceRegister(
-            FlowControl.adapter(self.return_adapter, self.variables),
-            self.buffer,
+            self,
         )
 
     @cached_property
@@ -382,59 +346,8 @@ class VariablesFlow(ExpansionWithAdapters):
     def flow_input(self) -> FlowInput:
         return FlowInput(*self.input_interface.split())
 
-    @property
-    def input_adapter(self) -> Adapter:
-        return self.input_interface.adapter
-
-    @property
-    def output_adapter(self) -> Adapter:
-        return self.output_interface.adapter
-
     def __copy__(self) -> Self:
         return self
-
-    def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire], /) -> None:
-        new_wire_identity: dict[int, Wire] = {}
-        q: list[Port] = []
-        pairs: list[tuple[Port, Port]] = []
-
-        if isinstance(port, Erasure):
-            for wire in wires:
-                exec.annihilate(wire, port)
-            return
-
-        for l, r in self.buffer.active_pairs:
-            ll = copy.copy(l)
-            rr = copy.copy(r)
-            pairs.append((ll, rr))
-            q.append(ll)
-            q.append(rr)
-
-        return_port = copy.copy(self.output_interface.interface)
-        exec.connect(return_port, wires[0])
-        q.append(return_port)
-
-        args_port = copy.copy(self.input_interface.interface)
-        exec.connect(args_port, port)
-        q.append(args_port)
-
-        while q:
-            head = q.pop()
-
-            for i, wire in enumerate(head.wires):
-                wire_id = id(wire)
-                if wire_id in new_wire_identity:
-                    wire = new_wire_identity[wire_id]
-                else:
-                    wire = copy.copy(wire)
-                    new_wire_identity[wire_id] = wire
-                    if wire.target:
-                        q.append(wire.target)
-
-                head.wires[i] = wire
-
-        for l, r in pairs:
-            exec.connect_ports(l, r)
 
     def invocation(self, invoker: Connector) -> FlowInvocation:
         inputs, outputs = expansion_invocation(self, invoker)
@@ -505,7 +418,7 @@ class FlowControl:
 
     @classmethod
     def adapter(cls, return_adapter: Adapter, variables: Variables) -> Adapter:
-        return AlternativesAdapter(
+        return ParValueAdapter(
             [
                 return_adapter,
                 variables.adapter,
@@ -545,30 +458,3 @@ class FlowControl:
         yield self.o_continue
         yield self.o_break
         yield self.o_finish
-
-    @contextlib.contextmanager
-    def share_to_interface(self) -> Generator[tuple[FlowControl, FlowControl]]:
-        return1, return2 = AffineSelection.share_to_register(self.o_return.readin())
-        continue1, continue2 = AffineSelection.share_to_register(
-            self.o_continue.readin()
-        )
-        break1, break2 = AffineSelection.share_to_register(self.o_break.readin())
-        finish1, finish2 = AffineSelection.share_to_register(self.o_finish.readin())
-
-        a = FlowControl(
-            return1.as_interface(),
-            continue1.as_interface(),
-            break1.as_interface(),
-            finish1.as_interface(),
-        )
-        b = FlowControl(
-            return2.as_interface(),
-            continue2.as_interface(),
-            break2.as_interface(),
-            finish2.as_interface(),
-        )
-        try:
-            yield a, b
-        finally:
-            a.close()
-            b.close()

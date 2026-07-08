@@ -563,7 +563,7 @@ class InetBranchCompiler:
                         send_value(
                             for_invocation.control.o_return.readout(), o_return_1
                         )
-                        send_value(continuation.control.o_return.readout(), o_return_1)
+                        send_value(continuation.control.o_return.readout(), o_return_2)
 
                         o_break_1, o_break_2 = AffineSelection.share_to_register(
                             self.flow.o_control.o_break.readin()
@@ -599,7 +599,7 @@ class InetBranchCompiler:
                     ):
                         send_value(
                             self.evaluate_from_expression(stmt.test),
-                            if_invocation.i_value.readin(),
+                            if_invocation.i_test_value.readin(),
                         )
                         send_value(
                             self.flow.variables_readout(True),

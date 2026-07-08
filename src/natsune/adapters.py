@@ -146,11 +146,6 @@ class ParValueAdapter(Adapter):
         return tuple(a.adapter_wiring_type() for a in self.concurrent_items)
 
 
-# A version of par value adapter indicating that only one of the results should be set, while
-# the others should be annihilated (not closed).
-class AlternativesAdapter(ParValueAdapter): ...
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReferenceAdapter(Adapter):
     inner: Adapter

@@ -143,7 +143,7 @@ class _ToRegister:
         return _FromRegister(self.port, self.adapter, self.connector)
 
     def as_interface(self) -> InterfaceRegister:
-        interface = InterfaceRegister(self.adapter, self.connector, self.alternative)
+        interface = InterfaceRegister(self.adapter, self.connector)
         send_value(interface.interface_readin().invert(), self)
         return interface
 
@@ -152,7 +152,6 @@ class _ToRegister:
 class InterfaceRegister:
     adapter: Adapter
     connector: Connector
-    alternative: bool = False
 
     interface: WirePort = dataclasses.field(init=False)
     state: Port = dataclasses.field(init=False)
@@ -168,7 +167,7 @@ class InterfaceRegister:
 
     def interface_readin(self) -> ToRegister:
         return _ToRegister(
-            self.interface, self.adapter, self.connector, self.alternative
+            self.interface, self.adapter, self.connector
         )
 
     def readout(self) -> FromRegister:

@@ -29,7 +29,6 @@ class ExpansionWithAdapters(Expansion, Protocol):
     @property
     def output_adapter(self) -> Adapter: ...
 
-
 def expansion_invocation(
     expansion: ExpansionWithAdapters, connector: Connector
 ) -> tuple[InterfaceRegister, InterfaceRegister]:
