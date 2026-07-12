@@ -4,13 +4,13 @@ from .connector import Connector
 
 __all__ = ["optimize"]
 
-from .interactions import (
+from natsune.interactions import (
     execute_commute_or_anihilate,
     execute_read_wire,
     execute_erasure,
 )
 
-from .ports import CombPort, WirePort, Erasure, Port
+from natsune.ports import CombPort, WirePort, Erasure, Port
 
 
 def optimize(

@@ -11,15 +11,14 @@ from typing import (
     Any,
 )
 
-from .connector import Connector
-from .ports import Wire, WirePort, Target, Port, Erasure, CombPort
-from .special_forms import Par, Ref, Inverse
+from natsune.connector import Connector
+from natsune.ports import Wire, WirePort, Target, Port, Erasure, CombPort
+from natsune.special_forms import Par, Ref, Inverse
 
 
 class LinearWiringType(IntEnum):
     VALUE = 0
     REFERENCE = 1
-    # INVERSE = 2
 
 
 type AdapterWiringType = LinearWiringType | tuple[AdapterWiringType, ...]

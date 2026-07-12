@@ -1,20 +1,27 @@
-from multiprocessing import Value
-import contextlib
-import copy
+from natsune.control_flow_generated import (
+    FlowControlFrom,
+    FlowInputFrom,
+    FlowControlInto,
+    FlowInputInto,
+    IfThenElseOutputInto,
+    MergeOutputInto,
+    MergeOutputFrom,
+    IfThenElseOutputFrom,
+)
 import dataclasses
 from functools import cached_property
-from typing import Sequence, Self, Callable, Any, Iterator, Generator
+from typing import Sequence, Self, Callable, Any
 
-from .adapters import (
+from natsune.adapters import (
     Adapter,
     ValueAdapter,
     ParValueAdapter,
     Variables,
 )
-from .ambiguous import AmbiguousPair
-from .connector import Connector, ExpansionBuilder
-from .executor import Executor
-from .invocations import (
+from natsune.ambiguous import AmbiguousPair
+from natsune.connector import Connector, ExpansionBuilder
+from natsune.executor import Executor
+from natsune.invocations import (
     ExpansionWithAdapters,
     expansion_invocation,
     filter_invocation,
@@ -23,23 +30,194 @@ from .invocations import (
     send_parameters,
     unpack_port_and_wires,
     unpack_wires,
+    RHS,
+    generate_register_pair_types,
+    pack_into,
+    pack_from,
+    LHS,
+    closer,
+    Invocation,
 )
-from .ports import Port, Wire, ValuePort, WirePort, Erasure, CombPort, Expansion, Graft
-from .registers import (
+from natsune.ports import Port, Wire, ValuePort, CombPort, Expansion, Erasure, WirePort
+from natsune.registers import (
     as_to_register,
     send_value,
     as_from_register,
-    ToRegister,
     FromRegister,
     FlowRegister,
-    InterfaceRegister,
     send_values,
+    FromInterfaceRegister,
+    ToInterfaceRegister,
 )
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass
+class FlowInput:
+    variables: LHS
+    value: LHS
+
+    @classmethod
+    def adapter(cls, variables: Variables) -> Adapter:
+        return ParValueAdapter(
+            [
+                variables.adapter,
+                ValueAdapter(),
+            ]
+        )
+
+
+generate_register_pair_types(FlowInput)
+
+
+@dataclasses.dataclass
+class FlowControl:
+    return_value: RHS
+    continue_variables: RHS
+    break_variables: RHS
+    finish_variables: RHS
+
+    @classmethod
+    def adapter(cls, return_adapter: Adapter, variables: Variables) -> Adapter:
+        return ParValueAdapter(
+            [
+                return_adapter,
+                variables.adapter,
+                variables.adapter,
+                variables.adapter,
+            ]
+        )
+
+
+generate_register_pair_types(FlowControl)
+
+IfThenElseInputInto = ToInterfaceRegister
+IfThenElseInputFrom = FromInterfaceRegister
+
+
+@dataclasses.dataclass
+class IfThenElseOutput:
+    context: LHS
+    result: RHS
+
+
+generate_register_pair_types(IfThenElseOutput)
+
+MergeInputTo = ToInterfaceRegister
+MergeInputFrom = FromInterfaceRegister
+
+
+@dataclasses.dataclass
+class MergeOutput:
+    second_value: LHS
+    result: RHS
+
+
+generate_register_pair_types(MergeOutput)
+
+
+@dataclasses.dataclass(frozen=True)
+class WeakeningSelection(ExpansionWithAdapters):
+    adapter: Adapter
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return self.adapter
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return ParValueAdapter(
+            [
+                self.adapter,
+                self.adapter,
+            ]
+        )
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[ToInterfaceRegister, MergeOutputInto]]:
+        return expansion_invocation(self, invoker, ToInterfaceRegister, MergeOutputInto)
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __call__(
+        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        if isinstance(port, Erasure):
+            for wire in wires:
+                executor.annihilate(wire, port)
+            return
+
+        with unpack_wires(self, wires, executor, MergeOutputFrom) as outputs:
+            send_value(outputs.second_value.readout(), outputs.result.readin())
+
+
+@dataclasses.dataclass(kw_only=True)
+class VariablesFlow(ExpansionBuilder):
+    variables: Variables
+    return_adapter: Adapter
+
+    input_adapter: Adapter = dataclasses.field(init=False)
+    output_adapter: Adapter = dataclasses.field(init=False)
+    variable_registers: dict[str, FlowRegister] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        self.input_adapter = FlowInput.adapter(self.variables)
+        self.output_adapter = FlowControl.adapter(self.return_adapter, self.variables)
+
+        for name, variable_input in zip(
+            self.variables.keys(), self.flow_input.variables.split()
+        ):
+            flow_register = self.variable_registers[name] = FlowRegister(
+                self.variables[name], self
+            )
+            send_value(variable_input.readout(), flow_register.interface_readin())
+            variable_input.close()
+
+    def variables_readout(self) -> FromRegister:
+        x1, x2 = Wire.as_interface()
+        send_values(
+            [r.readout() for r in self.variable_registers.values()],
+            as_to_register(x1, self.variables.adapter, self).split(),
+        )
+
+        return as_from_register(
+            x2,
+            self.variables.adapter,
+            self,
+        )
+
+    @cached_property
+    def control_output(self) -> FlowControlFrom:
+        return pack_into(self.output_interface, FlowControlFrom)
+
+    @cached_property
+    def flow_input(self) -> FlowInputFrom:
+        return pack_from(self.input_interface, FlowInputFrom)
+
+    def __copy__(self) -> Self:
+        return self
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
+        return expansion_invocation(self, invoker, FlowInputInto, FlowControlInto)
+
+    def close(self) -> None:
+        for register in self.variable_registers.values():
+            register.close()
+        closer(self.flow_input).close()
+        closer(self.control_output).close()
+
+
+@dataclasses.dataclass
 class Loop(ExpansionWithAdapters):
+    # Takes in the loop's iterable value and the variable flows,
+    # 'returns' whether the loop is continuing, along with the updated variable flows.
     iteration: VariablesFlow
+
     body: VariablesFlow
     orelse: VariablesFlow
 
@@ -51,101 +229,141 @@ class Loop(ExpansionWithAdapters):
     def output_adapter(self) -> Adapter:
         return FlowControl.adapter(self.body.return_adapter, self.body.variables)
 
-    def invocation(self, invoker: Connector) -> FlowInvocation:
-        inputs, outputs = expansion_invocation(self, invoker)
-
-        return FlowInvocation(FlowInput(*inputs.split()), FlowControl(*outputs.split()))
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
+        return expansion_invocation(self, invoker, FlowInputInto, FlowControlInto)
 
     def __copy__(self) -> Self:
         return self
 
+    @cached_property
+    def conditional(self) -> IfThenElse:
+        # conditonal test is wether iterator should keep going
+        # context vlaue is the actual iterator value
+        # context variables flow
+        # output return returns the outside structure
+        # output continue continues the outside structure
+        # output break breaks the outside structure
+        # output finish means this loop is over and continues
+        return IfThenElse(
+            self.true_case,
+            self.false_case,
+        )
+
+    # In the true case, we are committed to calling the body, and that body's continue and break only affect next recursion
+    # so we can only either recurse again, or finish.
+    @cached_property
+    def true_case(self) -> ExpansionWithAdapters:
+        with (
+            ExpansionBuilder(self.input_adapter, self.output_adapter) as builder,
+            self.body.invocation(builder) as body_invocation,
+            self.invocation(builder) as recurse,
+        ):
+            inputs = pack_from(builder.input_interface, FlowInputFrom)
+            outputs = pack_into(builder.output_interface, FlowControlFrom)
+
+            send_value(inputs.value.readout(), recurse.port.value.readin())
+
+            with WeakeningSelection(self.body.return_adapter).invocation(
+                builder
+            ) as return_selection:
+                send_value(
+                    return_selection.wire.result.readout(),
+                    outputs.return_value.readin(),
+                )
+
+                send_value(
+                    body_invocation.wire.return_value.readout(),
+                    return_selection.port.readin(),
+                )
+                send_value(
+                    recurse.wire.return_value.readout(),
+                    return_selection.wire.second_value.readin(),
+                )
+
+            with WeakeningSelection(self.body.variables.adapter).invocation(
+                builder
+            ) as recurse_variables_selection:
+                send_value(
+                    recurse_variables_selection.wire.result.readout(),
+                    recurse.port.variables.readin(),
+                )
+
+                send_value(
+                    body_invocation.wire.continue_variables.readout(),
+                    recurse_variables_selection.port.readin(),
+                )
+                send_value(
+                    body_invocation.wire.finish_variables.readout(),
+                    recurse_variables_selection.wire.second_value.readin(),
+                )
+
+            send_value(
+                body_invocation.wire.break_variables.readout(),
+                outputs.finish_variables.readin(),
+            )
+            return builder
+
+    # In the false case, our return, continue, break, and finish all flow as if this was a flattened context as this is
+    # the else case.  We don't need to worry about the iterator anymore.
+    @cached_property
+    def false_case(self) -> ExpansionWithAdapters:
+        with (
+            ExpansionBuilder(self.input_adapter, self.output_adapter) as builder,
+            expansion_invocation(
+                self.orelse, builder, FlowInputInto, FromInterfaceRegister
+            ) as else_body,
+        ):
+            inputs = pack_from(builder.input_interface, FlowInputFrom)
+            outputs = builder.output_interface
+
+            send_value(inputs.variables.readout(), else_body.port.variables.readin())
+            send_value(else_body.wire.readout(), outputs.readin())
+            return builder
+
     def __call__(
         self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None:
-        if not isinstance(port, CombPort):
+        if isinstance(port, Erasure):
             for wire in wires:
                 executor.annihilate(wire, port)
-            for wire in port.wires:
-                executor.annihilate(wire)
             return
 
-        inputs, outputs = unpack_port_and_wires(self, port, wires, executor)
-
         with (
-            FlowInvocation.split(inputs, outputs) as this_invocation,
-            # this_invocation.control.share_to_interface() as (
-            #     orelse_result,
-            #     body_result,
-            # ),
+            unpack_port_and_wires(
+                self, port, wires, executor, FlowInputFrom, ToInterfaceRegister
+            ) as this_invocation,
             self.iteration.invocation(executor) as iterable_invocation,
-            self.body.invocation(executor) as body_invocation,
-            self.orelse.invocation(executor) as orelse_invocation,
-            # self.invocation(executor) as recurse,
+            self.conditional.invocation(executor) as conditional_invocation,
         ):
             iter_input_1, iter_input_2 = (
-                this_invocation.inputs.i_value.readout().duplicate()
+                this_invocation.port.value.readout().duplicate()
             )
             send_value(
-                this_invocation.inputs.i_variables.readout(),
-                iterable_invocation.inputs.i_variables.readin(),
+                this_invocation.port.variables.readout(),
+                iterable_invocation.port.variables.readin(),
             )
-            send_value(iter_input_1, iterable_invocation.inputs.i_value.readin())
-
-            true_case = ExpansionBuilder(self.input_adapter, self.output_adapter)
-            false_case = ExpansionBuilder(self.input_adapter, self.output_adapter)
-
-            cond_invocation = IfThenElse(true_case, false_case).invocation(
-                executor
+            send_value(iter_input_1, iterable_invocation.port.value.readin())
+            send_value(
+                iterable_invocation.wire.return_value.readout(),
+                conditional_invocation.port.readin(),
             )
-            cond_i_iter_context, cond_i_variables_context = cond_invocation.i_context.readin().split()
+
+            with closer(
+                pack_into(conditional_invocation.wire.context, FlowInputInto)
+            ) as conditional_context:
+                send_value(iter_input_2, conditional_context.value.readin())
+                send_value(
+                    iterable_invocation.wire.finish_variables.readout(),
+                    conditional_context.variables.readin(),
+                )
 
             send_value(
-                iterable_invocation.control.o_return.readout(),
-                cond_invocation.i_test_value.readin(),
-            )
-            send_value(
-                iterable_invocation.control.o_finish.readout(),
-                cond_i_variables_context,
-            )
-            send_value(iter_input_2, cond_i_iter_context)
-
-            fi, fv = false_case.input_interface.readout().split()
-            fi.close()
-
-            send_value(
-                cond_invocation.o_orelse.readout(),
-                orelse_invocation.inputs.i_variables.readin(),
-            )
-            send_value(
-                cond_invocation.o_body.readout(),
-                body_invocation.inputs.i_variables.readin(),
+                conditional_invocation.wire.result.readout(),
+                this_invocation.wire.readin(),
             )
 
-            orelse_invocation.control.send_to(orelse_result)
-
-            # Option to return from parent
-            # o_return_1, o_return_2 = AffineSelection.share_to_register(
-            #     body_result.o_return.readin()
-            # )
-            # We return if either the current body returns or the recursion returns
-            send_value(body_invocation.control.o_return.readout(), o_return_1)
-            send_value(recurse.control.o_return.readout(), o_return_2)
-
-            # Option to finish through parent
-            # o_finished_1, o_finished_2 = AffineSelection.share_to_register(
-            #     body_result.o_finish.readin()
-            # )
-            # We are finished if either the current body breaks or the recursion finishes.
-            send_value(body_invocation.control.o_break.readout(), o_finished_1)
-            send_value(recurse.control.o_finish.readout(), o_finished_2)
-
-            # Option to recurse again
-            # o_continue_1, o_continue_2 = AffineSelection.share_to_register(
-            #     recurse.inputs.i_variables.readin()
-            # )
-            # We reurse if either the current body continues or finishes
-            send_value(body_invocation.control.o_continue.readout(), o_continue_1)
-            send_value(body_invocation.control.o_finish.readout(), o_continue_2)
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class IfThenElse(ExpansionWithAdapters):
@@ -178,48 +396,37 @@ class IfThenElse(ExpansionWithAdapters):
             ]
         )
 
-    def invocation(self, invoker: Connector) -> IfThenElseInvocation:
-        cond, outputs = expansion_invocation(self, invoker)
-        case_inputs, case_outputs = outputs.split()
-        return IfThenElseInvocation(cond, case_inputs, case_outputs)
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[IfThenElseInputInto, IfThenElseOutputInto]]:
+        return expansion_invocation(
+            self, invoker, IfThenElseInputInto, IfThenElseOutputInto
+        )
 
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
         if not isinstance(port, ValuePort):
-            for wire in port.wires:
-                exec.annihilate(wire, port)
             for wire in wires:
+                exec.annihilate(wire, port)
+            for wire in port.wires:
                 exec.annihilate(wire, port)
             return
 
-        case_inputs, case_outputs = unpack_wires(self, wires, exec).split()
-
         if port.value:
-            inputs, outputs = expansion_invocation(self.true_case, exec)
+            case = self.true_case
         else:
-            inputs, outputs = expansion_invocation(self.false_case, exec)
-        send_value(case_inputs.readout(), inputs.readin())
-        send_value(outputs.readout(), case_outputs.readin())
+            case = self.false_case
+
+        with (
+            unpack_wires(self, wires, exec, IfThenElseOutputFrom) as conditional,
+            expansion_invocation(
+                case, exec, ToInterfaceRegister, FromInterfaceRegister
+            ) as case,
+        ):
+            send_value(conditional.context.readout(), case.port.readin())
+            send_value(case.wire.readout(), conditional.result.readin())
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class IfThenElseInvocation:
-    i_test_value: InterfaceRegister
-    i_context: InterfaceRegister
-    o_result: InterfaceRegister
-
-    def __enter__(self) -> Self:
-        return self
-
-    def close(self) -> None:
-        self.i_test_value.close()
-        self.i_context.close()
-        self.o_result.close()
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True)
 class ConcurrentMerge(ExpansionWithAdapters):
     should_short: Callable[[Any], bool]
     merge_operation: Callable[[Any, Any], Any]
@@ -235,9 +442,41 @@ class ConcurrentMerge(ExpansionWithAdapters):
     def __copy__(self) -> Self:
         return self
 
-    def invocation(self, invoker: Connector) -> ConcurrentMergeInvocation:
-        inputs, outputs = expansion_invocation(self, invoker)
-        return ConcurrentMergeInvocation.split(inputs, outputs)
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[MergeInputTo, MergeInputFrom]]:
+        return expansion_invocation(self, invoker, MergeInputTo, MergeInputFrom)
+
+    @cached_property
+    def true_case(self) -> ExpansionBuilder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
+            v1, v2 = builder.input_interface.readout().split()
+
+            send_value(
+                v1,
+                builder.output_interface.readin(),
+            )
+
+            return builder
+
+    @cached_property
+    def false_case(self) -> ExpansionBuilder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
+            v1, v2 = builder.input_interface.readout().split()
+
+            send_value(
+                send_parameters(
+                    merge_invocation(self.merge_operation, builder),
+                    (v1, v2),
+                ),
+                builder.output_interface.readin(),
+            )
+
+            return builder
+
+    @cached_property
+    def conditional(self) -> IfThenElse:
+        return IfThenElse(self.true_case, self.false_case)
 
     def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
         pair = AmbiguousPair()
@@ -248,213 +487,17 @@ class ConcurrentMerge(ExpansionWithAdapters):
         send_value(right, pair_invocation.i_value_2)
 
         first_value_1, first_value_2 = pair_invocation.o_first_value.duplicate()
-
-        true_case = ExpansionBuilder(
-            ParValueAdapter([ValueAdapter(), ValueAdapter()]),
-            ValueAdapter(),
-        )
-
-        false_case = ExpansionBuilder(
-            ParValueAdapter([ValueAdapter(), ValueAdapter()]),
-            ValueAdapter(),
-        )
-
-        if_invocation = IfThenElse(
-            true_case,
-            false_case,
-        ).invocation(exec)
-
-        send_value(
-            send_parameter(filter_invocation(self.should_short, exec), first_value_1),
-            if_invocation.i_test_value.readin(),
-        )
-
-        if_first_value, if_second_value = if_invocation.i_context.readin().split()
-        send_value(first_value_2, if_first_value)
-        send_value(pair_invocation.o_second_value, if_second_value)
-
-        t1, t2 = true_case.input_interface.readout().split()
-        t2.close()
-        send_value(t1, true_case.output_interface.readin())
-
-        f1, f2 = false_case.input_interface.readout().split()
-
-        send_value(
-            send_parameters(
-                merge_invocation(self.merge_operation, exec),
-                (f1, f2),
-            ),
-            false_case.output_interface.readin(),
-        )
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class ConcurrentMergeInvocation:
-    i_value_1: InterfaceRegister
-    i_value_2: InterfaceRegister
-    o_value: InterfaceRegister
-
-    @classmethod
-    def split(
-        cls, inputs: InterfaceRegister, outputs: InterfaceRegister
-    ) -> ConcurrentMergeInvocation:
-        a, b = inputs.split()
-        return cls(a, b, outputs)
-
-
-@dataclasses.dataclass(slots=True, kw_only=True)
-class VariablesFlow(ExpansionBuilder):
-    variables: Variables
-    return_adapter: Adapter
-
-    input_adapter: Adapter = dataclasses.field(init=False)
-    output_adapter: Adapter = dataclasses.field(init=False)
-    variable_registers: dict[str, FlowRegister] = dataclasses.field(
-        default_factory=dict
-    )
-
-    def __post_init__(self) -> None:
-        self.input_adapter = FlowInput.adapter(self.variables)
-        self.output_adapter = FlowControl.adapter(self.return_adapter, self.variables)
-
-        for name, variable_input in zip(
-            self.variables.keys(), self.flow_input.i_variables.split()
-        ):
-            flow_register = self.variable_registers[name] = FlowRegister(
-                self.variables[name], self
+        with self.conditional.invocation(exec) as conditional:
+            send_value(
+                send_parameter(
+                    filter_invocation(self.should_short, exec), first_value_1
+                ),
+                conditional.port.readin(),
             )
-            send_value(variable_input.readout(), flow_register.interface_readin())
-
-    def variables_readout(self) -> FromRegister:
-        x1, x2 = Wire.as_interface()
-        send_values(
-            [r.readout() for r in self.variable_registers.values()],
-            as_to_register(x1, self.variables.adapter, self).split(),
-        )
-
-        return as_from_register(
-            x2,
-            self.variables.adapter,
-            self,
-        )
-
-    @cached_property
-    def o_control(self) -> FlowControl:
-        return FlowControl.split(self.output_interface)
-
-    @cached_property
-    def flow_input(self) -> FlowInput:
-        return FlowInput(*self.input_interface.split())
-
-    def __copy__(self) -> Self:
-        return self
-
-    def invocation(self, invoker: Connector) -> FlowInvocation:
-        inputs, outputs = expansion_invocation(self, invoker)
-        return FlowInvocation.split(inputs, outputs)
-
-    def close(self) -> None:
-        for register in self.variable_registers.values():
-            register.close()
-
-        self.o_control.close()
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class FlowInvocation:
-    inputs: FlowInput
-    control: FlowControl
-
-    @classmethod
-    def split(
-        cls, inputs: InterfaceRegister, outputs: InterfaceRegister
-    ) -> FlowInvocation:
-        return FlowInvocation(FlowInput(*inputs.split()), FlowControl.split(outputs))
-
-    def close(self) -> None:
-        self.inputs.close()
-        self.control.close()
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
-        self.close()
-
-
-@dataclasses.dataclass(frozen=True)
-class FlowInput:
-    i_variables: InterfaceRegister
-    i_value: InterfaceRegister
-
-    @classmethod
-    def adapter(cls, variables: Variables) -> Adapter:
-        return ParValueAdapter(
-            [
-                variables.adapter,
-                ValueAdapter(),
-            ]
-        )
-
-    def close(self) -> None:
-        self.i_variables.close()
-        self.i_value.close()
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class FlowControl:
-    o_return: InterfaceRegister
-    o_continue: InterfaceRegister
-    o_break: InterfaceRegister
-    o_finish: InterfaceRegister
-
-    # o_completion_errors: InterfaceRegister
-
-    @classmethod
-    def adapter(cls, return_adapter: Adapter, variables: Variables) -> Adapter:
-        return ParValueAdapter(
-            [
-                return_adapter,
-                variables.adapter,
-                variables.adapter,
-                variables.adapter,
-            ]
-        )
-
-    @classmethod
-    def split(cls, source: InterfaceRegister) -> FlowControl:
-        return FlowControl(*source.split())
-
-    def send_to(self, i_control: FlowControl) -> None:
-        send_values(
-            [
-                self.o_return.readout(),
-                self.o_continue.readout(),
-                self.o_break.readout(),
-                self.o_finish.readout(),
-            ],
-            [
-                i_control.o_return.readin(),
-                i_control.o_continue.readin(),
-                i_control.o_break.readin(),
-                i_control.o_finish.readin(),
-            ],
-        )
-
-    def close(self):
-        self.o_return.close()
-        self.o_continue.close()
-        self.o_break.close()
-        self.o_finish.close()
-
-    def __iter__(self) -> Iterator[InterfaceRegister]:
-        yield self.o_return
-        yield self.o_continue
-        yield self.o_break
-        yield self.o_finish
+            a, b = conditional.wire.context.split()
+            send_value(first_value_2, a.readin())
+            send_value(pair_invocation.o_second_value, b.readin())
+            send_value(
+                conditional.wire.result.readout(),
+                as_to_register(WirePort([wires[0]]), self.output_adapter, exec),
+            )

@@ -8,7 +8,6 @@ from typing import (
     Protocol,
     Sequence,
     TYPE_CHECKING,
-    ClassVar,
 )
 
 if TYPE_CHECKING:

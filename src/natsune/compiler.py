@@ -9,7 +9,7 @@ import textwrap
 from functools import cached_property
 from typing import cast, Any, get_type_hints, Iterable, Sequence, Callable
 
-from .adapters import (
+from natsune.adapters import (
     Adapter,
     ValueAdapter,
     adapter_from_type,
@@ -17,23 +17,27 @@ from .adapters import (
     ParValueAdapter,
     Variables,
 )
-from .connector import Connector
-from .control_flow import (
+from natsune.connector import Connector
+from natsune.control_flow import (
     VariablesFlow,
     Loop,
-    AffineSelection,
     IfThenElse,
     ConcurrentMerge,
+    WeakeningSelection,
 )
-from .executor import SynchronizedExecutor
-from .invocations import (
+from natsune.control_flow_generated import FlowInputInto, FlowControlInto
+from natsune.executor import SynchronizedExecutor
+from natsune.invocations import (
     merge_invocation,
     send_parameters,
     filter_invocation,
     send_parameter,
+    closer,
+    pack_into,
+    pack_from,
 )
-from .ports import Wire
-from .registers import (
+from natsune.ports import Wire, ValuePort, ConstantValuePort
+from natsune.registers import (
     FromRegister,
     ToRegister,
     as_to_register,
@@ -113,22 +117,20 @@ class ReplaceWithSerializedVariables(ast.NodeTransformer):
 
     def construct_context(self) -> FromRegister:
         return send_parameters(
-            serialize_values(self.branch_compiler.flow.buffer, 2),
+            serialize_values(self.branch_compiler.flow, 2),
             (
                 as_constant_register(
                     self.branch_compiler.function_compiler.globals,
-                    self.branch_compiler.flow.buffer,
+                    self.branch_compiler.flow,
                 ),
                 (
                     send_parameters(
-                        merge_invocation(
-                            construct_locals, self.branch_compiler.flow.buffer
-                        ),
+                        merge_invocation(construct_locals, self.branch_compiler.flow),
                         (
                             (
                                 send_parameters(
                                     serialize_values(
-                                        self.branch_compiler.flow.buffer,
+                                        self.branch_compiler.flow,
                                         len(self.used_names),
                                     ),
                                     list(self.used_names.values()),
@@ -136,7 +138,7 @@ class ReplaceWithSerializedVariables(ast.NodeTransformer):
                             ),
                             as_constant_register(
                                 tuple(self.used_names.keys()),
-                                self.branch_compiler.flow.buffer,
+                                self.branch_compiler.flow,
                             ),
                         ),
                     )
@@ -165,13 +167,17 @@ class InetFunctionCompiler:
         return InetBranchCompiler(
             self,
             VariablesFlow(
-                Variables(self.variables), adapter_from_type(self.return_annot)
+                variables=Variables(self.variables),
+                return_adapter=adapter_from_type(self.return_annot),
             ),
         )
 
     def new_test(self) -> InetBranchCompiler:
         return InetBranchCompiler(
-            self, VariablesFlow(Variables(self.variables), ValueAdapter())
+            self,
+            VariablesFlow(
+                variables=Variables(self.variables), return_adapter=ValueAdapter()
+            ),
         )
 
     def syntax_error(self, node: ast.AST, message: str) -> SyntaxError:
@@ -272,7 +278,9 @@ class InetFunctionCompiler:
 
     @cached_property
     def compiled(self) -> VariablesFlow:
-        return self.new_branch().parse_statement_body(self.func_def.body)
+        return self.new_branch().parse_statement_body(
+            self.func_def.body, default_return_none=True
+        )
 
     def compile(self) -> None:
         getattr(self, "compiled")
@@ -281,23 +289,13 @@ class InetFunctionCompiler:
         self, connector: Connector
     ) -> tuple[Sequence[ToRegister], FromRegister]:
         with self.compiled.invocation(connector) as invocation:
-            variable_inputs = invocation.inputs.i_variables.readin().split()
+            variable_inputs = invocation.port.variables.readin().split()
             for input in variable_inputs[len(self.args) :]:
                 input.close()
 
-            result_interface = InterfaceRegister(
-                invocation.control.o_return.adapter, connector
-            )
-            a, b = AffineSelection.share_to_register(
-                result_interface.interface_readin()
-            )
-
-            send_value(invocation.control.o_return.readout(), a)
-            send_value(invocation.control.o_finish.readout(), b)
-
             return (
                 variable_inputs[: len(self.args)],
-                result_interface.readout(),
+                invocation.wire.return_value.readout(),
             )
 
 
@@ -315,7 +313,7 @@ class InetBranchCompiler:
             inner_registers = [
                 self.evaluate_to_expression(element) for element in expr.elts
             ]
-            return join_to_registers(inner_registers, self.flow.buffer)
+            return join_to_registers(inner_registers, self.flow)
 
         if isinstance(expr, ast.List):
             raise self.function_compiler.syntax_error(
@@ -328,15 +326,13 @@ class InetBranchCompiler:
         inner += " = " + assigned
 
         x1, x2 = Wire.as_interface()
-        rewriter.used_names[assigned] = as_from_register(
-            x2, ValueAdapter(), self.flow.buffer
-        )
-        rhs_register = as_to_register(x1, ValueAdapter(), self.flow.buffer)
+        rewriter.used_names[assigned] = as_from_register(x2, ValueAdapter(), self.flow)
+        rhs_register = as_to_register(x1, ValueAdapter(), self.flow)
 
         send_parameters(
-            merge_invocation(exec_expression, self.flow.buffer),
+            merge_invocation(exec_expression, self.flow),
             (
-                as_constant_register(inner, self.flow.buffer),
+                as_constant_register(inner, self.flow),
                 rewriter.construct_context(),
             ),
         ).close()
@@ -360,7 +356,7 @@ class InetBranchCompiler:
                         f"Expected {len(inet.args_adapter.concurrent_items)} arguments, got {len(expr.args)}",
                     )
 
-                inputs, output = inet.invocation(self.flow.buffer)
+                inputs, output = inet.invocation(self.flow)
                 for input_register, arg in zip(inputs, expr.args, strict=True):
                     send_value(self.evaluate_from_expression(arg), input_register)
 
@@ -402,13 +398,13 @@ class InetBranchCompiler:
                 [register.adapter for register in inner_registers]
             )
             x1, x2 = Wire.as_interface()
-            to_register = as_to_register(x1, par_adapter, self.flow.buffer)
+            to_register = as_to_register(x1, par_adapter, self.flow)
             send_values(inner_registers, to_register.split())
 
             return as_from_register(
                 x2,
                 par_adapter,
-                self.flow.buffer,
+                self.flow,
             )
 
         if isinstance(expr, ast.BoolOp):
@@ -421,14 +417,13 @@ class InetBranchCompiler:
             )
             acc = self.evaluate_from_expression(expr.values[0])
             for n in expr.values[1:]:
-                invocation = ConcurrentMerge(should_shortcircuit, merger).invocation(
-                    self.flow.buffer
-                )
-                send_value(acc, invocation.i_value_1.readin())
-                send_value(
-                    self.evaluate_from_expression(n), invocation.i_value_2.readin()
-                )
-                acc = invocation.o_value.readout()
+                with ConcurrentMerge(should_shortcircuit, merger).invocation(
+                    self.flow
+                ) as invocation:
+                    a, b = invocation.port.readin().split()
+                    send_value(acc, a)
+                    send_value(self.evaluate_from_expression(n), b)
+                    acc = invocation.wire.readout()
 
             return acc
 
@@ -436,22 +431,22 @@ class InetBranchCompiler:
 
     def evaluate_from_expression(self, expr: ast.expr | None) -> FromRegister:
         if expr is None:
-            return as_constant_register(None, self.flow.buffer)
+            return as_constant_register(None, self.flow)
 
         solution = self.evaluate_special_form_from_expression(expr)
         if solution is not None:
             return solution
 
         if isinstance(expr, ast.Constant):
-            return as_constant_register(expr.value, self.flow.buffer)
+            return as_constant_register(expr.value, self.flow)
 
         rewriter = ReplaceWithSerializedVariables(self)
         inner = textwrap.dedent(ast.unparse(rewriter.visit(expr)))
 
         return send_parameters(
-            merge_invocation(eval_expression, self.flow.buffer),
+            merge_invocation(eval_expression, self.flow),
             (
-                as_constant_register(inner, self.flow.buffer),
+                as_constant_register(inner, self.flow),
                 rewriter.construct_context(),
             ),
         )
@@ -459,11 +454,12 @@ class InetBranchCompiler:
     def parse_deconstructor(self, deconstructor_expr: ast.expr) -> VariablesFlow:
         branch = self.function_compiler.new_branch()
         send_value(
-            branch.flow.flow_input.i_value.readout(),
+            branch.flow.flow_input.value.readout(),
             branch.evaluate_to_expression(deconstructor_expr),
         )
         send_value(
-            branch.flow.variables_readout(True), branch.flow.o_control.o_finish.readin()
+            branch.flow.variables_readout(),
+            branch.flow.control_output.finish_variables.readin(),
         )
         branch.flow.close()
         return branch.flow
@@ -472,17 +468,82 @@ class InetBranchCompiler:
         branch = self.function_compiler.new_test()
         send_value(
             branch.evaluate_from_expression(test_expr),
-            branch.flow.o_control.o_return.readin(),
+            branch.flow.control_output.return_value.readin(),
         )
         send_value(
-            branch.flow.variables_readout(True), branch.flow.o_control.o_finish.readin()
+            branch.flow.variables_readout(),
+            branch.flow.control_output.finish_variables.readin(),
         )
         branch.flow.close()
         return branch.flow
 
+    def wire_continuation(
+        self, control: FlowControlInto, body_iter: Iterable[ast.stmt]
+    ):
+        with (
+            self.function_compiler.new_branch()
+            .parse_statement_body(body_iter)
+            .invocation(self.flow) as continuation
+        ):
+            send_value(
+                control.finish_variables.readout(),
+                continuation.port.variables.readin(),
+            )
+
+            # This finishes iff the continuation finishes
+            send_value(
+                continuation.wire.finish_variables.readout(),
+                self.flow.control_output.finish_variables.readin(),
+            )
+
+            with WeakeningSelection(self.flow.return_adapter).invocation(
+                self.flow
+            ) as return_selection:
+                send_value(
+                    control.return_value.readout(), return_selection.port.readin()
+                )
+                send_value(
+                    continuation.wire.return_value.readout(),
+                    return_selection.wire.second_value.readin(),
+                )
+                send_value(
+                    return_selection.wire.result.readout(),
+                    self.flow.control_output.return_value.readin(),
+                )
+
+            with WeakeningSelection(self.flow.variables.adapter).invocation(
+                self.flow
+            ) as continue_selection:
+                send_value(
+                    control.continue_variables.readout(),
+                    continue_selection.port.readin(),
+                )
+                send_value(
+                    continuation.wire.continue_variables.readout(),
+                    continue_selection.wire.second_value.readin(),
+                )
+                send_value(
+                    continue_selection.wire.result.readout(),
+                    self.flow.control_output.continue_variables.readin(),
+                )
+
+            with WeakeningSelection(self.flow.variables.adapter).invocation(
+                self.flow
+            ) as break_selection:
+                send_value(
+                    control.break_variables.readout(), break_selection.port.readin()
+                )
+                send_value(
+                    continuation.wire.break_variables.readout(),
+                    break_selection.wire.second_value.readin(),
+                )
+                send_value(
+                    break_selection.wire.result.readout(),
+                    self.flow.control_output.break_variables.readin(),
+                )
+
     def parse_statement_body(
-        self,
-        body: Iterable[ast.stmt],
+        self, body: Iterable[ast.stmt], default_return_none: bool = False
     ) -> VariablesFlow:
         body_iter = iter(body)
 
@@ -490,7 +551,9 @@ class InetBranchCompiler:
             for stmt in body_iter:
                 if isinstance(stmt, ast.Return):
                     from_register = self.evaluate_from_expression(stmt.value)
-                    send_value(from_register, self.flow.o_control.o_return.readin())
+                    send_value(
+                        from_register, self.flow.control_output.return_value.readin()
+                    )
                     return self.flow
                 elif isinstance(stmt, ast.Assign):
                     for from_expr, to_expr in zip(
@@ -526,93 +589,62 @@ class InetBranchCompiler:
                             self.function_compiler.new_branch().parse_statement_body(
                                 stmt.orelse
                             ),
-                        ).invocation(self.flow.buffer) as for_invocation,
-                        self.function_compiler.new_branch()
-                        .parse_statement_body(body_iter)
-                        .invocation(self.flow.buffer) as continuation,
+                        ).invocation(self.flow) as for_invocation,
                     ):
 
                         if isinstance(stmt, ast.For):
                             send_value(
                                 send_parameter(
-                                    filter_invocation(iter, self.flow.buffer),
+                                    filter_invocation(iter, self.flow),
                                     self.evaluate_from_expression(stmt.iter),
                                 ),
-                                for_invocation.inputs.i_value.readin(),
+                                for_invocation.port.value.readin(),
                             )
 
                         send_value(
-                            self.flow.variables_readout(True),
-                            for_invocation.inputs.i_variables.readin(),
+                            self.flow.variables_readout(),
+                            for_invocation.port.variables.readin(),
                         )
 
-                        send_value(
-                            for_invocation.control.o_finish.readout(),
-                            continuation.inputs.i_variables.readin(),
-                        )
-
-                        # This finishes iff the continuation finishes
-                        send_value(
-                            continuation.control.o_finish.readout(),
-                            self.flow.o_control.o_finish.readin(),
-                        )
-
-                        o_return_1, o_return_2 = AffineSelection.share_to_register(
-                            self.flow.o_control.o_return.readin()
-                        )
-                        send_value(
-                            for_invocation.control.o_return.readout(), o_return_1
-                        )
-                        send_value(continuation.control.o_return.readout(), o_return_2)
-
-                        o_break_1, o_break_2 = AffineSelection.share_to_register(
-                            self.flow.o_control.o_break.readin()
-                        )
-                        send_value(for_invocation.control.o_break.readout(), o_break_1)
-                        send_value(continuation.control.o_break.readout(), o_break_1)
-
-                        o_continue_1, o_continue_2 = AffineSelection.share_to_register(
-                            self.flow.o_control.o_continue.readin()
-                        )
-                        send_value(
-                            for_invocation.control.o_continue.readout(),
-                            o_continue_1,
-                        )
-                        send_value(
-                            continuation.control.o_continue.readout(),
-                            o_continue_1,
-                        )
+                        self.wire_continuation(for_invocation.wire, body_iter)
 
                         return self.flow
 
                 elif isinstance(stmt, ast.If):
+                    true_case = (
+                        self.function_compiler.new_branch().parse_statement_body(
+                            stmt.body
+                        )
+                    )
+                    false_case = (
+                        self.function_compiler.new_branch().parse_statement_body(
+                            stmt.orelse
+                        )
+                    )
+
                     with (
-                        IfThenElse(self.flow.variables.adapter).invocation(
-                            self.flow.buffer
+                        IfThenElse(true_case, false_case).invocation(
+                            self.flow
                         ) as if_invocation,
-                        self.function_compiler.new_branch()
-                        .parse_statement_body(stmt.body)
-                        .invocation(self.flow.buffer) as body_invocation,
-                        self.function_compiler.new_branch()
-                        .parse_statement_body(stmt.orelse)
-                        .invocation(self.flow.buffer) as orelse_invocation,
                     ):
                         send_value(
                             self.evaluate_from_expression(stmt.test),
-                            if_invocation.i_test_value.readin(),
+                            if_invocation.port.readin(),
                         )
-                        send_value(
-                            self.flow.variables_readout(True),
-                            if_invocation.i_context.readin(),
+
+                        with closer(
+                            pack_into(if_invocation.wire.context, FlowInputInto)
+                        ) as conditional_context:
+                            send_value(
+                                self.flow.variables_readout(),
+                                conditional_context.variables.readin(),
+                            )
+
+                        self.wire_continuation(
+                            pack_from(if_invocation.wire.result, FlowControlInto),
+                            body_iter,
                         )
-                        send_value(
-                            if_invocation.o_body.readout(),
-                            body_invocation.inputs.i_variables.readin(),
-                        )
-                        send_value(
-                            if_invocation.o_orelse.readout(),
-                            orelse_invocation.inputs.i_variables.readin(),
-                        )
+
                         return self.flow
                 elif isinstance(stmt, ast.Pass):
                     continue
@@ -620,22 +652,31 @@ class InetBranchCompiler:
                     self.evaluate_from_expression(stmt.value).close()
                 elif isinstance(stmt, ast.Break):
                     send_value(
-                        self.flow.variables_readout(True),
-                        self.flow.o_control.o_break.readin(),
+                        self.flow.variables_readout(),
+                        self.flow.control_output.break_variables.readin(),
                     )
                     return self.flow
                 elif isinstance(stmt, ast.Continue):
                     send_value(
-                        self.flow.variables_readout(True),
-                        self.flow.o_control.o_continue.readin(),
+                        self.flow.variables_readout(),
+                        self.flow.control_output.continue_variables.readin(),
                     )
                     return self.flow
                 else:
                     raise NotImplementedError
 
-            send_value(
-                self.flow.variables_readout(True), self.flow.o_control.o_finish.readin()
-            )
+            if default_return_none:
+                send_value(
+                    as_from_register(
+                        ConstantValuePort(None), ValueAdapter(), self.flow
+                    ),
+                    self.flow.control_output.return_value.readin(),
+                )
+            else:
+                send_value(
+                    self.flow.variables_readout(),
+                    self.flow.control_output.finish_variables.readin(),
+                )
             return self.flow
 
 

@@ -3,7 +3,7 @@ from .connector import Connector
 import copy
 import dataclasses
 
-from .ports import (
+from natsune.ports import (
     ExtMergeFuncPort,
     ValuePort,
     Erasure,

@@ -6,9 +6,9 @@ from queue import Queue
 from threading import RLock
 from typing import Generator
 
-from .connector import Connector
-from .interactions import execute_interaction
-from .ports import Port
+from natsune.connector import Connector
+from natsune.interactions import execute_interaction
+from natsune.ports import Port
 
 
 class Executor(Connector):

@@ -1,9 +1,9 @@
 import dataclasses
-from typing import Sequence, Protocol, Any, Literal, Callable
+from typing import Sequence, Protocol, Any, Literal, Callable, Self, cast
 
-from .adapters import Adapter, ParValueAdapter, ValueAdapter, AlternativesAdapter
-from .connector import Connector
-from .ports import Port, WirePort, Target, Wire, ConstantValuePort
+from natsune.adapters import Adapter, ParValueAdapter, ValueAdapter
+from natsune.connector import Connector
+from natsune.ports import Port, WirePort, Target, Wire, ConstantValuePort
 
 __all__ = [
     "FromRegister",
@@ -31,7 +31,6 @@ class FromRegister(Protocol):
     def split(self) -> Sequence[FromRegister]: ...
     def invert(self) -> ToRegister: ...
     def duplicate(self) -> tuple[FromRegister, FromRegister]: ...
-    def as_interface(self) -> InterfaceRegister: ...
 
 
 class ToRegister(Protocol):
@@ -44,7 +43,6 @@ class ToRegister(Protocol):
     def connector(self) -> Connector: ...
     def split(self) -> Sequence[ToRegister]: ...
     def invert(self) -> FromRegister: ...
-    def as_interface(self) -> InterfaceRegister: ...
 
 
 def as_constant_register(value: Any, connector: Connector) -> FromRegister:
@@ -65,14 +63,10 @@ class _FromRegister:
     port: Port
     adapter: Adapter
     connector: Connector
-    alternative: bool = False
     t: Literal["from"] = "from"
 
     def close(self) -> None:
-        if self.alternative:
-            self.connector.annihilate(self.port)
-        else:
-            self.adapter.close(self.port, self.connector)
+        self.connector.annihilate(self.port)
 
     def split(self) -> Sequence[FromRegister]:
         if isinstance(self.adapter, ParValueAdapter):
@@ -84,7 +78,6 @@ class _FromRegister:
                             WirePort([part]),
                             adapter,
                             self.connector,
-                            isinstance(self.adapter, AlternativesAdapter),
                         )
                     )
             return result
@@ -100,28 +93,19 @@ class _FromRegister:
             _FromRegister(WirePort([x2]), self.adapter, self.connector),
         )
 
-    def as_interface(self) -> InterfaceRegister:
-        interface = InterfaceRegister(self.adapter, self.connector, self.alternative)
-        send_value(self, interface.interface_readin())
-        return interface
-
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class _ToRegister:
     port: Port
     adapter: Adapter
     connector: Connector
-    alternative: bool = False
     t: Literal["to"] = "to"
 
     def set(self, p: Target) -> None:
         self.connector.connect(p, self.port)
 
     def close(self, initial: Wire | None = None) -> None:
-        if self.alternative:
-            self.connector.annihilate(self.port)
-        else:
-            self.set(self.adapter.initialize(self.connector, initial))
+        self.connector.annihilate(self.port)
 
     def split(self) -> Sequence[ToRegister]:
         if isinstance(self.adapter, ParValueAdapter):
@@ -133,7 +117,6 @@ class _ToRegister:
                             WirePort([part]),
                             adapter,
                             self.connector,
-                            isinstance(self.adapter, AlternativesAdapter),
                         )
                     )
             return result
@@ -142,22 +125,19 @@ class _ToRegister:
     def invert(self) -> FromRegister:
         return _FromRegister(self.port, self.adapter, self.connector)
 
-    def as_interface(self) -> InterfaceRegister:
-        interface = InterfaceRegister(self.adapter, self.connector)
-        send_value(interface.interface_readin().invert(), self)
-        return interface
-
 
 @dataclasses.dataclass(slots=True)
 class InterfaceRegister:
     adapter: Adapter
     connector: Connector
 
-    interface: WirePort = dataclasses.field(init=False)
-    state: Port = dataclasses.field(init=False)
+    # The type is non optional, but we fill in a valid value if none is provided
+    interface: WirePort = dataclasses.field(default=cast(Any, None))
+    state: Port = dataclasses.field(default=cast(Any, None))
 
     def __post_init__(self):
-        self.interface, self.state = Wire.as_interface()
+        if self.interface is None or self.state is None:
+            self.interface, self.state = Wire.as_interface()
 
     def extend(self) -> tuple[Wire, Wire]:
         take, give = Wire(), Wire()
@@ -166,64 +146,54 @@ class InterfaceRegister:
         return take, give
 
     def interface_readin(self) -> ToRegister:
-        return _ToRegister(
-            self.interface, self.adapter, self.connector
-        )
+        return _ToRegister(self.interface, self.adapter, self.connector)
 
-    def readout(self) -> FromRegister:
-        taken, given = self.extend()
-        self.connector.annihilate(given)
-        return _FromRegister(WirePort([taken]), self.adapter, self.connector)
-
-    def readin(self) -> ToRegister:
-        taken, given = self.extend()
-        self.connector.annihilate(given)
-        return _ToRegister(WirePort([taken]), self.adapter, self.connector)
-
-    def split(self) -> Sequence[InterfaceRegister]:
+    def split(self) -> Sequence[Self]:
         if isinstance(self.adapter, ParValueAdapter):
-            out = self.readout()
+            taken, given = self.extend()
+            self.connector.annihilate(given)
             result = [
-                InterfaceRegister(
-                    adapter,
-                    self.connector,
-                    isinstance(self.adapter, AlternativesAdapter),
-                )
+                dataclasses.replace(self, adapter=adapter)
                 for adapter in self.adapter.concurrent_items
             ]
             send_values(
-                out.split(), [interface.interface_readin() for interface in result]
+                _FromRegister(WirePort([taken]), self.adapter, self.connector).split(),
+                [interface.interface_readin() for interface in result],
             )
             return result
         return [self]
 
     def close(self) -> None:
-        if self.alternative:
-            self.connector.annihilate(self.state)
-        else:
-            self.adapter.close(self.state, self.connector)
+        self.connector.annihilate(self.state)
 
-    def annihilate(self, p: Port | None = None) -> None:
-        self.connector.annihilate(self.state, p)
 
-    @classmethod
-    def from_to_register(cls, to_reg: ToRegister) -> InterfaceRegister:
-        result = InterfaceRegister(to_reg.adapter, to_reg.connector)
-        assert isinstance(to_reg, _ToRegister)
-        to_reg.connector.connect(to_reg.port, result.interface)
-        return result
+class FromInterfaceRegister(InterfaceRegister):
+    def readout(self) -> FromRegister:
+        taken, given = self.extend()
+        self.connector.annihilate(given)
+        return _FromRegister(WirePort([taken]), self.adapter, self.connector)
 
-    @classmethod
-    def from_from_register(cls, from_reg: FromRegister) -> InterfaceRegister:
-        result = InterfaceRegister(from_reg.adapter, from_reg.connector)
-        assert isinstance(from_reg, _FromRegister)
-        from_reg.connector.connect(from_reg.port, result.interface)
-        return result
+    def invert(self) -> ToInterfaceRegister:
+        return ToInterfaceRegister(
+            self.adapter, self.connector, self.interface, self.state
+        )
+
+
+class ToInterfaceRegister(InterfaceRegister):
+    def readin(self) -> ToRegister:
+        taken, given = self.extend()
+        self.connector.annihilate(given)
+        return _ToRegister(WirePort([taken]), self.adapter, self.connector)
+
+    def invert(self) -> FromInterfaceRegister:
+        return FromInterfaceRegister(
+            self.adapter, self.connector, self.interface, self.state
+        )
 
 
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out
 # or readin multiple times, producing an extension (sharing) for each.
-class FlowRegister(InterfaceRegister):
+class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
     def readout(self) -> FromRegister:
         taken, given = self.extend()
         return _FromRegister(
@@ -239,6 +209,9 @@ class FlowRegister(InterfaceRegister):
             self.adapter,
             self.connector,
         )
+
+    def close(self) -> None:
+        self.adapter.close(self.state, self.connector)
 
     def is_assigned(self) -> bool:
         return self.state.wires[0] is not self.interface.wires[0]

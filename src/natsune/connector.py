@@ -1,14 +1,20 @@
-from natsune.registers import InterfaceRegister
-from functools import cached_property
-from natsune.adapters import Adapter
-import dataclasses
 import abc
 import contextlib
 import copy
+import dataclasses
 from contextlib import AbstractContextManager
-from typing import Generator, Iterator, Callable, Sequence, Self
+from functools import cached_property
+from typing import Generator, Iterator, Callable, Sequence, Self, TYPE_CHECKING
 
-from .ports import Port, Wire, WirePort, Target, CombPort, Erasure, Graft
+from natsune.ports import Port, Wire, WirePort, Target, CombPort, Erasure
+
+if TYPE_CHECKING:
+    from natsune.adapters import Adapter
+    from natsune.registers import (
+        InterfaceRegister,
+        FromInterfaceRegister,
+        ToInterfaceRegister,
+    )
 
 __all__ = [
     "Connector",
@@ -97,15 +103,29 @@ class ExpansionBuilder(Connector):
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
 
     @cached_property
-    def input_interface(self) -> InterfaceRegister:
-        return InterfaceRegister(self.input_adapter, self)
+    def input_interface(self) -> FromInterfaceRegister:
+        from natsune.registers import FromInterfaceRegister
+
+        return FromInterfaceRegister(self.input_adapter, self)
 
     @cached_property
-    def output_interface(self) -> InterfaceRegister:
-        return InterfaceRegister(self.output_adapter, self)
+    def output_interface(self) -> ToInterfaceRegister:
+        from natsune.registers import ToInterfaceRegister
+
+        return ToInterfaceRegister(self.output_adapter, self)
 
     def connect_ports(self, l: Port, r: Port) -> None:
         self.active_pairs.append((l, r))
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.output_interface.close()
+        self.input_interface.close()
 
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
         new_wire_identity: dict[int, Wire] = {}
