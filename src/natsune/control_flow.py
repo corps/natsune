@@ -144,12 +144,14 @@ class WeakeningSelection(ExpansionWithAdapters):
         self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None:
         if isinstance(port, Erasure):
-            for wire in wires:
-                executor.annihilate(wire, port)
+            with unpack_wires(self, wires, executor, MergeOutputFrom) as outputs:
+                send_value(outputs.second_value.readout(), outputs.result.readin())
             return
 
-        with unpack_wires(self, wires, executor, MergeOutputFrom) as outputs:
-            send_value(outputs.second_value.readout(), outputs.result.readin())
+        with unpack_port_and_wires(
+            self, port, wires, executor, MergeInputFrom, MergeOutputFrom
+        ) as invocation:
+            send_value(invocation.port.readout(), invocation.wire.result.readin())
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -379,7 +381,7 @@ class IfThenElse(ExpansionWithAdapters):
 
     @cached_property
     def expansion_inputs_adapter(self) -> Adapter:
-        assert self.true_case.input_adapter == self.false_case.output_adapter
+        assert self.true_case.input_adapter == self.false_case.input_adapter
         return self.true_case.input_adapter
 
     @cached_property

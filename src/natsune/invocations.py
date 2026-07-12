@@ -142,7 +142,7 @@ assert issubclass(InterfaceRegister, Closeable)
 
 class closer[T](AbstractContextManager[T]):
     def __init__(self, o: T) -> None:
-        assert isinstance(o, Closeable) or dataclasses.is_dataclass(self.o)
+        assert isinstance(o, Closeable) or dataclasses.is_dataclass(o)
         self.o = o
 
     def __enter__(self) -> T:

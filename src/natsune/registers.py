@@ -153,7 +153,12 @@ class InterfaceRegister:
             taken, given = self.extend()
             self.connector.annihilate(given)
             result = [
-                dataclasses.replace(self, adapter=adapter)
+                dataclasses.replace(
+                    self,
+                    adapter=adapter,
+                    interface=cast(Any, None),
+                    state=cast(Any, None),
+                )
                 for adapter in self.adapter.concurrent_items
             ]
             send_values(
