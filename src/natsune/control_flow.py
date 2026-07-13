@@ -1,3 +1,4 @@
+import sys
 from natsune.control_flow_generated import (
     FlowControlFrom,
     FlowInputFrom,
@@ -38,7 +39,16 @@ from natsune.invocations import (
     closer,
     Invocation,
 )
-from natsune.ports import Port, Wire, ValuePort, CombPort, Expansion, Erasure, WirePort
+from natsune.ports import (
+    Port,
+    Wire,
+    ValuePort,
+    CombPort,
+    Expansion,
+    Erasure,
+    WirePort,
+    Graft,
+)
 from natsune.registers import (
     as_to_register,
     send_value,
@@ -49,6 +59,28 @@ from natsune.registers import (
     FromInterfaceRegister,
     ToInterfaceRegister,
 )
+
+
+@dataclasses.dataclass
+class Tracer(Expansion):
+    message: str
+
+    def __copy__(self) -> Self:
+        return self
+
+    @classmethod
+    def trace(cls, w: Wire, msg: str, c: Connector) -> Wire:
+        g = Graft(Tracer(msg), [w])
+        new_wire = Wire()
+        c.connect(new_wire, g)
+        return new_wire
+
+    def __call__(
+        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        if not isinstance(port, Erasure):
+            print(self.message, file=sys.stderr)
+        executor.connect(port, wires[0])
 
 
 @dataclasses.dataclass
@@ -265,23 +297,27 @@ class Loop(ExpansionWithAdapters):
             inputs = pack_from(builder.input_interface, FlowInputFrom)
             outputs = pack_into(builder.output_interface, FlowControlFrom)
 
-            send_value(inputs.value.readout(), recurse.port.value.readin())
+            send_value(
+                inputs.value.readout(), recurse.port.value.readin("loop-recurse-value")
+            )
 
             with WeakeningSelection(self.body.return_adapter).invocation(
                 builder
             ) as return_selection:
                 send_value(
                     return_selection.wire.result.readout(),
-                    outputs.return_value.readin(),
+                    outputs.return_value.readin("true-case-return"),
                 )
 
                 send_value(
                     body_invocation.wire.return_value.readout(),
-                    return_selection.port.readin(),
+                    return_selection.port.readin("true-case-body-returned"),
                 )
                 send_value(
                     recurse.wire.return_value.readout(),
-                    return_selection.wire.second_value.readin(),
+                    return_selection.wire.second_value.readin(
+                        "true-case-recurse-returned"
+                    ),
                 )
 
             with WeakeningSelection(self.body.variables.adapter).invocation(
@@ -289,21 +325,23 @@ class Loop(ExpansionWithAdapters):
             ) as recurse_variables_selection:
                 send_value(
                     recurse_variables_selection.wire.result.readout(),
-                    recurse.port.variables.readin(),
+                    recurse.port.variables.readin("true-case-variables"),
                 )
 
                 send_value(
                     body_invocation.wire.continue_variables.readout(),
-                    recurse_variables_selection.port.readin(),
+                    recurse_variables_selection.port.readin("true-case-body-continued"),
                 )
                 send_value(
                     body_invocation.wire.finish_variables.readout(),
-                    recurse_variables_selection.wire.second_value.readin(),
+                    recurse_variables_selection.wire.second_value.readin(
+                        "true-case-body-finished"
+                    ),
                 )
 
             send_value(
                 body_invocation.wire.break_variables.readout(),
-                outputs.finish_variables.readin(),
+                outputs.finish_variables.readin("true-case-body-broke"),
             )
             return builder
 
@@ -320,8 +358,11 @@ class Loop(ExpansionWithAdapters):
             inputs = pack_from(builder.input_interface, FlowInputFrom)
             outputs = builder.output_interface
 
-            send_value(inputs.variables.readout(), else_body.port.variables.readin())
-            send_value(else_body.wire.readout(), outputs.readin())
+            send_value(
+                inputs.variables.readout(),
+                else_body.port.variables.readin("false-case-else-variables"),
+            )
+            send_value(else_body.wire.readout(), outputs.readin("false-case-body"))
             return builder
 
     def __call__(
@@ -344,26 +385,31 @@ class Loop(ExpansionWithAdapters):
             )
             send_value(
                 this_invocation.port.variables.readout(),
-                iterable_invocation.port.variables.readin(),
+                iterable_invocation.port.variables.readin("iterable-variables"),
             )
-            send_value(iter_input_1, iterable_invocation.port.value.readin())
+            send_value(
+                iter_input_1, iterable_invocation.port.value.readin("iterable-iter")
+            )
             send_value(
                 iterable_invocation.wire.return_value.readout(),
-                conditional_invocation.port.readin(),
+                conditional_invocation.port.readin("conditional-gets-iterable-return"),
             )
 
             with closer(
                 pack_into(conditional_invocation.wire.context, FlowInputInto)
             ) as conditional_context:
-                send_value(iter_input_2, conditional_context.value.readin())
+                send_value(
+                    iter_input_2,
+                    conditional_context.value.readin("conditional-gets-iter"),
+                )
                 send_value(
                     iterable_invocation.wire.finish_variables.readout(),
-                    conditional_context.variables.readin(),
+                    conditional_context.variables.readin("conditional-gets-variables"),
                 )
 
             send_value(
                 conditional_invocation.wire.result.readout(),
-                this_invocation.wire.readin(),
+                this_invocation.wire.readin("conditional-result-is-result"),
             )
 
 

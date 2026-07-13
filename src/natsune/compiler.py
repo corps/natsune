@@ -7,7 +7,7 @@ import string
 import sys
 import textwrap
 from functools import cached_property
-from typing import cast, Any, get_type_hints, Iterable, Sequence, Callable
+from typing import cast, Any, get_type_hints, Iterable, Sequence, Callable, Iterator
 
 from natsune.adapters import (
     Adapter,
@@ -17,15 +17,22 @@ from natsune.adapters import (
     ParValueAdapter,
     Variables,
 )
-from natsune.connector import Connector
+from natsune.connector import Connector, ExpansionBuilder
 from natsune.control_flow import (
     VariablesFlow,
     Loop,
     IfThenElse,
     ConcurrentMerge,
     WeakeningSelection,
+    FlowInput,
+    FlowControl,
 )
-from natsune.control_flow_generated import FlowInputInto, FlowControlInto
+from natsune.control_flow_generated import (
+    FlowInputInto,
+    FlowControlInto,
+    FlowInputFrom,
+    FlowControlFrom,
+)
 from natsune.executor import SynchronizedExecutor
 from natsune.invocations import (
     merge_invocation,
@@ -35,6 +42,7 @@ from natsune.invocations import (
     closer,
     pack_into,
     pack_from,
+    split_invocation,
 )
 from natsune.ports import Wire, ValuePort, ConstantValuePort
 from natsune.registers import (
@@ -299,6 +307,13 @@ class InetFunctionCompiler:
             )
 
 
+def _try_iter(i: Iterator) -> Any:
+    try:
+        return next(i), True
+    except StopIteration:
+        return None, False
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class InetBranchCompiler:
     function_compiler: InetFunctionCompiler
@@ -451,16 +466,60 @@ class InetBranchCompiler:
             ),
         )
 
-    def parse_deconstructor(self, deconstructor_expr: ast.expr) -> VariablesFlow:
+    def parse_deconstruct_iter(self, deconstructor_expr: ast.expr) -> VariablesFlow:
         branch = self.function_compiler.new_branch()
-        send_value(
-            branch.flow.flow_input.value.readout(),
-            branch.evaluate_to_expression(deconstructor_expr),
+
+        # this branch receives the whole iter
+        try_iter_in, (next_value, should_continue) = split_invocation(
+            _try_iter,
+            branch.flow,
         )
-        send_value(
-            branch.flow.variables_readout(),
-            branch.flow.control_output.finish_variables.readin(),
-        )
+        send_value(branch.flow.flow_input.value.readout(), try_iter_in)
+
+        with VariablesFlow(
+            variables=branch.flow.variables, return_adapter=ValueAdapter()
+        ) as true_case:
+            true_branch = InetBranchCompiler(self.function_compiler, true_case)
+            send_value(
+                true_case.flow_input.value.readout(),
+                true_branch.evaluate_to_expression(deconstructor_expr),
+            )
+            send_value(
+                as_constant_register(True, true_case),
+                true_case.control_output.return_value.readin(),
+            )
+            send_value(
+                true_case.variables_readout(),
+                true_case.control_output.finish_variables.readin(),
+            )
+
+        with VariablesFlow(
+            variables=branch.flow.variables, return_adapter=ValueAdapter()
+        ) as false_case:
+            send_value(
+                as_constant_register(False, false_case),
+                false_case.control_output.return_value.readin(),
+            )
+            send_value(
+                false_case.variables_readout(),
+                false_case.control_output.finish_variables.readin(),
+            )
+
+        with IfThenElse(true_case, false_case).invocation(branch.flow) as conditional:
+            send_value(should_continue, conditional.port.readin())
+            with closer(pack_into(conditional.wire.context, FlowInputInto)) as context:
+                send_value(next_value, context.value.readin())
+                send_value(branch.flow.variables_readout(), context.variables.readin())
+            with closer(pack_from(conditional.wire.result, FlowControlInto)) as result:
+                send_value(
+                    result.return_value.readout(),
+                    branch.flow.control_output.return_value.readin(),
+                )
+                send_value(
+                    branch.flow.variables_readout(),
+                    branch.flow.control_output.finish_variables.readin(),
+                )
+
         branch.flow.close()
         return branch.flow
 
@@ -579,7 +638,7 @@ class InetBranchCompiler:
                     with (
                         Loop(
                             (
-                                self.parse_deconstructor(stmt.target)
+                                self.parse_deconstruct_iter(stmt.target)
                                 if isinstance(stmt, ast.For)
                                 else self.parse_test(stmt.test)
                             ),
@@ -675,7 +734,9 @@ class InetBranchCompiler:
             else:
                 send_value(
                     self.flow.variables_readout(),
-                    self.flow.control_output.finish_variables.readin(),
+                    self.flow.control_output.finish_variables.readin(
+                        "variables-readout-into-finish-variables"
+                    ),
                 )
             return self.flow
 

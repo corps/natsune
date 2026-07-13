@@ -185,8 +185,12 @@ class FromInterfaceRegister(InterfaceRegister):
 
 
 class ToInterfaceRegister(InterfaceRegister):
-    def readin(self) -> ToRegister:
+    def readin(self, trace: str | None = None) -> ToRegister:
         taken, given = self.extend()
+        if trace:
+            from natsune.control_flow import Tracer
+
+            taken = Tracer.trace(taken, trace, self.connector)
         self.connector.annihilate(given)
         return _ToRegister(WirePort([taken]), self.adapter, self.connector)
 
@@ -207,8 +211,12 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
             self.connector,
         )
 
-    def readin(self) -> ToRegister:
+    def readin(self, trace: str | None = None) -> ToRegister:
         taken, given = self.extend()
+        if trace:
+            from natsune.control_flow import Tracer
+
+            taken = Tracer.trace(taken, trace, self.connector)
         return _ToRegister(
             self.adapter.produce_ingression(taken, given, self.connector),
             self.adapter,
