@@ -3,7 +3,7 @@ from typing import Sequence, Protocol, Any, Literal, Callable, Self, cast
 
 from natsune.adapters import Adapter, ParValueAdapter, ValueAdapter
 from natsune.connector import Connector
-from natsune.ports import Port, WirePort, Target, Wire, ConstantValuePort
+from natsune.ports import Port, WirePort, Target, Wire, ConstantValuePort, Graft
 
 __all__ = [
     "FromRegister",
@@ -14,6 +14,7 @@ __all__ = [
     "as_from_register",
     "send_values",
     "send_value",
+    "parallelize_value",
 ]
 
 
@@ -31,6 +32,8 @@ class FromRegister(Protocol):
     def split(self) -> Sequence[FromRegister]: ...
     def invert(self) -> ToRegister: ...
     def duplicate(self) -> tuple[FromRegister, FromRegister]: ...
+    def __or__(self, other: FromRegister) -> FromRegister: ...
+    def __and__(self, other: FromRegister) -> FromRegister: ...
 
 
 class ToRegister(Protocol):
@@ -92,6 +95,24 @@ class _FromRegister:
             _FromRegister(WirePort([x1]), self.adapter, self.connector),
             _FromRegister(WirePort([x2]), self.adapter, self.connector),
         )
+
+    def __or__(self, other: FromRegister) -> FromRegister:
+        from natsune.control_flow import WeakeningSelection
+
+        with WeakeningSelection(other.adapter).invocation(self.connector) as selection:
+            send_value(self, selection.port.readin())
+            send_value(other, selection.wire.second_value.readin())
+            return selection.wire.result.readout()
+
+    def __and__(self, other: FromRegister) -> FromRegister:
+        from natsune.control_flow import GatedSelection
+
+        with GatedSelection(self.adapter, other.adapter).invocation(
+            self.connector
+        ) as selection:
+            send_value(self, selection.port.readin())
+            send_value(other, selection.wire.second_value.readin())
+            return selection.wire.result.readout()
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

@@ -148,6 +148,8 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         return
 
     if isinstance(l, Graft):
+        if isinstance(r, Graft):
+            raise ValueError("Cannot execute interactions between two Graft ports")
         l.execute(executor, r, l.wires)
         return
     elif isinstance(r, Graft):

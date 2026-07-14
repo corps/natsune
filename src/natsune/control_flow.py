@@ -1,3 +1,4 @@
+import contextlib
 import sys
 from natsune.control_flow_generated import (
     FlowControlFrom,
@@ -186,10 +187,54 @@ class WeakeningSelection(ExpansionWithAdapters):
             send_value(invocation.port.readout(), invocation.wire.result.readin())
 
 
+@dataclasses.dataclass(frozen=True)
+class GatedSelection(ExpansionWithAdapters):
+    left: Adapter
+    right: Adapter
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return self.left
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return ParValueAdapter(
+            [
+                self.right,
+                ParValueAdapter([self.left, self.right]),
+            ]
+        )
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[ToInterfaceRegister, MergeOutputInto]]:
+        return expansion_invocation(self, invoker, ToInterfaceRegister, MergeOutputInto)
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __call__(
+        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        if isinstance(port, Erasure):
+            for wire in wires:
+                executor.annihilate(wire)
+            return
+
+        with unpack_port_and_wires(
+            self, port, wires, executor, MergeInputFrom, MergeOutputFrom
+        ) as invocation:
+            send_values(
+                [invocation.port.readout(), invocation.wire.second_value.readout()],
+                invocation.wire.result.readin().split(),
+            )
+
+
 @dataclasses.dataclass(kw_only=True)
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
+    name: str = "-anonymous-"
 
     input_adapter: Adapter = dataclasses.field(init=False)
     output_adapter: Adapter = dataclasses.field(init=False)
@@ -273,80 +318,71 @@ class Loop(ExpansionWithAdapters):
 
     @cached_property
     def conditional(self) -> IfThenElse:
-        # conditonal test is wether iterator should keep going
-        # context vlaue is the actual iterator value
-        # context variables flow
-        # output return returns the outside structure
-        # output continue continues the outside structure
-        # output break breaks the outside structure
-        # output finish means this loop is over and continues
         return IfThenElse(
             self.true_case,
             self.false_case,
         )
 
-    # In the true case, we are committed to calling the body, and that body's continue and break only affect next recursion
-    # so we can only either recurse again, or finish.
     @cached_property
     def true_case(self) -> ExpansionWithAdapters:
-        with (
-            ExpansionBuilder(self.input_adapter, self.output_adapter) as builder,
-            self.body.invocation(builder) as body_invocation,
-            self.invocation(builder) as recurse,
-        ):
-            inputs = pack_from(builder.input_interface, FlowInputFrom)
-            outputs = pack_into(builder.output_interface, FlowControlFrom)
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
 
-            send_value(
-                inputs.value.readout(), recurse.port.value.readin("loop-recurse-value")
-            )
+            with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
+                input_variables = inputs.variables.readout()
+                input_iter = inputs.value.readout()
 
-            with WeakeningSelection(self.body.return_adapter).invocation(
-                builder
-            ) as return_selection:
+            with self.body.invocation(builder) as body_invocation:
                 send_value(
-                    return_selection.wire.result.readout(),
-                    outputs.return_value.readin("true-case-return"),
+                    input_variables,
+                    body_invocation.port.variables.readin("body-receives-variables"),
                 )
-
-                send_value(
-                    body_invocation.wire.return_value.readout(),
-                    return_selection.port.readin("true-case-body-returned"),
+                body_finish_variables = (
+                    body_invocation.wire.continue_variables.readout()
+                    | body_invocation.wire.finish_variables.readout()
                 )
-                send_value(
-                    recurse.wire.return_value.readout(),
-                    return_selection.wire.second_value.readin(
-                        "true-case-recurse-returned"
-                    ),
-                )
+                body_break_variables = body_invocation.wire.break_variables.readout()
+                body_return = body_invocation.wire.return_value.readout()
 
-            with WeakeningSelection(self.body.variables.adapter).invocation(
-                builder
-            ) as recurse_variables_selection:
-                send_value(
-                    recurse_variables_selection.wire.result.readout(),
-                    recurse.port.variables.readin("true-case-variables"),
-                )
+            recurse_variables, recurse_iter = (
+                body_finish_variables & input_iter
+            ).split()
 
+            with self.invocation(builder) as recurse:
                 send_value(
-                    body_invocation.wire.continue_variables.readout(),
-                    recurse_variables_selection.port.readin("true-case-body-continued"),
+                    recurse_variables,
+                    recurse.port.variables.readin("recurse-receives-variables"),
                 )
                 send_value(
-                    body_invocation.wire.finish_variables.readout(),
-                    recurse_variables_selection.wire.second_value.readin(
-                        "true-case-body-finished"
-                    ),
+                    recurse_iter, recurse.port.value.readin("recurse-receives-iter")
                 )
 
-            send_value(
-                body_invocation.wire.break_variables.readout(),
-                outputs.finish_variables.readin("true-case-body-broke"),
-            )
-            return builder
+                recurse_return = recurse.wire.return_value.readout()
+                recurse_finish = recurse.wire.finish_variables.readout()
+                recurse_break = recurse.wire.break_variables.readout()
+                recurse_continue = recurse.wire.continue_variables.readout()
 
-    # In the false case, our return, continue, break, and finish all flow as if this was a flattened context as this is
-    # the else case.  We don't need to worry about the iterator anymore.
+            with closer(
+                pack_into(builder.output_interface, FlowControlFrom)
+            ) as outputs:
+                send_value(
+                    body_return | recurse_return,
+                    outputs.return_value.readin("output-receives-return"),
+                )
+                send_value(
+                    (body_break_variables | recurse_finish),
+                    outputs.finish_variables.readin("output-receives-finish"),
+                )
+                send_value(
+                    recurse_break,
+                    outputs.break_variables.readin("output-receives-break"),
+                )
+                send_value(
+                    recurse_continue,
+                    outputs.continue_variables.readin("output-receives-continue"),
+                )
+
+        return builder
+
     @cached_property
     def false_case(self) -> ExpansionWithAdapters:
         with (
@@ -354,10 +390,9 @@ class Loop(ExpansionWithAdapters):
             expansion_invocation(
                 self.orelse, builder, FlowInputInto, FromInterfaceRegister
             ) as else_body,
+            closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs,
         ):
-            inputs = pack_from(builder.input_interface, FlowInputFrom)
             outputs = builder.output_interface
-
             send_value(
                 inputs.variables.readout(),
                 else_body.port.variables.readin("false-case-else-variables"),
@@ -380,16 +415,19 @@ class Loop(ExpansionWithAdapters):
             self.iteration.invocation(executor) as iterable_invocation,
             self.conditional.invocation(executor) as conditional_invocation,
         ):
-            iter_input_1, iter_input_2 = (
-                this_invocation.port.value.readout().duplicate()
-            )
+            input_iter = this_invocation.port.value.readout()
+            input_variables = this_invocation.port.variables.readout()
+
+            iter_input_1, iter_input_2 = input_iter.duplicate()
+
             send_value(
-                this_invocation.port.variables.readout(),
+                input_variables,
                 iterable_invocation.port.variables.readin("iterable-variables"),
             )
             send_value(
                 iter_input_1, iterable_invocation.port.value.readin("iterable-iter")
             )
+
             send_value(
                 iterable_invocation.wire.return_value.readout(),
                 conditional_invocation.port.readin("conditional-gets-iterable-return"),
