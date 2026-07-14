@@ -86,7 +86,7 @@ def test_loop_basic(c: Calculus) -> None:
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as iter:
         send_value(iter.variable_registers['a'].readout(), iter.control_output.return_value.readin())
         send_value(as_constant_register(False, iter), iter.variable_registers["a"].readin())
-        send_value(iter.flow_input.variables.readout(), iter.control_output.finish_variables.readin("finish for iter"))
+        send_value(iter.variables_readout(), iter.control_output.finish_variables.readin("finish for iter"))
 
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as body:
         send_value(
@@ -106,3 +106,17 @@ def test_loop_basic(c: Calculus) -> None:
         send_value(loop_invocation.wire.finish_variables.readout(), c.to_key(0))
 
     assert list(c.readout(0)) == [1]
+
+
+def test_variables_readout(c: Calculus) -> None:
+    variables = Variables({"x": ValueAdapter(), "y": ValueAdapter()})
+
+    with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as vf:
+        send_value(as_constant_register(42, vf), vf.variable_registers["x"].readin())
+        send_value(vf.variables_readout(), vf.control_output.finish_variables.readin())
+
+    with vf.invocation(c.executor) as invocation:
+        send_value(as_constant_register((10, 20), c.executor), invocation.port.variables.readin())
+        send_value(invocation.wire.finish_variables.readout(), c.to_key(0))
+
+    assert list(c.readout(0)) == [(42, 20)]

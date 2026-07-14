@@ -81,6 +81,8 @@ class Tracer(Expansion):
     ) -> None:
         if not isinstance(port, Erasure):
             print(self.message, file=sys.stderr)
+        else:
+            print("ERASURE: ", self.message, file=sys.stderr)
         executor.connect(port, wires[0])
 
 
