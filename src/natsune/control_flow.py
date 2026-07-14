@@ -76,11 +76,25 @@ class Tracer(Expansion):
         c.connect(new_wire, g)
         return new_wire
 
+    @classmethod
+    def trace_from(cls, w: Wire, msg: str, c: Connector) -> Wire:
+        g = Graft(Tracer(msg), [Wire()])
+        c.connect(w, g)
+        return g.wires[0]
+
     def __call__(
         self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None:
         if not isinstance(port, Erasure):
-            print(self.message, file=sys.stderr)
+            print(self.message, port, file=sys.stderr)
+            if isinstance(port, CombPort) and port.label == "x":
+                new_c = CombPort("x")
+                for w, wire in zip(new_c.wires, port.wires):
+                    g = Graft(self, [Wire()])
+                    executor.connect(g, wire)
+                    executor.connect(g.wires[0], w)
+                executor.connect(wires[0], new_c)
+                return
         else:
             print("ERASURE: ", self.message, file=sys.stderr)
         executor.connect(port, wires[0])
@@ -330,7 +344,7 @@ class Loop(ExpansionWithAdapters):
         with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
 
             with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
-                input_variables = inputs.variables.readout()
+                input_variables = inputs.variables.readout("input-variables-true-case")
                 input_iter = inputs.value.readout()
 
             with self.body.invocation(builder) as body_invocation:
@@ -340,8 +354,10 @@ class Loop(ExpansionWithAdapters):
                 )
                 body_finish_variables = (
                     body_invocation.wire.continue_variables.readout()
-                    | body_invocation.wire.finish_variables.readout()
-                )
+                    | body_invocation.wire.finish_variables.readout(
+                        "body-invocation-finish-variables"
+                    )
+                ).trace("final-body-finish-variables")
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
 
@@ -371,7 +387,10 @@ class Loop(ExpansionWithAdapters):
                     outputs.return_value.readin("output-receives-return"),
                 )
                 send_value(
-                    (body_break_variables | recurse_finish),
+                    (
+                        body_break_variables.trace("body-break-variables")
+                        | recurse_finish
+                    ),
                     outputs.finish_variables.readin("output-receives-finish"),
                 )
                 send_value(
@@ -396,7 +415,7 @@ class Loop(ExpansionWithAdapters):
         ):
             outputs = builder.output_interface
             send_value(
-                inputs.variables.readout(),
+                inputs.variables.readout("false-case-reads-input-variables"),
                 else_body.port.variables.readin("false-case-else-variables"),
             )
             send_value(else_body.wire.readout(), outputs.readin("false-case-body"))
@@ -412,7 +431,7 @@ class Loop(ExpansionWithAdapters):
 
         with (
             unpack_port_and_wires(
-                self, port, wires, executor, FlowInputFrom, ToInterfaceRegister
+                self, port, wires, executor, FlowInputFrom, FlowControlFrom
             ) as this_invocation,
             self.iteration.invocation(executor) as iterable_invocation,
             self.conditional.invocation(executor) as conditional_invocation,
@@ -447,10 +466,27 @@ class Loop(ExpansionWithAdapters):
                     conditional_context.variables.readin("conditional-gets-variables"),
                 )
 
-            send_value(
-                conditional_invocation.wire.result.readout(),
-                this_invocation.wire.readin("conditional-result-is-result"),
-            )
+            with closer(
+                pack_from(conditional_invocation.wire.result, FlowControlInto)
+            ) as conditional_result:
+                send_value(
+                    conditional_result.finish_variables.readout(),
+                    this_invocation.wire.finish_variables.readin("conditional-finish"),
+                )
+                send_value(
+                    conditional_result.return_value.readout(),
+                    this_invocation.wire.return_value.readin("conditional-return"),
+                )
+                send_value(
+                    conditional_result.break_variables.readout(),
+                    this_invocation.wire.break_variables.readin("conditional-break"),
+                )
+                send_value(
+                    conditional_result.continue_variables.readout(),
+                    this_invocation.wire.continue_variables.readin(
+                        "conditional-continue"
+                    ),
+                )
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

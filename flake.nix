@@ -26,7 +26,6 @@
             uv
             pkgs.python314
             pkgs.pre-commit
-            graphviz  # System Graphviz executables (dot, etc.) for visualization
           ];
 
           shellHook = ''
@@ -42,7 +41,7 @@
           '';
         };
 
-        checks = {};
+        checks = { };
       }
     );
 }

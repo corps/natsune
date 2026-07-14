@@ -89,9 +89,11 @@ def test_loop_basic(c: Calculus) -> None:
         send_value(iter.variables_readout(), iter.control_output.finish_variables.readin("finish for iter"))
 
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as body:
+        out_v = body.variable_registers["b"].readout('receives-old-b')
+        update_v = body.variable_registers["b"].readin("udates-b")
         send_value(
-            send_parameter(filter_invocation(lambda x: x + 1, body), body.variable_registers["b"].readout()),
-            body.variable_registers["b"].readin("setting b")
+            send_parameter(filter_invocation(lambda x: x + 1, body), out_v).trace("result-of-adding"),
+            update_v
         )
         send_value(body.variables_readout(), body.control_output.finish_variables.readin("finish for body"))
 
