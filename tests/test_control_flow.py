@@ -93,9 +93,10 @@ def test_loop_basic(c: Calculus) -> None:
             send_parameter(filter_invocation(lambda x: x + 1, body), body.variable_registers["b"].readout()),
             body.variable_registers["b"].readin("setting b")
         )
+        send_value(body.variables_readout(), body.control_output.finish_variables.readin("finish for body"))
 
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as orelse:
-        pass
+        send_value(orelse.variables_readout(), orelse.control_output.finish_variables.readin("finish for orelse"))
 
     with Loop(
         iter,
