@@ -4,8 +4,8 @@ from natsune.adapters import ValueAdapter, Variables
 from natsune.calculus import Calculus
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import WeakeningSelection, IfThenElse, Loop, VariablesFlow
-from natsune.invocations import filter_invocation, send_parameter
-from natsune.registers import send_value, as_constant_register
+from natsune.invocations import filter_invocation, send_parameter, expansion_invocation
+from natsune.registers import send_value, as_constant_register, ToInterfaceRegister, FromInterfaceRegister
 
 
 @pytest.fixture(scope='function')
@@ -86,29 +86,29 @@ def test_loop_basic(c: Calculus) -> None:
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as iter:
         send_value(iter.variable_registers['a'].readout(), iter.control_output.return_value.readin())
         send_value(as_constant_register(False, iter), iter.variable_registers["a"].readin())
-        send_value(iter.variables_readout(), iter.control_output.finish_variables.readin("finish for iter"))
+        send_value(iter.variables_readout(), iter.control_output.finish_variables.readin())
 
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as body:
-        out_v = body.variable_registers["b"].readout('receives-old-b')
-        update_v = body.variable_registers["b"].readin("udates-b")
+        out_v = body.variable_registers["b"].readout()
+        update_v = body.variable_registers["b"].readin()
         send_value(
-            send_parameter(filter_invocation(lambda x: x + 1, body), out_v).trace("result-of-adding"),
+            send_parameter(filter_invocation(lambda x: x + 1, body), out_v),
             update_v
         )
-        send_value(body.variables_readout(), body.control_output.finish_variables.readin("finish for body"))
+        send_value(body.variables_readout(), body.control_output.finish_variables.readin())
 
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as orelse:
-        send_value(orelse.variables_readout(), orelse.control_output.finish_variables.readin("finish for orelse"))
+        send_value(orelse.variables_readout(), orelse.control_output.finish_variables.readin())
 
     with Loop(
         iter,
         body,
         orelse,
     ).invocation(c.executor) as loop_invocation:
-        send_value(as_constant_register((True, 0), c.executor), loop_invocation.port.variables.readin("variables into loop"))
+        send_value(as_constant_register((True, 0), c.executor), loop_invocation.port.variables.readin())
         send_value(loop_invocation.wire.finish_variables.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [1]
+    assert list(c.readout(0)) == [(False, 1)]
 
 
 def test_variables_readout(c: Calculus) -> None:
@@ -116,10 +116,28 @@ def test_variables_readout(c: Calculus) -> None:
 
     with VariablesFlow(variables=variables, return_adapter=ValueAdapter()) as vf:
         send_value(as_constant_register(42, vf), vf.variable_registers["x"].readin())
+        send_value(send_parameter(filter_invocation( lambda x: x + 1, vf), vf.variable_registers["y"].readout()), vf.variable_registers["x"].readin())
+        send_value(send_parameter(filter_invocation( lambda x: x + 1, vf), vf.variable_registers["x"].readout()), vf.variable_registers["y"].readin())
+        send_value(send_parameter(filter_invocation( lambda x: x + 1, vf), vf.variable_registers["y"].readout()), vf.variable_registers["x"].readin())
         send_value(vf.variables_readout(), vf.control_output.finish_variables.readin())
 
     with vf.invocation(c.executor) as invocation:
         send_value(as_constant_register((10, 20), c.executor), invocation.port.variables.readin())
         send_value(invocation.wire.finish_variables.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [(42, 20)]
+    assert list(c.readout(0)) == [(23, 22)]
+
+def test_expansion_builder_interface_mutations(c: Calculus) -> None:
+    with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as eb:
+        send_value(as_constant_register(0, eb), eb.output_interface.readin())
+
+    with expansion_invocation(eb, c.executor, ToInterfaceRegister, FromInterfaceRegister) as invocation:
+        send_value(as_constant_register(1, c.executor), invocation.port.readin())
+        send_value(invocation.wire.readout(), c.to_key(0))
+
+    with expansion_invocation(eb, c.executor, ToInterfaceRegister, FromInterfaceRegister) as invocation:
+        send_value(as_constant_register(1, c.executor), invocation.port.readin())
+        send_value(invocation.wire.readout(), c.to_key(1))
+
+    assert list(c.readout(0)) == [0]
+    assert list(c.readout(1)) == [0]

@@ -50,7 +50,7 @@ from natsune.registers import (
     send_values,
     serialize_values,
     as_constant_register,
-    join_to_registers,
+    join_to_registers, InterfaceRegister, ToInterfaceRegister,
 )
 
 unsupported_expr: tuple[type[ast.expr], ...] = (
@@ -166,6 +166,7 @@ class InetFunctionCompiler:
         for stmt in self.func_def.body:
             InetVariablesEvaluator(self).visit(stmt)
 
+    # TODO: Remove name parameter from here and the Variables Flow
     def new_branch(self, name: str) -> InetBranchCompiler:
         return InetBranchCompiler(
             self,
@@ -311,6 +312,9 @@ def _try_iter(i: Iterator) -> Any:
     except StopIteration:
         return None, False
 
+
+def do_think(v: Any) -> Any:
+    return v
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class InetBranchCompiler:
@@ -471,19 +475,17 @@ class InetBranchCompiler:
             name="true-case-dddd",
         ) as true_case:
             true_branch = InetBranchCompiler(self.function_compiler, true_case)
-            send_value(
-                true_case.flow_input.value.readout(),
-                true_branch.evaluate_to_expression(deconstructor_expr),
-            )
+            # send_value(
+            #     true_case.flow_input.value.readout(),
+            #     true_branch.evaluate_to_expression(deconstructor_expr),
+            # )
             send_value(
                 as_constant_register(True, true_case),
                 true_case.control_output.return_value.readin(),
             )
             send_value(
                 true_case.variables_readout(),
-                true_case.control_output.finish_variables.readin(
-                    "deconstructor-true-finish-variables"
-                ),
+                true_case.control_output.finish_variables.readin(),
             )
 
         with VariablesFlow(
@@ -497,9 +499,7 @@ class InetBranchCompiler:
             )
             send_value(
                 false_case.variables_readout(),
-                false_case.control_output.finish_variables.readin(
-                    "deconstructor-false-finish-variables"
-                ),
+                false_case.control_output.finish_variables.readin(),
             )
 
         with VariablesFlow(
@@ -524,10 +524,11 @@ class InetBranchCompiler:
                 with closer(
                     pack_into(conditional.wire.context, FlowInputInto)
                 ) as context:
-                    send_value(next_value, context.value.readin("next-value-context"))
-                    send_value(
-                        input_variables, context.variables.readin("variables-context")
-                    )
+                    pass
+                    # send_value(next_value, context.value.readin())
+                    # send_value(
+                    #     input_variables, context.variables.readin()
+                    # )
 
                 with closer(
                     pack_from(conditional.wire.result, FlowControlInto)
@@ -536,10 +537,10 @@ class InetBranchCompiler:
                         result.return_value.readout(),
                         flow.control_output.return_value.readin(),
                     )
-                    send_value(
-                        result.finish_variables.readout(),
-                        flow.control_output.finish_variables.readin(),
-                    )
+                    # send_value(
+                    #     result.finish_variables.readout(),
+                    #     flow.control_output.finish_variables.readin(),
+                    # )
 
             return flow
 
@@ -575,51 +576,20 @@ class InetBranchCompiler:
                 self.flow.control_output.finish_variables.readin(),
             )
 
-            with WeakeningSelection(self.flow.return_adapter).invocation(
-                self.flow
-            ) as return_selection:
-                send_value(
-                    control.return_value.readout(), return_selection.port.readin()
-                )
-                send_value(
-                    continuation.wire.return_value.readout(),
-                    return_selection.wire.second_value.readin(),
-                )
-                send_value(
-                    return_selection.wire.result.readout(),
-                    self.flow.control_output.return_value.readin(),
-                )
+            send_value(
+                control.return_value.readout() | continuation.wire.return_value.readout(),
+                self.flow.control_output.return_value.readin(),
+            )
 
-            with WeakeningSelection(self.flow.variables.adapter).invocation(
-                self.flow
-            ) as continue_selection:
-                send_value(
-                    control.continue_variables.readout(),
-                    continue_selection.port.readin(),
-                )
-                send_value(
-                    continuation.wire.continue_variables.readout(),
-                    continue_selection.wire.second_value.readin(),
-                )
-                send_value(
-                    continue_selection.wire.result.readout(),
-                    self.flow.control_output.continue_variables.readin(),
-                )
+            send_value(
+                control.continue_variables.readout() | continuation.wire.continue_variables.readout(),
+                self.flow.control_output.continue_variables.readin(),
+            )
 
-            with WeakeningSelection(self.flow.variables.adapter).invocation(
-                self.flow
-            ) as break_selection:
-                send_value(
-                    control.break_variables.readout(), break_selection.port.readin()
-                )
-                send_value(
-                    continuation.wire.break_variables.readout(),
-                    break_selection.wire.second_value.readin(),
-                )
-                send_value(
-                    break_selection.wire.result.readout(),
-                    self.flow.control_output.break_variables.readin(),
-                )
+            send_value(
+                control.break_variables.readout() | continuation.wire.break_variables.readout(),
+                self.flow.control_output.break_variables.readin(),
+            )
 
     def parse_statement_body(
         self, body: Iterable[ast.stmt], default_return_none: bool = False
@@ -677,19 +647,15 @@ class InetBranchCompiler:
                                     filter_invocation(iter, self.flow),
                                     self.evaluate_from_expression(stmt.iter),
                                 ),
-                                for_invocation.port.value.readin(
-                                    "for-invocation-receives-value"
-                                ),
+                                for_invocation.port.value.readin(),
                             )
 
                         send_value(
                             self.flow.variables_readout(),
-                            for_invocation.port.variables.readin(
-                                "for-invocation-receives-variables"
-                            ),
+                            for_invocation.port.variables.readin(),
                         )
 
-                        self.wire_continuation(for_invocation.wire, body_iter)
+                        # self.wire_continuation(for_invocation.wire, body_iter)
 
                         return self.flow
 
@@ -754,9 +720,7 @@ class InetBranchCompiler:
             else:
                 send_value(
                     self.flow.variables_readout(),
-                    self.flow.control_output.finish_variables.readin(
-                        "variables-readout-into-finish-variables"
-                    ),
+                    self.flow.control_output.finish_variables.readin(),
                 )
             return self.flow
 

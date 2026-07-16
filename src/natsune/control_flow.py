@@ -63,44 +63,6 @@ from natsune.registers import (
 
 
 @dataclasses.dataclass
-class Tracer(Expansion):
-    message: str
-
-    def __copy__(self) -> Self:
-        return self
-
-    @classmethod
-    def trace(cls, w: Wire, msg: str, c: Connector) -> Wire:
-        g = Graft(Tracer(msg), [w])
-        new_wire = Wire()
-        c.connect(new_wire, g)
-        return new_wire
-
-    @classmethod
-    def trace_from(cls, w: Wire, msg: str, c: Connector) -> Wire:
-        g = Graft(Tracer(msg), [Wire()])
-        c.connect(w, g)
-        return g.wires[0]
-
-    def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
-    ) -> None:
-        if not isinstance(port, Erasure):
-            print(self.message, port, file=sys.stderr)
-            if isinstance(port, CombPort) and port.label == "x":
-                new_c = CombPort("x")
-                for w, wire in zip(new_c.wires, port.wires):
-                    g = Graft(self, [Wire()])
-                    executor.connect(g, wire)
-                    executor.connect(g.wires[0], w)
-                executor.connect(wires[0], new_c)
-                return
-        else:
-            print("ERASURE: ", self.message, file=sys.stderr)
-        executor.connect(port, wires[0])
-
-
-@dataclasses.dataclass
 class FlowInput:
     variables: LHS
     value: LHS
@@ -250,6 +212,7 @@ class GatedSelection(ExpansionWithAdapters):
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
+    # TODO: Remove this from all callsites
     name: str = "-anonymous-"
 
     input_adapter: Adapter = dataclasses.field(init=False)
@@ -274,7 +237,7 @@ class VariablesFlow(ExpansionBuilder):
     def variables_readout(self) -> FromRegister:
         x1, x2 = Wire.as_interface()
         send_values(
-            [r.readout() for r in self.variable_registers.values()],
+            [r.readout() for k, r in self.variable_registers.items()],
             as_to_register(x1, self.variables.adapter, self).split(),
         )
 
@@ -344,20 +307,18 @@ class Loop(ExpansionWithAdapters):
         with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
 
             with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
-                input_variables = inputs.variables.readout("input-variables-true-case")
+                input_variables = inputs.variables.readout()
                 input_iter = inputs.value.readout()
 
             with self.body.invocation(builder) as body_invocation:
                 send_value(
                     input_variables,
-                    body_invocation.port.variables.readin("body-receives-variables"),
+                    body_invocation.port.variables.readin(),
                 )
                 body_finish_variables = (
                     body_invocation.wire.continue_variables.readout()
-                    | body_invocation.wire.finish_variables.readout(
-                        "body-invocation-finish-variables"
-                    )
-                ).trace("final-body-finish-variables")
+                    | body_invocation.wire.finish_variables.readout()
+                )
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
 
@@ -368,10 +329,10 @@ class Loop(ExpansionWithAdapters):
             with self.invocation(builder) as recurse:
                 send_value(
                     recurse_variables,
-                    recurse.port.variables.readin("recurse-receives-variables"),
+                    recurse.port.variables.readin(),
                 )
                 send_value(
-                    recurse_iter, recurse.port.value.readin("recurse-receives-iter")
+                    recurse_iter, recurse.port.value.readin()
                 )
 
                 recurse_return = recurse.wire.return_value.readout()
@@ -384,22 +345,22 @@ class Loop(ExpansionWithAdapters):
             ) as outputs:
                 send_value(
                     body_return | recurse_return,
-                    outputs.return_value.readin("output-receives-return"),
+                    outputs.return_value.readin(),
                 )
                 send_value(
                     (
-                        body_break_variables.trace("body-break-variables")
+                        body_break_variables
                         | recurse_finish
                     ),
-                    outputs.finish_variables.readin("output-receives-finish"),
+                    outputs.finish_variables.readin(),
                 )
                 send_value(
                     recurse_break,
-                    outputs.break_variables.readin("output-receives-break"),
+                    outputs.break_variables.readin(),
                 )
                 send_value(
                     recurse_continue,
-                    outputs.continue_variables.readin("output-receives-continue"),
+                    outputs.continue_variables.readin(),
                 )
 
         return builder
@@ -415,10 +376,10 @@ class Loop(ExpansionWithAdapters):
         ):
             outputs = builder.output_interface
             send_value(
-                inputs.variables.readout("false-case-reads-input-variables"),
-                else_body.port.variables.readin("false-case-else-variables"),
+                inputs.variables.readout(),
+                else_body.port.variables.readin(),
             )
-            send_value(else_body.wire.readout(), outputs.readin("false-case-body"))
+            send_value(else_body.wire.readout(), outputs.readin())
             return builder
 
     def __call__(
@@ -443,15 +404,15 @@ class Loop(ExpansionWithAdapters):
 
             send_value(
                 input_variables,
-                iterable_invocation.port.variables.readin("iterable-variables"),
+                iterable_invocation.port.variables.readin(),
             )
             send_value(
-                iter_input_1, iterable_invocation.port.value.readin("iterable-iter")
+                iter_input_1, iterable_invocation.port.value.readin()
             )
 
             send_value(
                 iterable_invocation.wire.return_value.readout(),
-                conditional_invocation.port.readin("conditional-gets-iterable-return"),
+                conditional_invocation.port.readin(),
             )
 
             with closer(
@@ -459,11 +420,11 @@ class Loop(ExpansionWithAdapters):
             ) as conditional_context:
                 send_value(
                     iter_input_2,
-                    conditional_context.value.readin("conditional-gets-iter"),
+                    conditional_context.value.readin(),
                 )
                 send_value(
                     iterable_invocation.wire.finish_variables.readout(),
-                    conditional_context.variables.readin("conditional-gets-variables"),
+                    conditional_context.variables.readin(),
                 )
 
             with closer(
@@ -471,21 +432,19 @@ class Loop(ExpansionWithAdapters):
             ) as conditional_result:
                 send_value(
                     conditional_result.finish_variables.readout(),
-                    this_invocation.wire.finish_variables.readin("conditional-finish"),
+                    this_invocation.wire.finish_variables.readin(),
                 )
                 send_value(
                     conditional_result.return_value.readout(),
-                    this_invocation.wire.return_value.readin("conditional-return"),
+                    this_invocation.wire.return_value.readin(),
                 )
                 send_value(
                     conditional_result.break_variables.readout(),
-                    this_invocation.wire.break_variables.readin("conditional-break"),
+                    this_invocation.wire.break_variables.readin(),
                 )
                 send_value(
                     conditional_result.continue_variables.readout(),
-                    this_invocation.wire.continue_variables.readin(
-                        "conditional-continue"
-                    ),
+                    this_invocation.wire.continue_variables.readin(),
                 )
 
 
@@ -544,10 +503,10 @@ class IfThenElse(ExpansionWithAdapters):
             unpack_wires(self, wires, exec, IfThenElseOutputFrom) as conditional,
             expansion_invocation(
                 case, exec, ToInterfaceRegister, FromInterfaceRegister
-            ) as case,
+            ) as invocation,
         ):
-            send_value(conditional.context.readout(), case.port.readin())
-            send_value(case.wire.readout(), conditional.result.readin())
+            send_value(conditional.context.readout(), invocation.port.readin())
+            send_value(invocation.wire.readout(), conditional.result.readin())
 
 
 @dataclasses.dataclass(frozen=True)

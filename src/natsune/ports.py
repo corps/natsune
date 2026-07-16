@@ -1,3 +1,4 @@
+import traceback
 import copy
 import dataclasses
 from typing import (
@@ -7,7 +8,7 @@ from typing import (
     Callable,
     Protocol,
     Sequence,
-    TYPE_CHECKING,
+    TYPE_CHECKING, cast,
 )
 
 if TYPE_CHECKING:
@@ -44,13 +45,36 @@ class Wire:
 
     @classmethod
     def as_interface(cls) -> tuple[WirePort, WirePort]:
-        w = cls()
+        # w = cast(Wire, FakeWire())
+        w = Wire()
         return WirePort([w]), WirePort([w])
 
     @classmethod
     def as_tautology(cls) -> tuple[WirePort, Wire]:
         wp = WirePort()
         return wp, wp.wires[0]
+
+class FakeWire:
+    _target: Port | None = None
+    reason: str = ""
+
+    @property
+    def target(self):
+        return self._target
+
+    @target.setter
+    def target(self, value: Port | None):
+        self._target = value
+        self.reason = ''.join(traceback.format_stack())
+
+    def __copy__(self):
+        return Wire()
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
 
 type Target = Wire | Port
@@ -92,18 +116,12 @@ class CombPort(Port):
         default_factory=lambda: [Wire(), Wire()]
     )
 
-    def label_eq(self, other: Any) -> bool:
-        return isinstance(other, CombPort) and self.label == other.label
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExtMergeFuncPort(Port):
     fn: Callable[[Any, Any], Any]
     wires: list[Wire] = dataclasses.field(default_factory=lambda: [Wire(), Wire()])
     swapped: bool = False
-
-    def label_eq(self, other: Port) -> bool:
-        return isinstance(other, ExtMergeFuncPort) and self.fn == other.fn
 
     def __repr__(self) -> str:
         return f"ExtMergeFuncPort({getattr(self.fn, '__name__', str(self.fn))})"
@@ -115,9 +133,6 @@ class ExtSplitFuncPort(Port):
     wires: MutableSequence[Wire] = dataclasses.field(
         default_factory=lambda: [Wire(), Wire()]
     )
-
-    def label_eq(self, other: Any) -> bool:
-        return isinstance(other, ExtSplitFuncPort) and self.fn == other.fn
 
     def __repr__(self) -> str:
         return f"ExtSplitFuncPort({getattr(self.fn, '__name__', str(self.fn))})"

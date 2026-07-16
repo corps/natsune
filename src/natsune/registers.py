@@ -34,7 +34,6 @@ class FromRegister(Protocol):
     def duplicate(self) -> tuple[FromRegister, FromRegister]: ...
     def __or__(self, other: FromRegister) -> FromRegister: ...
     def __and__(self, other: FromRegister) -> FromRegister: ...
-    def trace(self, message: str) -> FromRegister: ...
 
 
 class ToRegister(Protocol):
@@ -71,14 +70,6 @@ class _FromRegister:
 
     def close(self) -> None:
         self.connector.annihilate(self.port)
-
-    def trace(self, message: str) -> FromRegister:
-        front_port = WirePort()
-        wire = Wire(self.port)
-        from natsune.control_flow import Tracer
-
-        front_port.wires[0] = Tracer.trace_from(wire, message, self.connector)
-        return _FromRegister(front_port, self.adapter, self.connector)
 
     def split(self) -> Sequence[FromRegister]:
         if isinstance(self.adapter, ParValueAdapter):
@@ -203,13 +194,8 @@ class InterfaceRegister:
 
 
 class FromInterfaceRegister(InterfaceRegister):
-    def readout(self, trace: str | None = None) -> FromRegister:
+    def readout(self) -> FromRegister:
         taken, given = self.extend()
-        if trace:
-            from natsune.control_flow import Tracer
-
-            taken = Tracer.trace_from(taken, trace, self.connector)
-
         self.connector.annihilate(given)
         return _FromRegister(WirePort([taken]), self.adapter, self.connector)
 
@@ -220,12 +206,8 @@ class FromInterfaceRegister(InterfaceRegister):
 
 
 class ToInterfaceRegister(InterfaceRegister):
-    def readin(self, trace: str | None = None) -> ToRegister:
+    def readin(self) -> ToRegister:
         taken, given = self.extend()
-        if trace:
-            from natsune.control_flow import Tracer
-
-            taken = Tracer.trace(taken, trace, self.connector)
         self.connector.annihilate(given)
         return _ToRegister(WirePort([taken]), self.adapter, self.connector)
 
@@ -238,24 +220,16 @@ class ToInterfaceRegister(InterfaceRegister):
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out
 # or readin multiple times, producing an extension (sharing) for each.
 class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
-    def readout(self, trace: str | None = None) -> FromRegister:
+    def readout(self) -> FromRegister:
         taken, given = self.extend()
-        if trace:
-            from natsune.control_flow import Tracer
-
-            taken = Tracer.trace_from(taken, trace, self.connector)
         return _FromRegister(
             (self.adapter.produce_egression(taken, given, self.connector)),
             self.adapter,
             self.connector,
         )
 
-    def readin(self, trace: str | None = None) -> ToRegister:
+    def readin(self) -> ToRegister:
         taken, given = self.extend()
-        if trace:
-            from natsune.control_flow import Tracer
-
-            given = Tracer.trace(given, trace, self.connector)
         return _ToRegister(
             self.adapter.produce_ingression(taken, given, self.connector),
             self.adapter,
@@ -264,10 +238,6 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
 
     def close(self) -> None:
         self.adapter.close(self.state, self.connector)
-
-    def is_assigned(self) -> bool:
-        return self.state.wires[0] is not self.interface.wires[0]
-
 
 def send_values(
     from_registers: Sequence[FromRegister], to_registers: Sequence[ToRegister]

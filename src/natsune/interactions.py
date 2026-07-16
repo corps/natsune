@@ -1,3 +1,5 @@
+import sys
+
 from typing import TYPE_CHECKING
 from .connector import Connector
 import copy
@@ -61,16 +63,17 @@ def execute_ext_split_func(
     except Exception as e:
         execute_erasure(connector, l, Erasure(e))
         return
+    print(result[0], result[1], l.wires, file=sys.stderr)
     connector.connect(l.wires[0], ValuePort(result[0]))
     connector.connect(l.wires[1], ValuePort(result[1]))
 
 
 def execute_commute_or_anihilate(
     connector: Connector,
-    l: ExtSplitFuncPort | ExtMergeFuncPort | CombPort,
-    r: ExtSplitFuncPort | ExtMergeFuncPort | CombPort,
+    l: CombPort,
+    r: CombPort,
 ) -> None:
-    if l.label_eq(r):
+    if l.label == r.label:
         connector.connect(l.wires[0], r.wires[0])
         connector.connect(l.wires[1], r.wires[1])
         return
@@ -167,9 +170,7 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
             "Cannot execute interactions between two ExtSplitFuncPort or ExtMergeFuncPort"
         )
 
-    if isinstance(l, (ExtSplitFuncPort, ExtMergeFuncPort, CombPort)) and isinstance(
-        r, (ExtSplitFuncPort, ExtMergeFuncPort, CombPort)
-    ):
+    if isinstance(l, CombPort) and isinstance(r, CombPort):
         execute_commute_or_anihilate(executor, l, r)
         return
 
@@ -189,6 +190,7 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         execute_clone(executor, l, r)
         return
     elif isinstance(l, ValuePort):
+        raise ValueError("Cannot execute interactions between two ValuePorts: " + str(l) + ", " + str(r))
         execute_erasure(executor, l, r)
         return
 

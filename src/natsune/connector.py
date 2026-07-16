@@ -128,14 +128,15 @@ class ExpansionBuilder(Connector):
         self.input_interface.close()
 
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
-        new_wire_identity: dict[int, Wire] = {}
-        q: list[Port] = []
-        pairs: list[tuple[Port, Port]] = []
-
         if isinstance(port, Erasure):
             for wire in wires:
                 exec.annihilate(wire, port)
             return
+
+        new_wire_identity: dict[Wire, Wire] = {}
+        q: list[Port] = []
+        pairs: list[tuple[Port, Port]] = []
+
 
         for l, r in self.active_pairs:
             ll = copy.copy(l)
@@ -156,12 +157,14 @@ class ExpansionBuilder(Connector):
             head = q.pop()
 
             for i, wire in enumerate(head.wires):
-                wire_id = id(wire)
-                if wire_id in new_wire_identity:
-                    wire = new_wire_identity[wire_id]
+                if wire in new_wire_identity:
+                    wire = new_wire_identity[wire]
+                    if wire.target:
+                        raise AssertionError("Burp")
                 else:
+                    old_wire = wire
                     wire = copy.copy(wire)
-                    new_wire_identity[wire_id] = wire
+                    new_wire_identity[old_wire] = wire
                     if wire.target:
                         q.append(wire.target)
 
