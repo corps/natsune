@@ -8,7 +8,8 @@ from typing import (
     Callable,
     Protocol,
     Sequence,
-    TYPE_CHECKING, cast,
+    TYPE_CHECKING,
+    cast,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ class Wire:
         wp = WirePort()
         return wp, wp.wires[0]
 
+
 class FakeWire:
     _target: Port | None = None
     reason: str = ""
@@ -65,7 +67,7 @@ class FakeWire:
     @target.setter
     def target(self, value: Port | None):
         self._target = value
-        self.reason = ''.join(traceback.format_stack())
+        self.reason = "".join(traceback.format_stack())
 
     def __copy__(self):
         return Wire()

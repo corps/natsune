@@ -331,9 +331,7 @@ class Loop(ExpansionWithAdapters):
                     recurse_variables,
                     recurse.port.variables.readin(),
                 )
-                send_value(
-                    recurse_iter, recurse.port.value.readin()
-                )
+                send_value(recurse_iter, recurse.port.value.readin())
 
                 recurse_return = recurse.wire.return_value.readout()
                 recurse_finish = recurse.wire.finish_variables.readout()
@@ -348,10 +346,7 @@ class Loop(ExpansionWithAdapters):
                     outputs.return_value.readin(),
                 )
                 send_value(
-                    (
-                        body_break_variables
-                        | recurse_finish
-                    ),
+                    (body_break_variables | recurse_finish),
                     outputs.finish_variables.readin(),
                 )
                 send_value(
@@ -406,9 +401,7 @@ class Loop(ExpansionWithAdapters):
                 input_variables,
                 iterable_invocation.port.variables.readin(),
             )
-            send_value(
-                iter_input_1, iterable_invocation.port.value.readin()
-            )
+            send_value(iter_input_1, iterable_invocation.port.value.readin())
 
             send_value(
                 iterable_invocation.wire.return_value.readout(),

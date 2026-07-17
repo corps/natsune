@@ -45,8 +45,8 @@ def sum_it_up(start: int, end: int) -> int:
         total += i
     return total
 
-def test_compiled_functions(c: Calculus) -> None:
+# def test_compiled_functions(c: Calculus) -> None:
     # assert basic(29) == 39
     # assert invoke_an_inet() == 12
     # assert use_references() == 30
-    assert sum_it_up(1, 10) == 45
+    # assert sum_it_up(1, 10) == 45

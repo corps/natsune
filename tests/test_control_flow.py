@@ -62,6 +62,33 @@ def test_if_then_else(c: Calculus) -> None:
 
     assert list(c.readout(0)) == [6]
 
+def test_if_then_else_recurse(c: Calculus) -> None:
+    with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as builder:
+        with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as true_case:
+            with expansion_invocation(builder, true_case, ToInterfaceRegister, FromInterfaceRegister) as invocation:
+                a, b = filter_invocation(lambda x: x * 2, true_case)
+                send_value(as_constant_register(False, true_case), invocation.port.readin())
+                send_value(invocation.wire.readout(), a)
+                send_value(b, true_case.output_interface.readin())
+
+        with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as false_case:
+            a, b = filter_invocation(lambda x: x - 2, false_case)
+            send_value(false_case.input_interface.readout(), a)
+            send_value(b, false_case.output_interface.readin())
+
+        with IfThenElse(true_case, false_case).invocation(builder) as conditional:
+            send_value(builder.input_interface.readout(), conditional.port.readin())
+            send_value(as_constant_register(3, builder), conditional.wire.context.readin())
+            send_value(conditional.wire.result.readout(), builder.output_interface.readin())
+
+    with expansion_invocation(builder, c.executor, ToInterfaceRegister, FromInterfaceRegister) as invocation:
+        send_value(c.const(True), invocation.port.readin())
+        send_value(invocation.wire.readout(), c.to_key(0))
+
+    assert list(c.readout(0)) == [6]
+
+
+
 
 def test_if_then_else_false(c: Calculus) -> None:
     with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as true_case:

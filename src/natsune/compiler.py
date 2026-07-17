@@ -50,7 +50,9 @@ from natsune.registers import (
     send_values,
     serialize_values,
     as_constant_register,
-    join_to_registers, InterfaceRegister, ToInterfaceRegister,
+    join_to_registers,
+    InterfaceRegister,
+    ToInterfaceRegister,
 )
 
 unsupported_expr: tuple[type[ast.expr], ...] = (
@@ -316,6 +318,7 @@ def _try_iter(i: Iterator) -> Any:
 def do_think(v: Any) -> Any:
     return v
 
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class InetBranchCompiler:
     function_compiler: InetFunctionCompiler
@@ -475,10 +478,10 @@ class InetBranchCompiler:
             name="true-case-dddd",
         ) as true_case:
             true_branch = InetBranchCompiler(self.function_compiler, true_case)
-            # send_value(
-            #     true_case.flow_input.value.readout(),
-            #     true_branch.evaluate_to_expression(deconstructor_expr),
-            # )
+            send_value(
+                true_case.flow_input.value.readout(),
+                true_branch.evaluate_to_expression(deconstructor_expr),
+            )
             send_value(
                 as_constant_register(True, true_case),
                 true_case.control_output.return_value.readin(),
@@ -525,10 +528,8 @@ class InetBranchCompiler:
                     pack_into(conditional.wire.context, FlowInputInto)
                 ) as context:
                     pass
-                    # send_value(next_value, context.value.readin())
-                    # send_value(
-                    #     input_variables, context.variables.readin()
-                    # )
+                    send_value(next_value, context.value.readin())
+                    send_value(input_variables, context.variables.readin())
 
                 with closer(
                     pack_from(conditional.wire.result, FlowControlInto)
@@ -537,10 +538,10 @@ class InetBranchCompiler:
                         result.return_value.readout(),
                         flow.control_output.return_value.readin(),
                     )
-                    # send_value(
-                    #     result.finish_variables.readout(),
-                    #     flow.control_output.finish_variables.readin(),
-                    # )
+                    send_value(
+                        result.finish_variables.readout(),
+                        flow.control_output.finish_variables.readin(),
+                    )
 
             return flow
 
@@ -577,17 +578,20 @@ class InetBranchCompiler:
             )
 
             send_value(
-                control.return_value.readout() | continuation.wire.return_value.readout(),
+                control.return_value.readout()
+                | continuation.wire.return_value.readout(),
                 self.flow.control_output.return_value.readin(),
             )
 
             send_value(
-                control.continue_variables.readout() | continuation.wire.continue_variables.readout(),
+                control.continue_variables.readout()
+                | continuation.wire.continue_variables.readout(),
                 self.flow.control_output.continue_variables.readin(),
             )
 
             send_value(
-                control.break_variables.readout() | continuation.wire.break_variables.readout(),
+                control.break_variables.readout()
+                | continuation.wire.break_variables.readout(),
                 self.flow.control_output.break_variables.readin(),
             )
 

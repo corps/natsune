@@ -11,7 +11,6 @@ from natsune.ports import Port, Wire, WirePort, Target, CombPort, Erasure
 if TYPE_CHECKING:
     from natsune.adapters import Adapter
     from natsune.registers import (
-        InterfaceRegister,
         FromInterfaceRegister,
         ToInterfaceRegister,
     )
@@ -137,7 +136,6 @@ class ExpansionBuilder(Connector):
         q: list[Port] = []
         pairs: list[tuple[Port, Port]] = []
 
-
         for l, r in self.active_pairs:
             ll = copy.copy(l)
             rr = copy.copy(r)
@@ -146,11 +144,9 @@ class ExpansionBuilder(Connector):
             q.append(rr)
 
         return_port = copy.copy(self.output_interface.interface)
-        exec.connect(return_port, wires[0])
         q.append(return_port)
 
         args_port = copy.copy(self.input_interface.interface)
-        exec.connect(args_port, port)
         q.append(args_port)
 
         while q:
@@ -159,8 +155,7 @@ class ExpansionBuilder(Connector):
             for i, wire in enumerate(head.wires):
                 if wire in new_wire_identity:
                     wire = new_wire_identity[wire]
-                    if wire.target:
-                        raise AssertionError("Burp")
+                    assert wire.target is None
                 else:
                     old_wire = wire
                     wire = copy.copy(wire)
@@ -172,6 +167,9 @@ class ExpansionBuilder(Connector):
 
         for l, r in pairs:
             exec.connect_ports(l, r)
+
+        exec.connect(args_port, port)
+        exec.connect(return_port, wires[0])
 
     def __copy__(self) -> Self:
         return self

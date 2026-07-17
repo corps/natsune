@@ -1,5 +1,3 @@
-import sys
-
 from typing import TYPE_CHECKING
 from .connector import Connector
 import copy
@@ -63,7 +61,6 @@ def execute_ext_split_func(
     except Exception as e:
         execute_erasure(connector, l, Erasure(e))
         return
-    print(result[0], result[1], l.wires, file=sys.stderr)
     connector.connect(l.wires[0], ValuePort(result[0]))
     connector.connect(l.wires[1], ValuePort(result[1]))
 
@@ -190,7 +187,12 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         execute_clone(executor, l, r)
         return
     elif isinstance(l, ValuePort):
-        raise ValueError("Cannot execute interactions between two ValuePorts: " + str(l) + ", " + str(r))
+        raise ValueError(
+            "Cannot execute interactions between two ValuePorts: "
+            + str(l)
+            + ", "
+            + str(r)
+        )
         execute_erasure(executor, l, r)
         return
 

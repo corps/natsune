@@ -239,6 +239,7 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
     def close(self) -> None:
         self.adapter.close(self.state, self.connector)
 
+
 def send_values(
     from_registers: Sequence[FromRegister], to_registers: Sequence[ToRegister]
 ) -> None:
