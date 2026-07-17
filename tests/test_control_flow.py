@@ -4,7 +4,7 @@ from natsune.adapters import ValueAdapter, Variables
 from natsune.calculus import Calculus
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import WeakeningSelection, IfThenElse, Loop, VariablesFlow
-from natsune.invocations import filter_invocation, send_parameter, expansion_invocation
+from natsune.invocations import filter_invocation, send_parameter, expansion_invocation, merge_invocation
 from natsune.registers import send_value, as_constant_register, ToInterfaceRegister, FromInterfaceRegister
 
 
@@ -17,7 +17,7 @@ def test_weakening(c: Calculus) -> None:
         send_value(c.erasure(), invocation.port.readin())
         send_value(c.const(30), invocation.wire.second_value.readin())
         send_value(invocation.wire.result.readout(), c.to_key(0))
-    assert list(c.readout(0)) == [30]
+    assert c.reduce_to_value(0) == 30
 
 def test_weakening_discard(c: Calculus) -> None:
     with WeakeningSelection(ValueAdapter()).invocation(c.executor) as invocation:
@@ -60,22 +60,22 @@ def test_if_then_else(c: Calculus) -> None:
         send_value(c.const(3), conditional.wire.context.readin())
         send_value(conditional.wire.result.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [6]
+    assert c.reduce_to_value(0) == 6
 
 def test_if_then_else_recurse(c: Calculus) -> None:
     with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as builder:
-        with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as true_case:
-            with expansion_invocation(builder, true_case, ToInterfaceRegister, FromInterfaceRegister) as invocation:
-                a, b = filter_invocation(lambda x: x * 2, true_case)
-                send_value(as_constant_register(False, true_case), invocation.port.readin())
-                send_value(invocation.wire.readout(), a)
-                send_value(b, true_case.output_interface.readin())
-
         with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as false_case:
-            a, b = filter_invocation(lambda x: x - 2, false_case)
+            a, b = filter_invocation(lambda x: x + 2, false_case)
             send_value(false_case.input_interface.readout(), a)
             send_value(b, false_case.output_interface.readin())
 
+        with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as true_case:
+            with expansion_invocation(builder, true_case, ToInterfaceRegister, FromInterfaceRegister) as invocation:
+                (a, d) , b = merge_invocation(lambda x,y: x + y + 2, true_case)
+                send_value(true_case.input_interface.readout(), a)
+                send_value(b, true_case.output_interface.readin())
+                send_value(as_constant_register(False, true_case), invocation.port.readin())
+                send_value(invocation.wire.readout(), d)
         with IfThenElse(true_case, false_case).invocation(builder) as conditional:
             send_value(builder.input_interface.readout(), conditional.port.readin())
             send_value(as_constant_register(3, builder), conditional.wire.context.readin())
@@ -85,27 +85,13 @@ def test_if_then_else_recurse(c: Calculus) -> None:
         send_value(c.const(True), invocation.port.readin())
         send_value(invocation.wire.readout(), c.to_key(0))
 
-    c.optimize()
-    assert c.serialize_active_pairs() == ['([0])graft = True']
-    c.process_next_interaction()
-    c.optimize()
-    assert c.serialize_active_pairs() == ['(((Z, [0]>->->->-)x, 3>-)x)graft = True']
-    c.process_next_interaction()
-    c.optimize()
-    assert c.serialize_active_pairs() == ['3 = graft(w1)']
-    c.process_next_interaction()
-    c.optimize()
-    assert c.serialize_active_pairs() == ['((w1>->->-, None)fnM)graft = False']
-    c.process_next_interaction()
-    c.optimize()
-    assert c.serialize_active_pairs() == ['(((Z, w1>-)x, (w1)graft)x)graft = False']
-    c.process_next_interaction()
-    c.optimize()
-    assert c.serialize_active_pairs() == ['(w1)graft = graft(w1)']
-
-    assert list(c.readout(0)) != []
-
-
+    assert c.take_step() == ['(((Z, [0]>->->-)x, 3)x)graft = True']
+    assert c.take_step() == ['3 = graft(w1)']
+    assert c.take_step() == ['3 = fnM(w1, w2)', '(w1)graft = False']
+    assert c.take_step() == ['3 = fnM(w1, w2)', '(((Z, w3)x, (w3)graft)x)graft = False']
+    assert c.take_step() == ['3 = fnM(w1, w2)', '(w3)graft = graft(w3)']
+    assert c.serialize_active_pairs() == ['3 = fnM(w1, w2)', '(w3)graft = graft(w3)']
+    assert c.reduce_to_value(0) == 7
 
 
 def test_if_then_else_false(c: Calculus) -> None:
@@ -124,7 +110,7 @@ def test_if_then_else_false(c: Calculus) -> None:
         send_value(c.const(3), conditional.wire.context.readin())
         send_value(conditional.wire.result.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [1]
+    assert c.reduce_to_value(0) == 1
 
 def test_loop_basic(c: Calculus) -> None:
     variables = Variables({ "a" : ValueAdapter(), "b": ValueAdapter() })
@@ -153,7 +139,7 @@ def test_loop_basic(c: Calculus) -> None:
         send_value(as_constant_register((True, 0), c.executor), loop_invocation.port.variables.readin())
         send_value(loop_invocation.wire.finish_variables.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [(False, 1)]
+    assert c.reduce_to_value(0) == (False, 1)
 
 
 def test_variables_readout(c: Calculus) -> None:
@@ -170,7 +156,7 @@ def test_variables_readout(c: Calculus) -> None:
         send_value(as_constant_register((10, 20), c.executor), invocation.port.variables.readin())
         send_value(invocation.wire.finish_variables.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [(23, 22)]
+    assert c.reduce_to_value(0) == (23, 22)
 
 def test_expansion_builder_interface_mutations(c: Calculus) -> None:
     with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as eb:
@@ -184,5 +170,5 @@ def test_expansion_builder_interface_mutations(c: Calculus) -> None:
         send_value(as_constant_register(1, c.executor), invocation.port.readin())
         send_value(invocation.wire.readout(), c.to_key(1))
 
-    assert list(c.readout(0)) == [0]
-    assert list(c.readout(1)) == [0]
+    assert c.reduce_to_value(0) == 0
+    assert c.reduce_to_value(1) == 0

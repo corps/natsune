@@ -30,7 +30,6 @@ class FromRegister(Protocol):
     @property
     def connector(self) -> Connector: ...
     def split(self) -> Sequence[FromRegister]: ...
-    def invert(self) -> ToRegister: ...
     def duplicate(self) -> tuple[FromRegister, FromRegister]: ...
     def __or__(self, other: FromRegister) -> FromRegister: ...
     def __and__(self, other: FromRegister) -> FromRegister: ...
@@ -52,18 +51,18 @@ def as_constant_register(value: Any, connector: Connector) -> FromRegister:
     return as_from_register(ConstantValuePort(value), ValueAdapter(), connector)
 
 
-def as_from_register(port: Port, adapter: Adapter, c: Connector) -> FromRegister:
-    return _FromRegister(port, adapter, c)
+def as_from_register(target: Target, adapter: Adapter, c: Connector) -> FromRegister:
+    return _FromRegister(target, adapter, c)
 
 
-def as_to_register(port: Port, adapter: Adapter, c: Connector) -> ToRegister:
-    return _ToRegister(port, adapter, c)
+def as_to_register(target: Target, adapter: Adapter, c: Connector) -> ToRegister:
+    return _ToRegister(target, adapter, c)
 
 
 # Registers are one-time usage targets that control a port through an adapter.
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True)
 class _FromRegister:
-    port: Port
+    port: Target
     adapter: Adapter
     connector: Connector
     t: Literal["from"] = "from"
@@ -85,9 +84,6 @@ class _FromRegister:
                     )
             return result
         return [self]
-
-    def invert(self) -> ToRegister:
-        return _ToRegister(self.port, self.adapter, self.connector)
 
     def duplicate(self) -> tuple[FromRegister, FromRegister]:
         x1, x2 = self.connector.duplicate(self.port)
@@ -115,9 +111,9 @@ class _FromRegister:
             return selection.wire.result.readout()
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@dataclasses.dataclass(slots=True)
 class _ToRegister:
-    port: Port
+    port: Target
     adapter: Adapter
     connector: Connector
     t: Literal["to"] = "to"
@@ -153,12 +149,12 @@ class InterfaceRegister:
     connector: Connector
 
     # The type is non optional, but we fill in a valid value if none is provided
-    interface: WirePort = dataclasses.field(default=cast(Any, None))
+    interface: Wire = dataclasses.field(default=cast(Any, None))
     state: Port = dataclasses.field(default=cast(Any, None))
 
     def __post_init__(self):
         if self.interface is None or self.state is None:
-            self.interface, self.state = Wire.as_interface()
+            self.state, self.interface = Wire.as_tautology()
 
     def extend(self) -> tuple[Wire, Wire]:
         take, give = Wire(), Wire()
@@ -183,7 +179,7 @@ class InterfaceRegister:
                 for adapter in self.adapter.concurrent_items
             ]
             send_values(
-                _FromRegister(WirePort([taken]), self.adapter, self.connector).split(),
+                _FromRegister(taken, self.adapter, self.connector).split(),
                 [interface.interface_readin() for interface in result],
             )
             return result
@@ -350,7 +346,7 @@ def join_to_registers(
     registers: Sequence[ToRegister], connector: Connector
 ) -> ToRegister:
     par_adapter = ParValueAdapter([register.adapter for register in registers])
-    x1, x2 = Wire.as_interface()
+    x1, x2 = Wire.as_tautology()
     from_register = as_from_register(x1, par_adapter, connector)
     send_values(from_register.split(), registers)
 
@@ -365,7 +361,7 @@ def join_from_registers(
     registers: Sequence[FromRegister], connector: Connector
 ) -> FromRegister:
     par_adapter = ParValueAdapter([register.adapter for register in registers])
-    x1, x2 = Wire.as_interface()
+    x1, x2 = Wire.as_tautology()
     to_register = as_to_register(x1, par_adapter, connector)
     send_values(registers, to_register.split())
 

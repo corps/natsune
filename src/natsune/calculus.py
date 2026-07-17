@@ -4,6 +4,7 @@ from typing import Any, Iterator, Self, Sequence, Callable, Literal
 
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.ambiguous import AmbiguousPair
+from natsune.connector import serialize_active_pairs
 from natsune.executor import SynchronizedExecutor, Executor
 from natsune.optimizer import optimize
 from natsune.ports import (
@@ -93,24 +94,22 @@ class Calculus:
             result = result.wires[0].target
         return result
 
+    def reduce_to_value(self, target: int | Target) -> Any:
+        p = self.reduce(target)
+        assert isinstance(p, ValuePort), p
+        return p.value
+
     def optimize(self, level: Literal[1, 2, 3] = 3) -> None:
         optimize(self.executor, self.executor.active_pairs, level=level)
 
+    def take_step(self) -> list[str]:
+        self.optimize()
+        self.process_next_interaction()
+        self.optimize()
+        return self.serialize_active_pairs()
+
     def serialize_active_pairs(self) -> list[str]:
-        parts: list[str] = []
-        cache = self.new_wires_cache()
-
-        for i, k in self._wires.items():
-            if i < 1000:
-                cache[k] = f"[{i}]"
-
-        for l, r in self.executor.active_pairs:
-            parts.append(
-                self.serialize_port(l, cache, True)
-                + " = "
-                + self.serialize_port(r, cache, False)
-            )
-        return parts
+        return serialize_active_pairs(self.executor.active_pairs, self._wires)
 
     def process_next_interaction(self) -> None:
         self.executor.process_pair()
@@ -120,73 +119,6 @@ class Calculus:
         while isinstance(target, WirePort):
             target = target.wires[0].target
         return target
-
-    def new_wires_cache(self) -> dict[Wire, str]:
-        cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
-        return cache
-
-    def serialize_port(
-        self, port: Port, wires_cache: dict[Wire, str], reverse: bool
-    ) -> str:
-        if isinstance(port, ValuePort):
-            return (
-                str(port.value)
-                if isinstance(port.value, (int, str, type(None), bool, float))
-                else "value"
-            )
-        elif isinstance(port, Erasure):
-            return "Z"
-        elif isinstance(port, ExtMergeFuncPort):
-            front = "fnM"
-        elif isinstance(port, ExtSplitFuncPort):
-            front = "fnS"
-        elif isinstance(port, ForkPort):
-            front = "fork"
-        elif isinstance(port, CombPort):
-            front = port.label
-        elif isinstance(port, Graft):
-            front = "graft"
-        elif isinstance(port, WirePort):
-            wire_str = self.serialize_calculus_wire(port.wires[0], wires_cache, reverse)
-            if reverse:
-                return wire_str + ">-"
-            return "-<" + wire_str
-        else:
-            raise NotImplementedError(str(type(port)))
-
-        if port.wires:
-            if reverse:
-                return (
-                    "("
-                    + ", ".join(
-                        [
-                            self.serialize_calculus_wire(w, wires_cache, reverse)
-                            for w in port.wires
-                        ][::-1]
-                    )
-                    + ")"
-                    + front
-                )
-            return (
-                front
-                + "("
-                + ", ".join(
-                    [
-                        self.serialize_calculus_wire(w, wires_cache, reverse)
-                        for w in port.wires
-                    ]
-                )
-                + ")"
-            )
-
-        return front
-
-    def serialize_calculus_wire(
-        self, wire: Wire, wires_cache: dict[Wire, str], reverse: bool
-    ) -> str:
-        if wire.target is None:
-            return wires_cache[wire]
-        return self.serialize_port(wire.target, wires_cache, reverse)
 
     def tup(self, a: Wire, b: Wire) -> Wire:
         return self[CombPort("x", [a, b])]

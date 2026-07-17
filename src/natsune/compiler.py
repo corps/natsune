@@ -345,7 +345,7 @@ class InetBranchCompiler:
         assigned = rewriter.random_identifier()
         inner += " = " + assigned
 
-        x1, x2 = Wire.as_interface()
+        x1, x2 = Wire.as_tautology()
         rewriter.used_names[assigned] = as_from_register(x2, ValueAdapter(), self.flow)
         rhs_register = as_to_register(x1, ValueAdapter(), self.flow)
 
@@ -417,7 +417,7 @@ class InetBranchCompiler:
             par_adapter = ParValueAdapter(
                 [register.adapter for register in inner_registers]
             )
-            x1, x2 = Wire.as_interface()
+            x1, x2 = Wire.as_tautology()
             to_register = as_to_register(x1, par_adapter, self.flow)
             send_values(inner_registers, to_register.split())
 

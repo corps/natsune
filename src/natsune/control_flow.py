@@ -235,7 +235,7 @@ class VariablesFlow(ExpansionBuilder):
             variable_input.close()
 
     def variables_readout(self) -> FromRegister:
-        x1, x2 = Wire.as_interface()
+        x1, x2 = Wire.as_tautology()
         send_values(
             [r.readout() for k, r in self.variable_registers.items()],
             as_to_register(x1, self.variables.adapter, self).split(),

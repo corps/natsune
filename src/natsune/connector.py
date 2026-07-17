@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import sys
 import abc
 import contextlib
@@ -5,9 +7,21 @@ import copy
 import dataclasses
 from contextlib import AbstractContextManager
 from functools import cached_property
-from typing import Generator, Iterator, Callable, Sequence, Self, TYPE_CHECKING
+from typing import Generator, Iterator, Callable, Sequence, Self, TYPE_CHECKING, Any
 
-from natsune.ports import Port, Wire, WirePort, Target, CombPort, Erasure
+from natsune.ports import (
+    Port,
+    Wire,
+    WirePort,
+    Target,
+    CombPort,
+    Erasure,
+    ValuePort,
+    ExtMergeFuncPort,
+    ExtSplitFuncPort,
+    ForkPort,
+    Graft,
+)
 
 if TYPE_CHECKING:
     from natsune.adapters import Adapter
@@ -19,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Connector",
     "ExpansionBuilder",
+    "serialize_active_pairs",
 ]
 
 
@@ -96,7 +111,89 @@ class Connector(abc.ABC):
         self.annihilate(open_end)
 
 
-@dataclasses.dataclass(slots=True)
+def serialize_active_pairs(
+    active_pairs: list[tuple[Port, Port]], well_known_wires: dict[int, Wire]
+) -> list[str]:
+    parts: list[str] = []
+    cache = new_wires_cache()
+
+    for i, k in well_known_wires.items():
+        if i < 1000:
+            cache[k] = f"[{i}]"
+
+    for l, r in active_pairs:
+        parts.append(
+            serialize_port(l, cache, True) + " = " + serialize_port(r, cache, False)
+        )
+    return parts
+
+
+def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> str:
+    if isinstance(port, ValuePort):
+        return (
+            str(port.value)
+            if isinstance(port.value, (int, str, type(None), bool, float))
+            else "value"
+        )
+    elif isinstance(port, Erasure):
+        return "Z"
+    elif isinstance(port, ExtMergeFuncPort):
+        front = "fnM"
+    elif isinstance(port, ExtSplitFuncPort):
+        front = "fnS"
+    elif isinstance(port, ForkPort):
+        front = "fork"
+    elif isinstance(port, CombPort):
+        front = port.label
+    elif isinstance(port, Graft):
+        front = "graft"
+    elif isinstance(port, WirePort):
+        wire_str = serialize_calculus_wire(port.wires[0], wires_cache, reverse)
+        if reverse:
+            return wire_str + ">-"
+        return "-<" + wire_str
+    else:
+        raise NotImplementedError(str(type(port)))
+
+    if port.wires:
+        if reverse:
+            return (
+                "("
+                + ", ".join(
+                    [
+                        serialize_calculus_wire(w, wires_cache, reverse)
+                        for w in port.wires
+                    ][::-1]
+                )
+                + ")"
+                + front
+            )
+        return (
+            front
+            + "("
+            + ", ".join(
+                [serialize_calculus_wire(w, wires_cache, reverse) for w in port.wires]
+            )
+            + ")"
+        )
+
+    return front
+
+
+def serialize_calculus_wire(
+    wire: Wire, wires_cache: dict[Wire, str], reverse: bool
+) -> str:
+    if wire.target is None:
+        return wires_cache[wire]
+    return serialize_port(wire.target, wires_cache, reverse)
+
+
+def new_wires_cache() -> dict[Wire, str]:
+    cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
+    return cache
+
+
+@dataclasses.dataclass
 class ExpansionBuilder(Connector):
     input_adapter: Adapter
     output_adapter: Adapter
@@ -144,12 +241,6 @@ class ExpansionBuilder(Connector):
             q.append(ll)
             q.append(rr)
 
-        return_port = copy.copy(self.output_interface.interface)
-        q.append(return_port)
-
-        args_port = copy.copy(self.input_interface.interface)
-        q.append(args_port)
-
         while q:
             head = q.pop()
 
@@ -171,8 +262,13 @@ class ExpansionBuilder(Connector):
         for l, r in pairs:
             exec.connect_ports(l, r)
 
-        exec.connect(args_port.wires[0], port)
-        exec.connect(return_port.wires[0], wires[0])
+        xx = new_wire_identity[self.input_interface.interface]
+        yy = new_wire_identity[self.output_interface.interface]
+        assert xx.target is None
+        assert yy.target is None
+
+        exec.connect(xx, port)
+        exec.connect(yy, wires[0])
 
     def __copy__(self) -> Self:
         return self

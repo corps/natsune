@@ -34,7 +34,9 @@ class Wire:
     target: Port | None = None
     was_interface: bool = False
     was_copied: bool = False
-    source: str = dataclasses.field(default_factory=lambda: ''.join(traceback.format_stack()))
+    source: str = dataclasses.field(
+        default_factory=lambda: "".join(traceback.format_stack())
+    )
 
     def __hash__(self) -> int:
         return id(self)
@@ -44,14 +46,11 @@ class Wire:
 
     def __copy__(self) -> Self:
         return dataclasses.replace(
-            self, target=copy.copy(self.target) if self.target else None, was_copied=True,
-            source=''.join(traceback.format_stack())
+            self,
+            target=copy.copy(self.target) if self.target else None,
+            was_copied=True,
+            source="".join(traceback.format_stack()),
         )
-
-    @classmethod
-    def as_interface(cls) -> tuple[WirePort, WirePort]:
-        w = Wire(was_interface=True)
-        return WirePort([w]), WirePort([w])
 
     @classmethod
     def as_tautology(cls) -> tuple[WirePort, Wire]:
@@ -144,4 +143,4 @@ class Graft(Port):
     def __copy__(self) -> Self:
         if hasattr(self.execute, "__copy__"):
             return dataclasses.replace(self, execute=copy.copy(self.execute))
-        return self
+        return dataclasses.replace(self)

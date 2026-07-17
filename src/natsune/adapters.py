@@ -39,9 +39,9 @@ class Adapter(Protocol):
         self, taken: Wire, given: Wire, connector: Connector
     ) -> Port: ...
 
-    def unpack(self, target: Port, connector: Connector) -> Port: ...
+    def unpack(self, target: Target, connector: Connector) -> Target: ...
 
-    def repack(self, target: Port, connector: Connector) -> Port: ...
+    def repack(self, target: Target, connector: Connector) -> Target: ...
 
     def __iter__(self) -> Iterator[Adapter]: ...
 
@@ -67,10 +67,10 @@ class ValueAdapter(Adapter):
         connector.annihilate(taken)
         return WirePort([given])
 
-    def unpack(self, target: Port, connector: Connector) -> Port:
+    def unpack(self, target: Target, connector: Connector) -> Target:
         return target
 
-    def repack(self, target: Port, connector: Connector) -> Port:
+    def repack(self, target: Target, connector: Connector) -> Target:
         return target
 
     def __iter__(self) -> Iterator[Adapter]:
@@ -132,10 +132,10 @@ class ParValueAdapter(Adapter):
                 )
         return x1
 
-    def unpack(self, target: Port, connector: Connector) -> Port:
+    def unpack(self, target: Target, connector: Connector) -> Target:
         raise SyntaxError("Implicit unpack for par unsupported")
 
-    def repack(self, target: Port, connector: Connector) -> Port:
+    def repack(self, target: Target, connector: Connector) -> Target:
         raise SyntaxError("Implicit repack for par unsupported")
 
     def __iter__(self) -> Iterator[Adapter]:
@@ -186,13 +186,13 @@ class ReferenceAdapter(Adapter):
         connector.connect(taken_outgoing, given_outgoing2)
         return readout
 
-    def unpack(self, target: Port, connector: Connector) -> Port:
+    def unpack(self, target: Target, connector: Connector) -> Target:
         taken_incoming, taken_outgoing = connector.tuplate(target)
         incoming1, incoming2 = connector.duplicate(taken_incoming)
         connector.connect(incoming1, taken_outgoing)
         return WirePort([incoming2])
 
-    def repack(self, target: Port, connector: Connector) -> Port:
+    def repack(self, target: Target, connector: Connector) -> Target:
         return self.initialize(connector, connector.as_wire(target))
 
     def __iter__(self) -> Iterator[Adapter]:
@@ -223,10 +223,10 @@ class InverseAdapter(Adapter):
     ) -> Port:
         return self.inner.produce_ingression(given, taken, connector)
 
-    def unpack(self, target: Port, connector: Connector) -> Port:
+    def unpack(self, target: Target, connector: Connector) -> Target:
         return self.inner.unpack(target, connector)
 
-    def repack(self, target: Port, connector: Connector) -> Port:
+    def repack(self, target: Target, connector: Connector) -> Target:
         return self.inner.repack(target, connector)
 
     def __iter__(self) -> Iterator[Adapter]:

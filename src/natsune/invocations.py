@@ -160,7 +160,7 @@ class closer[T](AbstractContextManager[T]):
             yield self.o
             return
 
-        for field in dataclasses.fields(self.o):  # ty:ignore[invalid-argument-type]
+        for field in dataclasses.fields(self.o):
             if isinstance(field.type, Closeable):
                 yield getattr(self.o, field.name)
 
