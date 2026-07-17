@@ -30,7 +30,7 @@ def optimize(
             if (
                 isinstance(l, CombPort)
                 and isinstance(r, CombPort)
-                and l.label_eq(r)
+                and l.label == r.label
                 and level >= 1
             ):
                 potential_optimization = True

@@ -85,7 +85,25 @@ def test_if_then_else_recurse(c: Calculus) -> None:
         send_value(c.const(True), invocation.port.readin())
         send_value(invocation.wire.readout(), c.to_key(0))
 
-    assert list(c.readout(0)) == [6]
+    c.optimize()
+    assert c.serialize_active_pairs() == ['([0])graft = True']
+    c.process_next_interaction()
+    c.optimize()
+    assert c.serialize_active_pairs() == ['(((Z, [0]>->->->-)x, 3>-)x)graft = True']
+    c.process_next_interaction()
+    c.optimize()
+    assert c.serialize_active_pairs() == ['3 = graft(w1)']
+    c.process_next_interaction()
+    c.optimize()
+    assert c.serialize_active_pairs() == ['((w1>->->-, None)fnM)graft = False']
+    c.process_next_interaction()
+    c.optimize()
+    assert c.serialize_active_pairs() == ['(((Z, w1>-)x, (w1)graft)x)graft = False']
+    c.process_next_interaction()
+    c.optimize()
+    assert c.serialize_active_pairs() == ['(w1)graft = graft(w1)']
+
+    assert list(c.readout(0)) != []
 
 
 

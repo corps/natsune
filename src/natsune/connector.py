@@ -1,3 +1,4 @@
+import sys
 import abc
 import contextlib
 import copy
@@ -155,7 +156,9 @@ class ExpansionBuilder(Connector):
             for i, wire in enumerate(head.wires):
                 if wire in new_wire_identity:
                     wire = new_wire_identity[wire]
-                    assert wire.target is None
+                    if wire.target is not None:
+                        print(wire.source, file=sys.stderr)
+                        assert wire.target is None, wire.target
                 else:
                     old_wire = wire
                     wire = copy.copy(wire)
@@ -168,8 +171,8 @@ class ExpansionBuilder(Connector):
         for l, r in pairs:
             exec.connect_ports(l, r)
 
-        exec.connect(args_port, port)
-        exec.connect(return_port, wires[0])
+        exec.connect(args_port.wires[0], port)
+        exec.connect(return_port.wires[0], wires[0])
 
     def __copy__(self) -> Self:
         return self

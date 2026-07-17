@@ -32,6 +32,9 @@ class Port:
 @dataclasses.dataclass
 class Wire:
     target: Port | None = None
+    was_interface: bool = False
+    was_copied: bool = False
+    source: str = dataclasses.field(default_factory=lambda: ''.join(traceback.format_stack()))
 
     def __hash__(self) -> int:
         return id(self)
@@ -41,42 +44,19 @@ class Wire:
 
     def __copy__(self) -> Self:
         return dataclasses.replace(
-            self, target=copy.copy(self.target) if self.target else None
+            self, target=copy.copy(self.target) if self.target else None, was_copied=True,
+            source=''.join(traceback.format_stack())
         )
 
     @classmethod
     def as_interface(cls) -> tuple[WirePort, WirePort]:
-        # w = cast(Wire, FakeWire())
-        w = Wire()
+        w = Wire(was_interface=True)
         return WirePort([w]), WirePort([w])
 
     @classmethod
     def as_tautology(cls) -> tuple[WirePort, Wire]:
         wp = WirePort()
         return wp, wp.wires[0]
-
-
-class FakeWire:
-    _target: Port | None = None
-    reason: str = ""
-
-    @property
-    def target(self):
-        return self._target
-
-    @target.setter
-    def target(self, value: Port | None):
-        self._target = value
-        self.reason = "".join(traceback.format_stack())
-
-    def __copy__(self):
-        return Wire()
-
-    def __hash__(self) -> int:
-        return id(self)
-
-    def __eq__(self, other: object) -> bool:
-        return self is other
 
 
 type Target = Wire | Port
