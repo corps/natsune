@@ -147,16 +147,12 @@ class Calculus:
         return self[Erasure()]
 
     def to_key(self, key: int | Target, adapter: Adapter | None = None) -> ToRegister:
-        return as_to_register(
-            self[key], adapter or ValueAdapter(), self.executor
-        )
+        return as_to_register(self[key], adapter or ValueAdapter(), self.executor)
 
     def from_key(
         self, key: int | Target, adapter: Adapter | None = None
     ) -> FromRegister:
-        return as_from_register(
-            self[key], adapter or ValueAdapter(), self.executor
-        )
+        return as_from_register(self[key], adapter or ValueAdapter(), self.executor)
 
     def const(self, value: Any) -> FromRegister:
         return as_constant_register(value, self.executor)

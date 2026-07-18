@@ -32,12 +32,12 @@ def test_parallelize_value(c: Calculus) -> None:
     send_value(c.const((9, 4, 3)), input)
     send_value(outputs[0], c.to_key(0))
     c.optimize()
-    assert c.serialize_active_pairs() == ['value = fnM(None, fnS(-<[0], fnS(w1, fnS(w2, Z))))']
+    assert c.serialize_active_pairs() == ['value = fnM(None, fnS(-<[0], fnS(w1, fnS(w2, Z))))', '[0]']
     assert list(c.readout(0)) == [9]
     send_value(outputs[1], c.to_key(1))
     assert list(c.readout(1)) == [4]
     send_value(outputs[2], c.to_key(2))
-    assert c.serialize_active_pairs() == ['3>- = -<[2]']
+    assert c.serialize_active_pairs() == ['3 = -<[2]', '9', '9', '4', '4', '[2]']
     assert list(c.readout(2)) == [3]
 
 

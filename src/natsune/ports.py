@@ -120,9 +120,6 @@ class ForkPort(Port):
 
 
 class Expansion(Protocol):
-    @property
-    def name(self) -> str: ...
-
     def __call__(
         self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None: ...
@@ -137,5 +134,9 @@ class Graft(Port):
 
     def __copy__(self) -> Self:
         if hasattr(self.execute, "__copy__"):
-            return dataclasses.replace(self, execute=copy.copy(self.execute), wires=[*self.wires] if self.wires else self.wires)
+            return dataclasses.replace(
+                self,
+                execute=copy.copy(self.execute),
+                wires=[*self.wires] if self.wires else self.wires,
+            )
         return dataclasses.replace(self)

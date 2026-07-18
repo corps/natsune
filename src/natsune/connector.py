@@ -115,6 +115,7 @@ class Connector(abc.ABC):
         yield iter()
         self.annihilate(open_end)
 
+
 def serialize_active_pairs(
     active_pairs: list[tuple[Port, Port]], well_known_wires: dict[int, Wire]
 ) -> list[str]:
@@ -153,7 +154,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
     elif isinstance(port, CombPort):
         front = port.label
     elif isinstance(port, Graft):
-        front = port.execute.name
+        front = "graft"
     elif isinstance(port, WirePort):
         wire_str = serialize_wire(port.wires[0], wires_cache, reverse)
         if reverse:
@@ -167,10 +168,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
             return (
                 "("
                 + ", ".join(
-                    [
-                        serialize_wire(w, wires_cache, reverse)
-                        for w in port.wires
-                    ][::-1]
+                    [serialize_wire(w, wires_cache, reverse) for w in port.wires][::-1]
                 )
                 + ")"
                 + front
@@ -178,18 +176,14 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
         return (
             front
             + "("
-            + ", ".join(
-                [serialize_wire(w, wires_cache, reverse) for w in port.wires]
-            )
+            + ", ".join([serialize_wire(w, wires_cache, reverse) for w in port.wires])
             + ")"
         )
 
     return front
 
 
-def serialize_wire(
-    wire: Wire, wires_cache: dict[Wire, str], reverse: bool
-) -> str:
+def serialize_wire(wire: Wire, wires_cache: dict[Wire, str], reverse: bool) -> str:
     if wire.target is None:
         return wires_cache[wire]
     return serialize_port(wire.target, wires_cache, reverse)
@@ -199,28 +193,25 @@ def new_wires_cache() -> dict[Wire, str]:
     cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
     return cache
 
+
 def freeze(obj):
     """Freeze an existing dataclass instance in-place."""
     cls = type(obj)
+
     def setattr(self, name, value):
-        if name == 'target':
+        if name == "target":
             raise AttributeError(f"Cannot set attribute '{name}' on frozen object")
         return object.__setattr__(self, name, value)
-    frozen_cls = type(
-        f'Frozen{cls.__name__}',
-        (cls,),
-        {
-            '__setattr__': setattr
-        }
-    )
+
+    frozen_cls = type(f"Frozen{cls.__name__}", (cls,), {"__setattr__": setattr})
     obj.__class__ = frozen_cls
     return obj
+
 
 @dataclasses.dataclass
 class ExpansionBuilder(Connector):
     input_adapter: Adapter
     output_adapter: Adapter
-    name: str = "expansion-builder"
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
 
     @cached_property
@@ -249,6 +240,7 @@ class ExpansionBuilder(Connector):
         self.input_interface.close()
 
         from natsune.optimizer import optimize
+
         optimize(self, self.active_pairs)
 
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
@@ -271,7 +263,6 @@ class ExpansionBuilder(Connector):
 
         if new_outputs.target:
             q.append(new_outputs.target)
-
 
         for l, r in self.active_pairs:
             ll = copy.copy(l)

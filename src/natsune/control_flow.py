@@ -124,10 +124,6 @@ generate_register_pair_types(MergeOutput)
 class WeakeningSelection(ExpansionWithAdapters):
     adapter: Adapter
 
-    @property
-    def name(self) -> str:
-        return "||"
-
     @cached_property
     def input_adapter(self) -> Adapter:
         return self.adapter
@@ -167,10 +163,6 @@ class WeakeningSelection(ExpansionWithAdapters):
 class GatedSelection(ExpansionWithAdapters):
     left: Adapter
     right: Adapter
-
-    @property
-    def name(self) -> str:
-        return "&&"
 
     @cached_property
     def input_adapter(self) -> Adapter:
@@ -214,8 +206,6 @@ class GatedSelection(ExpansionWithAdapters):
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
-    # TODO: Remove this from all callsites
-    name: str = "-anonymous-"
 
     input_adapter: Adapter = dataclasses.field(init=False)
     output_adapter: Adapter = dataclasses.field(init=False)
@@ -277,10 +267,6 @@ class Loop(ExpansionWithAdapters):
     iteration: VariablesFlow
     body: VariablesFlow
     orelse: VariablesFlow
-
-    @property
-    def name(self) -> str:
-        return "loop"
 
     @cached_property
     def input_adapter(self) -> Adapter:
@@ -452,10 +438,6 @@ class IfThenElse(ExpansionWithAdapters):
     def __copy__(self) -> Self:
         return self
 
-    @property
-    def name(self) -> str:
-        return "?"
-
     @cached_property
     def input_adapter(self) -> Adapter:
         return ValueAdapter()  # value
@@ -514,10 +496,6 @@ class ConcurrentMerge(ExpansionWithAdapters):
     should_short: Callable[[Any], bool]
     merge_operation: Callable[[Any, Any], Any]
 
-    @property
-    def name(self) -> str:
-        return "<>"
-
     @cached_property
     def input_adapter(self) -> Adapter:
         return ParValueAdapter([ValueAdapter(), ValueAdapter()])
@@ -536,7 +514,7 @@ class ConcurrentMerge(ExpansionWithAdapters):
 
     @cached_property
     def true_case(self) -> ExpansionBuilder:
-        with ExpansionBuilder(self.input_adapter, self.output_adapter, 'concurrent-merge-true-case') as builder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
             v1, v2 = builder.input_interface.readout().split()
 
             send_value(
@@ -548,7 +526,7 @@ class ConcurrentMerge(ExpansionWithAdapters):
 
     @cached_property
     def false_case(self) -> ExpansionBuilder:
-        with ExpansionBuilder(self.input_adapter, self.output_adapter, 'concurrent-merge-false-case') as builder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
             v1, v2 = builder.input_interface.readout().split()
 
             send_value(
