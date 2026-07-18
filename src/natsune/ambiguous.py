@@ -25,10 +25,10 @@ class AmbiguousPair(Expansion):
         input_1 = as_to_register(graft_1, ValueAdapter(), invoker)
         input_2 = as_to_register(graft_2, ValueAdapter(), invoker)
         output_1 = as_from_register(
-            WirePort([graft_1.wires[0]]), ValueAdapter(), invoker
+            graft_1.wires[0], ValueAdapter(), invoker
         )
         output_2 = as_from_register(
-            WirePort([graft_1.wires[1]]), ValueAdapter(), invoker
+            graft_1.wires[1], ValueAdapter(), invoker
         )
         return AmbiguousInvocation(input_1, input_2, output_1, output_2)
 

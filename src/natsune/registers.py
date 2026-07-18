@@ -77,7 +77,7 @@ class _FromRegister:
                 for adapter, part in zip(self.adapter.concurrent_items, parts_iter):
                     result.append(
                         _FromRegister(
-                            WirePort([part]),
+                            part,
                             adapter,
                             self.connector,
                         )
@@ -88,8 +88,8 @@ class _FromRegister:
     def duplicate(self) -> tuple[FromRegister, FromRegister]:
         x1, x2 = self.connector.duplicate(self.port)
         return (
-            _FromRegister(WirePort([x1]), self.adapter, self.connector),
-            _FromRegister(WirePort([x2]), self.adapter, self.connector),
+            _FromRegister(x1, self.adapter, self.connector),
+            _FromRegister(x2, self.adapter, self.connector),
         )
 
     def __or__(self, other: FromRegister) -> FromRegister:
@@ -131,7 +131,7 @@ class _ToRegister:
                 for adapter, part in zip(self.adapter.concurrent_items, parts_iter):
                     result.append(
                         _ToRegister(
-                            WirePort([part]),
+                            part,
                             adapter,
                             self.connector,
                         )
@@ -193,7 +193,7 @@ class FromInterfaceRegister(InterfaceRegister):
     def readout(self) -> FromRegister:
         taken, given = self.extend()
         self.connector.annihilate(given)
-        return _FromRegister(WirePort([taken]), self.adapter, self.connector)
+        return _FromRegister(taken, self.adapter, self.connector)
 
     def invert(self) -> ToInterfaceRegister:
         return ToInterfaceRegister(
@@ -205,7 +205,7 @@ class ToInterfaceRegister(InterfaceRegister):
     def readin(self) -> ToRegister:
         taken, given = self.extend()
         self.connector.annihilate(given)
-        return _ToRegister(WirePort([taken]), self.adapter, self.connector)
+        return _ToRegister(taken, self.adapter, self.connector)
 
     def invert(self) -> FromInterfaceRegister:
         return FromInterfaceRegister(

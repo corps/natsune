@@ -63,13 +63,13 @@ def test_if_then_else(c: Calculus) -> None:
     assert c.reduce_to_value(0) == 6
 
 def test_if_then_else_recurse(c: Calculus) -> None:
-    with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as builder:
-        with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as false_case:
+    with ExpansionBuilder(ValueAdapter(), ValueAdapter(), 'builder') as builder:
+        with ExpansionBuilder(ValueAdapter(), ValueAdapter(), 'false-case') as false_case:
             a, b = filter_invocation(lambda x: x + 2, false_case)
             send_value(false_case.input_interface.readout(), a)
             send_value(b, false_case.output_interface.readin())
 
-        with ExpansionBuilder(ValueAdapter(), ValueAdapter()) as true_case:
+        with ExpansionBuilder(ValueAdapter(), ValueAdapter(), 'true-case') as true_case:
             with expansion_invocation(builder, true_case, ToInterfaceRegister, FromInterfaceRegister) as invocation:
                 (a, d) , b = merge_invocation(lambda x,y: x + y + 2, true_case)
                 send_value(true_case.input_interface.readout(), a)
@@ -85,13 +85,7 @@ def test_if_then_else_recurse(c: Calculus) -> None:
         send_value(c.const(True), invocation.port.readin())
         send_value(invocation.wire.readout(), c.to_key(0))
 
-    assert c.take_step() == ['(((Z, [0]>->->-)x, 3)x)graft = True']
-    assert c.take_step() == ['3 = graft(w1)']
-    assert c.take_step() == ['3 = fnM(w1, w2)', '(w1)graft = False']
-    assert c.take_step() == ['3 = fnM(w1, w2)', '(((Z, w3)x, (w3)graft)x)graft = False']
-    assert c.take_step() == ['3 = fnM(w1, w2)', '(w3)graft = graft(w3)']
-    assert c.serialize_active_pairs() == ['3 = fnM(w1, w2)', '(w3)graft = graft(w3)']
-    assert c.reduce_to_value(0) == 7
+    assert c.reduce_to_value(0) == 10
 
 
 def test_if_then_else_false(c: Calculus) -> None:

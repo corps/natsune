@@ -51,7 +51,9 @@ class Adapter(Protocol):
 @dataclasses.dataclass(frozen=True, slots=True)
 class ValueAdapter(Adapter):
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
-        return WirePort([initial or Wire(Erasure())])
+        wp, w = Wire.as_tautology()
+        connector.connect(w, initial or Erasure())
+        return wp
 
     def close(self, target: Target, connector: Connector) -> None:
         connector.annihilate(target)
@@ -59,13 +61,13 @@ class ValueAdapter(Adapter):
     def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
         left, right = connector.duplicate(taken)
         connector.connect(given, right)
-        return WirePort([left])
+        return connector.as_port(left)
 
     def produce_ingression(
         self, taken: Wire, given: Wire, connector: Connector
     ) -> Port:
         connector.annihilate(taken)
-        return WirePort([given])
+        return connector.as_port(given)
 
     def unpack(self, target: Target, connector: Connector) -> Target:
         return target
@@ -156,7 +158,9 @@ class ReferenceAdapter(Adapter):
         else:
             connector.connect(ref.wires[0], Erasure())
         self.inner.close(ref.wires[1], connector)
-        return WirePort([connector.as_wire(ref)])
+        wp, w = Wire.as_tautology()
+        connector.connect(w, ref)
+        return wp
 
     def close(self, target: Target, connector: Connector) -> None:
         incoming, outgoing = connector.tuplate(target)
@@ -190,7 +194,7 @@ class ReferenceAdapter(Adapter):
         taken_incoming, taken_outgoing = connector.tuplate(target)
         incoming1, incoming2 = connector.duplicate(taken_incoming)
         connector.connect(incoming1, taken_outgoing)
-        return WirePort([incoming2])
+        return incoming2
 
     def repack(self, target: Target, connector: Connector) -> Target:
         return self.initialize(connector, connector.as_wire(target))

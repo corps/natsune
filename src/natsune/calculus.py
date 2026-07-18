@@ -148,14 +148,14 @@ class Calculus:
 
     def to_key(self, key: int | Target, adapter: Adapter | None = None) -> ToRegister:
         return as_to_register(
-            WirePort([self[key]]), adapter or ValueAdapter(), self.executor
+            self[key], adapter or ValueAdapter(), self.executor
         )
 
     def from_key(
         self, key: int | Target, adapter: Adapter | None = None
     ) -> FromRegister:
         return as_from_register(
-            WirePort([self[key]]), adapter or ValueAdapter(), self.executor
+            self[key], adapter or ValueAdapter(), self.executor
         )
 
     def const(self, value: Any) -> FromRegister:

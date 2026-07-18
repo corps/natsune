@@ -14,7 +14,6 @@ from natsune.executor import Executor
 from natsune.ports import (
     Graft,
     Wire,
-    WirePort,
     Expansion,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
@@ -87,8 +86,8 @@ def merge_invocation(
     port = ExtMergeFuncPort(fn)
     return (
         as_to_register(port, ValueAdapter(), connector),
-        as_to_register(WirePort([port.wires[0]]), ValueAdapter(), connector),
-    ), as_from_register(WirePort([port.wires[1]]), ValueAdapter(), connector)
+        as_to_register(port.wires[0], ValueAdapter(), connector),
+    ), as_from_register(port.wires[1], ValueAdapter(), connector)
 
 
 def split_invocation(
@@ -96,8 +95,8 @@ def split_invocation(
 ) -> tuple[ToRegister, tuple[FromRegister, FromRegister]]:
     port = ExtSplitFuncPort(fn)
     return as_to_register(port, ValueAdapter(), connector), (
-        as_from_register(WirePort([port.wires[0]]), ValueAdapter(), connector),
-        as_from_register(WirePort([port.wires[1]]), ValueAdapter(), connector),
+        as_from_register(port.wires[0], ValueAdapter(), connector),
+        as_from_register(port.wires[1], ValueAdapter(), connector),
     )
 
 

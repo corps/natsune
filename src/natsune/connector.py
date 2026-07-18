@@ -1,13 +1,11 @@
-from collections import defaultdict
-
-import sys
 import abc
 import contextlib
 import copy
 import dataclasses
+from collections import defaultdict
 from contextlib import AbstractContextManager
 from functools import cached_property
-from typing import Generator, Iterator, Callable, Sequence, Self, TYPE_CHECKING, Any
+from typing import Generator, Iterator, Callable, Sequence, Self, TYPE_CHECKING
 
 from natsune.ports import (
     Port,
@@ -85,6 +83,13 @@ class Connector(abc.ABC):
         self.connect_ports(port, p)
         return w
 
+    def as_port(self, port: Target) -> Port:
+        if isinstance(port, Port):
+            return port
+        p, w = Wire.as_tautology()
+        self.connect(w, port)
+        return p
+
     def annihilate(self, target: Target, erasure: Erasure | Port | None = None) -> None:
         self.connect(
             copy.copy(erasure) if isinstance(erasure, Erasure) else Erasure(), target
@@ -110,7 +115,6 @@ class Connector(abc.ABC):
         yield iter()
         self.annihilate(open_end)
 
-
 def serialize_active_pairs(
     active_pairs: list[tuple[Port, Port]], well_known_wires: dict[int, Wire]
 ) -> list[str]:
@@ -125,6 +129,9 @@ def serialize_active_pairs(
         parts.append(
             serialize_port(l, cache, True) + " = " + serialize_port(r, cache, False)
         )
+
+    for wire in well_known_wires.values():
+        parts.append(serialize_wire(wire, cache, False))
     return parts
 
 
@@ -146,9 +153,9 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
     elif isinstance(port, CombPort):
         front = port.label
     elif isinstance(port, Graft):
-        front = "graft"
+        front = port.execute.name
     elif isinstance(port, WirePort):
-        wire_str = serialize_calculus_wire(port.wires[0], wires_cache, reverse)
+        wire_str = serialize_wire(port.wires[0], wires_cache, reverse)
         if reverse:
             return wire_str + ">-"
         return "-<" + wire_str
@@ -161,7 +168,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
                 "("
                 + ", ".join(
                     [
-                        serialize_calculus_wire(w, wires_cache, reverse)
+                        serialize_wire(w, wires_cache, reverse)
                         for w in port.wires
                     ][::-1]
                 )
@@ -172,7 +179,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
             front
             + "("
             + ", ".join(
-                [serialize_calculus_wire(w, wires_cache, reverse) for w in port.wires]
+                [serialize_wire(w, wires_cache, reverse) for w in port.wires]
             )
             + ")"
         )
@@ -180,7 +187,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
     return front
 
 
-def serialize_calculus_wire(
+def serialize_wire(
     wire: Wire, wires_cache: dict[Wire, str], reverse: bool
 ) -> str:
     if wire.target is None:
@@ -192,11 +199,28 @@ def new_wires_cache() -> dict[Wire, str]:
     cache: dict[Wire, str] = defaultdict(lambda: "w" + str(len(cache)))
     return cache
 
+def freeze(obj):
+    """Freeze an existing dataclass instance in-place."""
+    cls = type(obj)
+    def setattr(self, name, value):
+        if name == 'target':
+            raise AttributeError(f"Cannot set attribute '{name}' on frozen object")
+        return object.__setattr__(self, name, value)
+    frozen_cls = type(
+        f'Frozen{cls.__name__}',
+        (cls,),
+        {
+            '__setattr__': setattr
+        }
+    )
+    obj.__class__ = frozen_cls
+    return obj
 
 @dataclasses.dataclass
 class ExpansionBuilder(Connector):
     input_adapter: Adapter
     output_adapter: Adapter
+    name: str = "expansion-builder"
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
 
     @cached_property
@@ -224,6 +248,9 @@ class ExpansionBuilder(Connector):
         self.output_interface.close()
         self.input_interface.close()
 
+        from natsune.optimizer import optimize
+        optimize(self, self.active_pairs)
+
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
         if isinstance(port, Erasure):
             for wire in wires:
@@ -233,6 +260,18 @@ class ExpansionBuilder(Connector):
         new_wire_identity: dict[Wire, Wire] = {}
         q: list[Port] = []
         pairs: list[tuple[Port, Port]] = []
+
+        new_inputs = copy.copy(self.input_interface.interface)
+        new_outputs = copy.copy(self.output_interface.interface)
+        new_wire_identity[self.input_interface.interface] = new_inputs
+        new_wire_identity[self.output_interface.interface] = new_outputs
+
+        if new_inputs.target:
+            q.append(new_inputs.target)
+
+        if new_outputs.target:
+            q.append(new_outputs.target)
+
 
         for l, r in self.active_pairs:
             ll = copy.copy(l)
@@ -247,9 +286,7 @@ class ExpansionBuilder(Connector):
             for i, wire in enumerate(head.wires):
                 if wire in new_wire_identity:
                     wire = new_wire_identity[wire]
-                    if wire.target is not None:
-                        print(wire.source, file=sys.stderr)
-                        assert wire.target is None, wire.target
+                    assert wire.target is None, wire.target
                 else:
                     old_wire = wire
                     wire = copy.copy(wire)
@@ -262,13 +299,8 @@ class ExpansionBuilder(Connector):
         for l, r in pairs:
             exec.connect_ports(l, r)
 
-        xx = new_wire_identity[self.input_interface.interface]
-        yy = new_wire_identity[self.output_interface.interface]
-        assert xx.target is None
-        assert yy.target is None
-
-        exec.connect(xx, port)
-        exec.connect(yy, wires[0])
+        exec.connect(new_inputs, port)
+        exec.connect(new_outputs, wires[0])
 
     def __copy__(self) -> Self:
         return self

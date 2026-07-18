@@ -1,4 +1,3 @@
-import traceback
 import copy
 import dataclasses
 from typing import (
@@ -32,11 +31,6 @@ class Port:
 @dataclasses.dataclass
 class Wire:
     target: Port | None = None
-    was_interface: bool = False
-    was_copied: bool = False
-    source: str = dataclasses.field(
-        default_factory=lambda: "".join(traceback.format_stack())
-    )
 
     def __hash__(self) -> int:
         return id(self)
@@ -48,8 +42,6 @@ class Wire:
         return dataclasses.replace(
             self,
             target=copy.copy(self.target) if self.target else None,
-            was_copied=True,
-            source="".join(traceback.format_stack()),
         )
 
     @classmethod
@@ -128,6 +120,9 @@ class ForkPort(Port):
 
 
 class Expansion(Protocol):
+    @property
+    def name(self) -> str: ...
+
     def __call__(
         self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None: ...
@@ -142,5 +137,5 @@ class Graft(Port):
 
     def __copy__(self) -> Self:
         if hasattr(self.execute, "__copy__"):
-            return dataclasses.replace(self, execute=copy.copy(self.execute))
+            return dataclasses.replace(self, execute=copy.copy(self.execute), wires=[*self.wires] if self.wires else self.wires)
         return dataclasses.replace(self)

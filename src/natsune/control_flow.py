@@ -1,15 +1,3 @@
-import contextlib
-import sys
-from natsune.control_flow_generated import (
-    FlowControlFrom,
-    FlowInputFrom,
-    FlowControlInto,
-    FlowInputInto,
-    IfThenElseOutputInto,
-    MergeOutputInto,
-    MergeOutputFrom,
-    IfThenElseOutputFrom,
-)
 import dataclasses
 from functools import cached_property
 from typing import Sequence, Self, Callable, Any
@@ -22,6 +10,16 @@ from natsune.adapters import (
 )
 from natsune.ambiguous import AmbiguousPair
 from natsune.connector import Connector, ExpansionBuilder
+from natsune.control_flow_generated import (
+    FlowControlFrom,
+    FlowInputFrom,
+    FlowControlInto,
+    FlowInputInto,
+    IfThenElseOutputInto,
+    MergeOutputInto,
+    MergeOutputFrom,
+    IfThenElseOutputFrom,
+)
 from natsune.executor import Executor
 from natsune.invocations import (
     ExpansionWithAdapters,
@@ -44,11 +42,7 @@ from natsune.ports import (
     Port,
     Wire,
     ValuePort,
-    CombPort,
-    Expansion,
     Erasure,
-    WirePort,
-    Graft,
 )
 from natsune.registers import (
     as_to_register,
@@ -130,6 +124,10 @@ generate_register_pair_types(MergeOutput)
 class WeakeningSelection(ExpansionWithAdapters):
     adapter: Adapter
 
+    @property
+    def name(self) -> str:
+        return "||"
+
     @cached_property
     def input_adapter(self) -> Adapter:
         return self.adapter
@@ -169,6 +167,10 @@ class WeakeningSelection(ExpansionWithAdapters):
 class GatedSelection(ExpansionWithAdapters):
     left: Adapter
     right: Adapter
+
+    @property
+    def name(self) -> str:
+        return "&&"
 
     @cached_property
     def input_adapter(self) -> Adapter:
@@ -272,12 +274,13 @@ class VariablesFlow(ExpansionBuilder):
 
 @dataclasses.dataclass
 class Loop(ExpansionWithAdapters):
-    # Takes in the loop's iterable value and the variable flows,
-    # 'returns' whether the loop is continuing, along with the updated variable flows.
     iteration: VariablesFlow
-
     body: VariablesFlow
     orelse: VariablesFlow
+
+    @property
+    def name(self) -> str:
+        return "loop"
 
     @cached_property
     def input_adapter(self) -> Adapter:
@@ -449,6 +452,10 @@ class IfThenElse(ExpansionWithAdapters):
     def __copy__(self) -> Self:
         return self
 
+    @property
+    def name(self) -> str:
+        return "?"
+
     @cached_property
     def input_adapter(self) -> Adapter:
         return ValueAdapter()  # value
@@ -507,6 +514,10 @@ class ConcurrentMerge(ExpansionWithAdapters):
     should_short: Callable[[Any], bool]
     merge_operation: Callable[[Any, Any], Any]
 
+    @property
+    def name(self) -> str:
+        return "<>"
+
     @cached_property
     def input_adapter(self) -> Adapter:
         return ParValueAdapter([ValueAdapter(), ValueAdapter()])
@@ -525,7 +536,7 @@ class ConcurrentMerge(ExpansionWithAdapters):
 
     @cached_property
     def true_case(self) -> ExpansionBuilder:
-        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter, 'concurrent-merge-true-case') as builder:
             v1, v2 = builder.input_interface.readout().split()
 
             send_value(
@@ -537,7 +548,7 @@ class ConcurrentMerge(ExpansionWithAdapters):
 
     @cached_property
     def false_case(self) -> ExpansionBuilder:
-        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter, 'concurrent-merge-false-case') as builder:
             v1, v2 = builder.input_interface.readout().split()
 
             send_value(
@@ -575,5 +586,5 @@ class ConcurrentMerge(ExpansionWithAdapters):
             send_value(pair_invocation.o_second_value, b.readin())
             send_value(
                 conditional.wire.result.readout(),
-                as_to_register(WirePort([wires[0]]), self.output_adapter, exec),
+                as_to_register(wires[0], self.output_adapter, exec),
             )
