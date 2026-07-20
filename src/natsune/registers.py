@@ -30,9 +30,10 @@ class FromRegister(Protocol):
     @property
     def connector(self) -> Connector: ...
     def split(self) -> Sequence[FromRegister]: ...
-    def duplicate(self) -> tuple[FromRegister, FromRegister]: ...
+    def duplicate(self, label: str = "dup") -> tuple[FromRegister, FromRegister]: ...
     def __or__(self, other: FromRegister) -> FromRegister: ...
     def __and__(self, other: FromRegister) -> FromRegister: ...
+    def trace(self, label: str) -> FromRegister: ...
 
 
 class ToRegister(Protocol):
@@ -85,8 +86,8 @@ class _FromRegister:
             return result
         return [self]
 
-    def duplicate(self) -> tuple[FromRegister, FromRegister]:
-        x1, x2 = self.connector.duplicate(self.port)
+    def duplicate(self, label: str = "dup") -> tuple[FromRegister, FromRegister]:
+        x1, x2 = self.connector.duplicate(self.port, label)
         return (
             _FromRegister(x1, self.adapter, self.connector),
             _FromRegister(x2, self.adapter, self.connector),
@@ -109,6 +110,13 @@ class _FromRegister:
             send_value(self, selection.port.readin())
             send_value(other, selection.wire.second_value.readin())
             return selection.wire.result.readout()
+
+    def trace(self, label: str) -> FromRegister:
+        from natsune.control_flow import Tracer
+
+        g = Graft(Tracer(label), [Wire()])
+        self.connector.connect(self.port, g)
+        return _FromRegister(g.wires[0], self.adapter, self.connector)
 
 
 @dataclasses.dataclass(slots=True)

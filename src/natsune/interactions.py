@@ -100,7 +100,9 @@ def execute_erasure(connector: Connector, l: Port, r: Port) -> None:
 
 def execute_clone(connector: Connector, l: CombPort, r: ValuePort) -> None:
     connector.connect(l.wires[0], r)
-    connector.connect(l.wires[1], copy.copy(r))
+    connector.connect(
+        l.wires[1], copy.copy(r) if l.label == "dup" else ValuePort(r.value)
+    )
 
 
 def execute_read_wire(connector: Connector, l: Port, r: WirePort) -> None:

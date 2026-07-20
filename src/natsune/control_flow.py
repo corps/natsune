@@ -9,7 +9,13 @@ from natsune.adapters import (
     Variables,
 )
 from natsune.ambiguous import AmbiguousPair
-from natsune.connector import Connector, ExpansionBuilder
+from natsune.connector import (
+    Connector,
+    ExpansionBuilder,
+    serialize_active_pairs,
+    new_wires_cache,
+    serialize_port,
+)
 from natsune.control_flow_generated import (
     FlowControlFrom,
     FlowInputFrom,
@@ -43,6 +49,7 @@ from natsune.ports import (
     Wire,
     ValuePort,
     Erasure,
+    Graft,
 )
 from natsune.registers import (
     as_to_register,
@@ -202,6 +209,21 @@ class GatedSelection(ExpansionWithAdapters):
             )
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class Tracer:
+    label: str
+    wires_cache: dict[Wire, str] = dataclasses.field(default_factory=new_wires_cache)
+
+    def __copy__(self) -> Self:
+        return dataclasses.replace(self, wires_cache=new_wires_cache())
+
+    def __call__(
+        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        print(f"{self.label} from: {serialize_port(port, self.wires_cache, False)}")
+        executor.connect(wires[0], port)
+
+
 @dataclasses.dataclass(kw_only=True)
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
@@ -296,7 +318,9 @@ class Loop(ExpansionWithAdapters):
         with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
 
             with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
-                input_variables = inputs.variables.readout()
+                input_variables = inputs.variables.readout().trace(
+                    "loop-true-case-input-variables"
+                )
                 input_iter = inputs.value.readout()
 
             with self.body.invocation(builder) as body_invocation:
@@ -306,7 +330,9 @@ class Loop(ExpansionWithAdapters):
                 )
                 body_finish_variables = (
                     body_invocation.wire.continue_variables.readout()
-                    | body_invocation.wire.finish_variables.readout()
+                    | body_invocation.wire.finish_variables.readout().trace(
+                        "body0invocation-finish-variables"
+                    )
                 )
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
@@ -317,7 +343,7 @@ class Loop(ExpansionWithAdapters):
 
             with self.invocation(builder) as recurse:
                 send_value(
-                    recurse_variables,
+                    recurse_variables.trace("recurse-variables"),
                     recurse.port.variables.readin(),
                 )
                 send_value(recurse_iter, recurse.port.value.readin())
@@ -381,19 +407,21 @@ class Loop(ExpansionWithAdapters):
             self.iteration.invocation(executor) as iterable_invocation,
             self.conditional.invocation(executor) as conditional_invocation,
         ):
-            input_iter = this_invocation.port.value.readout()
+            input_iter, synchronized_iter = (
+                this_invocation.port.value.readout().duplicate("share")
+            )
             input_variables = this_invocation.port.variables.readout()
 
-            iter_input_1, iter_input_2 = input_iter.duplicate()
-
             send_value(
-                input_variables,
+                input_variables.trace("iterable-invocation-variables-readin"),
                 iterable_invocation.port.variables.readin(),
             )
-            send_value(iter_input_1, iterable_invocation.port.value.readin())
+            send_value(input_iter, iterable_invocation.port.value.readin())
+
+            should_continue = iterable_invocation.wire.return_value.readout()
 
             send_value(
-                iterable_invocation.wire.return_value.readout(),
+                should_continue,
                 conditional_invocation.port.readin(),
             )
 
@@ -401,11 +429,13 @@ class Loop(ExpansionWithAdapters):
                 pack_into(conditional_invocation.wire.context, FlowInputInto)
             ) as conditional_context:
                 send_value(
-                    iter_input_2,
+                    synchronized_iter,
                     conditional_context.value.readin(),
                 )
                 send_value(
-                    iterable_invocation.wire.finish_variables.readout(),
+                    iterable_invocation.wire.finish_variables.readout().trace(
+                        "iterable-invocation-finish-variables-readout"
+                    ),
                     conditional_context.variables.readin(),
                 )
 
@@ -413,7 +443,9 @@ class Loop(ExpansionWithAdapters):
                 pack_from(conditional_invocation.wire.result, FlowControlInto)
             ) as conditional_result:
                 send_value(
-                    conditional_result.finish_variables.readout(),
+                    conditional_result.finish_variables.readout().trace(
+                        "conditional-result-variables"
+                    ),
                     this_invocation.wire.finish_variables.readin(),
                 )
                 send_value(

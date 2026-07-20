@@ -41,6 +41,7 @@ def use_references() -> int:
 def sum_it_up(start: int, end: int) -> int:
     total = 0
     for i in range(start, end):
+        print(total)
         print(i)
         total += i
     return total

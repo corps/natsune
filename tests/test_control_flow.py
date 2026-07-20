@@ -1,6 +1,6 @@
 import pytest
 
-from natsune.adapters import ValueAdapter, Variables
+from natsune.adapters import ValueAdapter, Variables, ParValueAdapter
 from natsune.calculus import Calculus
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import WeakeningSelection, IfThenElse, Loop, VariablesFlow

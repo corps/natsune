@@ -32,6 +32,8 @@ __all__ = [
     "Connector",
     "ExpansionBuilder",
     "serialize_active_pairs",
+    "serialize_port",
+    "new_wires_cache",
 ]
 
 
@@ -66,8 +68,8 @@ class Connector(abc.ABC):
             return
         connect_wire_to_wire(self, l, r)
 
-    def duplicate(self, target: Target) -> tuple[Wire, Wire]:
-        comb = CombPort("dup")
+    def duplicate(self, target: Target, label: str = "dup") -> tuple[Wire, Wire]:
+        comb = CombPort(label)
         self.connect(comb, target)
         return comb.wires[0], comb.wires[1]
 

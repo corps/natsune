@@ -168,14 +168,12 @@ class InetFunctionCompiler:
         for stmt in self.func_def.body:
             InetVariablesEvaluator(self).visit(stmt)
 
-    # TODO: Remove name parameter from here and the Variables Flow
-    def new_branch(self, name: str) -> InetBranchCompiler:
+    def new_branch(self) -> InetBranchCompiler:
         return InetBranchCompiler(
             self,
             VariablesFlow(
                 variables=Variables(self.variables),
                 return_adapter=adapter_from_type(self.return_annot),
-                name=name,
             ),
         )
 
@@ -185,7 +183,6 @@ class InetFunctionCompiler:
             VariablesFlow(
                 variables=Variables(self.variables),
                 return_adapter=ValueAdapter(),
-                name="test",
             ),
         )
 
@@ -287,7 +284,7 @@ class InetFunctionCompiler:
 
     @cached_property
     def compiled(self) -> VariablesFlow:
-        return self.new_branch("compiled").parse_statement_body(
+        return self.new_branch().parse_statement_body(
             self.func_def.body, default_return_none=True
         )
 
@@ -313,10 +310,6 @@ def _try_iter(i: Iterator) -> Any:
         return next(i), True
     except StopIteration:
         return None, False
-
-
-def do_think(v: Any) -> Any:
-    return v
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -475,7 +468,6 @@ class InetBranchCompiler:
         with VariablesFlow(
             variables=self.flow.variables,
             return_adapter=ValueAdapter(),
-            name="true-case-dddd",
         ) as true_case:
             true_branch = InetBranchCompiler(self.function_compiler, true_case)
             send_value(
@@ -487,31 +479,33 @@ class InetBranchCompiler:
                 true_case.control_output.return_value.readin(),
             )
             send_value(
-                true_case.variables_readout(),
+                true_case.variables_readout().trace("true-case-variables"),
                 true_case.control_output.finish_variables.readin(),
             )
 
         with VariablesFlow(
             variables=self.flow.variables,
             return_adapter=ValueAdapter(),
-            name="false-case",
         ) as false_case:
             send_value(
                 as_constant_register(False, false_case),
                 false_case.control_output.return_value.readin(),
             )
             send_value(
-                false_case.variables_readout(),
+                false_case.variables_readout().trace("false-case-variables"),
                 false_case.control_output.finish_variables.readin(),
             )
 
         with VariablesFlow(
             variables=self.flow.variables,
             return_adapter=ValueAdapter(),
-            name="deconstructor",
         ) as flow:
-            input_variables = flow.flow_input.variables.readout()
-            input_iter = flow.flow_input.value.readout()
+            input_variables = flow.flow_input.variables.readout().trace(
+                "deconstruct-iter-input-variables"
+            )
+            input_iter = flow.flow_input.value.readout().trace(
+                "deconstruct-iter-readout"
+            )
 
             # this branch receives the whole iter
             try_iter_in, (next_value, should_continue) = split_invocation(
@@ -527,7 +521,6 @@ class InetBranchCompiler:
                 with closer(
                     pack_into(conditional.wire.context, FlowInputInto)
                 ) as context:
-                    pass
                     send_value(next_value, context.value.readin())
                     send_value(input_variables, context.variables.readin())
 
@@ -539,7 +532,9 @@ class InetBranchCompiler:
                         flow.control_output.return_value.readin(),
                     )
                     send_value(
-                        result.finish_variables.readout(),
+                        result.finish_variables.readout().trace(
+                            "result-finish-variables"
+                        ),
                         flow.control_output.finish_variables.readin(),
                     )
 
@@ -547,8 +542,9 @@ class InetBranchCompiler:
 
     def parse_test(self, test_expr: ast.expr) -> VariablesFlow:
         branch = self.function_compiler.new_test()
+        test_result = branch.evaluate_from_expression(test_expr)
         send_value(
-            branch.evaluate_from_expression(test_expr),
+            test_result,
             branch.flow.control_output.return_value.readin(),
         )
         send_value(
@@ -562,12 +558,14 @@ class InetBranchCompiler:
         self, control: FlowControlInto, body_iter: Iterable[ast.stmt]
     ):
         with (
-            self.function_compiler.new_branch("continuation")
+            self.function_compiler.new_branch()
             .parse_statement_body(body_iter)
             .invocation(self.flow) as continuation
         ):
             send_value(
-                control.finish_variables.readout(),
+                control.finish_variables.readout().trace(
+                    "continuation-finish-variables"
+                ),
                 continuation.port.variables.readin(),
             )
 
@@ -636,12 +634,12 @@ class InetBranchCompiler:
                                 if isinstance(stmt, ast.For)
                                 else self.parse_test(stmt.test)
                             ),
-                            self.function_compiler.new_branch(
-                                "body"
-                            ).parse_statement_body(stmt.body),
-                            self.function_compiler.new_branch(
-                                "orelse"
-                            ).parse_statement_body(stmt.orelse),
+                            self.function_compiler.new_branch().parse_statement_body(
+                                stmt.body
+                            ),
+                            self.function_compiler.new_branch().parse_statement_body(
+                                stmt.orelse
+                            ),
                         ).invocation(self.flow) as for_invocation,
                     ):
 
@@ -659,17 +657,21 @@ class InetBranchCompiler:
                             for_invocation.port.variables.readin(),
                         )
 
-                        # self.wire_continuation(for_invocation.wire, body_iter)
+                        self.wire_continuation(for_invocation.wire, body_iter)
 
                         return self.flow
 
                 elif isinstance(stmt, ast.If):
-                    true_case = self.function_compiler.new_branch(
-                        "body"
-                    ).parse_statement_body(stmt.body)
-                    false_case = self.function_compiler.new_branch(
-                        "orelse"
-                    ).parse_statement_body(stmt.orelse)
+                    true_case = (
+                        self.function_compiler.new_branch().parse_statement_body(
+                            stmt.body
+                        )
+                    )
+                    false_case = (
+                        self.function_compiler.new_branch().parse_statement_body(
+                            stmt.orelse
+                        )
+                    )
 
                     with (
                         IfThenElse(true_case, false_case).invocation(
