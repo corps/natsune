@@ -17,7 +17,7 @@ from natsune.adapters import (
     ParValueAdapter,
     Variables,
 )
-from natsune.connector import Connector
+from natsune.connector import Connector, serialize_active_pairs
 from natsune.control_flow import (
     VariablesFlow,
     Loop,
@@ -479,7 +479,7 @@ class InetBranchCompiler:
                 true_case.control_output.return_value.readin(),
             )
             send_value(
-                true_case.variables_readout().trace("true-case-variables"),
+                true_case.variables_readout(),
                 true_case.control_output.finish_variables.readin(),
             )
 
@@ -492,7 +492,7 @@ class InetBranchCompiler:
                 false_case.control_output.return_value.readin(),
             )
             send_value(
-                false_case.variables_readout().trace("false-case-variables"),
+                false_case.variables_readout(),
                 false_case.control_output.finish_variables.readin(),
             )
 
@@ -500,12 +500,8 @@ class InetBranchCompiler:
             variables=self.flow.variables,
             return_adapter=ValueAdapter(),
         ) as flow:
-            input_variables = flow.flow_input.variables.readout().trace(
-                "deconstruct-iter-input-variables"
-            )
-            input_iter = flow.flow_input.value.readout().trace(
-                "deconstruct-iter-readout"
-            )
+            input_variables = flow.variables_readout()
+            input_iter = flow.flow_input.value.readout()
 
             # this branch receives the whole iter
             try_iter_in, (next_value, should_continue) = split_invocation(
@@ -532,9 +528,7 @@ class InetBranchCompiler:
                         flow.control_output.return_value.readin(),
                     )
                     send_value(
-                        result.finish_variables.readout().trace(
-                            "result-finish-variables"
-                        ),
+                        result.finish_variables.readout(),
                         flow.control_output.finish_variables.readin(),
                     )
 
@@ -563,9 +557,7 @@ class InetBranchCompiler:
             .invocation(self.flow) as continuation
         ):
             send_value(
-                control.finish_variables.readout().trace(
-                    "continuation-finish-variables"
-                ),
+                control.finish_variables.readout(),
                 continuation.port.variables.readin(),
             )
 

@@ -318,9 +318,7 @@ class Loop(ExpansionWithAdapters):
         with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
 
             with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
-                input_variables = inputs.variables.readout().trace(
-                    "loop-true-case-input-variables"
-                )
+                input_variables = inputs.variables.readout()
                 input_iter = inputs.value.readout()
 
             with self.body.invocation(builder) as body_invocation:
@@ -330,9 +328,7 @@ class Loop(ExpansionWithAdapters):
                 )
                 body_finish_variables = (
                     body_invocation.wire.continue_variables.readout()
-                    | body_invocation.wire.finish_variables.readout().trace(
-                        "body0invocation-finish-variables"
-                    )
+                    | body_invocation.wire.finish_variables.readout()
                 )
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
@@ -343,7 +339,7 @@ class Loop(ExpansionWithAdapters):
 
             with self.invocation(builder) as recurse:
                 send_value(
-                    recurse_variables.trace("recurse-variables"),
+                    recurse_variables,
                     recurse.port.variables.readin(),
                 )
                 send_value(recurse_iter, recurse.port.value.readin())
@@ -413,7 +409,7 @@ class Loop(ExpansionWithAdapters):
             input_variables = this_invocation.port.variables.readout()
 
             send_value(
-                input_variables.trace("iterable-invocation-variables-readin"),
+                input_variables,
                 iterable_invocation.port.variables.readin(),
             )
             send_value(input_iter, iterable_invocation.port.value.readin())
@@ -433,9 +429,7 @@ class Loop(ExpansionWithAdapters):
                     conditional_context.value.readin(),
                 )
                 send_value(
-                    iterable_invocation.wire.finish_variables.readout().trace(
-                        "iterable-invocation-finish-variables-readout"
-                    ),
+                    iterable_invocation.wire.finish_variables.readout(),
                     conditional_context.variables.readin(),
                 )
 
@@ -443,9 +437,7 @@ class Loop(ExpansionWithAdapters):
                 pack_from(conditional_invocation.wire.result, FlowControlInto)
             ) as conditional_result:
                 send_value(
-                    conditional_result.finish_variables.readout().trace(
-                        "conditional-result-variables"
-                    ),
+                    conditional_result.finish_variables.readout(),
                     this_invocation.wire.finish_variables.readin(),
                 )
                 send_value(
