@@ -46,8 +46,26 @@ def sum_it_up(start: int, end: int) -> int:
         total += i
     return total
 
+@inet
+def is_it_even(input: int) -> bool:
+    if input % 2 == 0:
+        return True
+    return False
+
+@inet
+def basic_sum_with_while(start: int, end: int) -> int:
+    total = 0
+    i = start
+    while i < end:
+        total += i
+        i += 1
+    return total
+
 def test_compiled_functions(c: Calculus) -> None:
     assert basic(29) == 39
     assert invoke_an_inet() == 12
     assert use_references() == 30
     assert sum_it_up(1, 10) == 45
+    assert is_it_even(10) == True
+    assert is_it_even(11) == False
+    assert basic_sum_with_while(1, 10) == 45
