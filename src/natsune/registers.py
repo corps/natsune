@@ -15,6 +15,8 @@ __all__ = [
     "send_values",
     "send_value",
     "parallelize_value",
+    "join_to_registers",
+    "join_from_registers",
 ]
 
 
@@ -117,6 +119,7 @@ class _FromRegister:
         g = Graft(Tracer(label), [Wire()])
         self.connector.connect(self.port, g)
         return _FromRegister(g.wires[0], self.adapter, self.connector)
+
 
 
 @dataclasses.dataclass(slots=True)

@@ -1,3 +1,4 @@
+from natsune.optimizer import optimize
 import dataclasses
 from functools import cached_property
 from typing import Sequence, Self, Callable, Any
@@ -12,7 +13,6 @@ from natsune.ambiguous import AmbiguousPair
 from natsune.connector import (
     Connector,
     ExpansionBuilder,
-    serialize_active_pairs,
     new_wires_cache,
     serialize_port,
 )
@@ -282,6 +282,34 @@ class VariablesFlow(ExpansionBuilder):
             register.close()
         closer(self.flow_input).close()
         closer(self.control_output).close()
+        optimize(self, self.active_pairs)
+
+@dataclasses.dataclass
+class CloseAfterContingent(ExpansionWithAdapters):
+    left: Adapter
+    right: Adapter
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return self.left
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return ParValueAdapter([
+            self.right,
+            self.left
+        ])
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __call__(
+            self, executor: Executor, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        with executor.sequenced_tuplate_from(wires[0]) as wire_iter:
+            self.right.close(next(wire_iter), executor)
+            executor.connect(port, next(wire_iter))
+
 
 
 @dataclasses.dataclass
