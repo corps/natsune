@@ -8,7 +8,7 @@ from typing import Generator
 
 from natsune.connector import Connector
 from natsune.interactions import execute_interaction
-from natsune.ports import Port, Graft
+from natsune.ports import Graft, Port
 
 
 class Executor(Connector):

@@ -4,9 +4,8 @@ from typing import Any, Self, Sequence
 from natsune.adapters import ValueAdapter
 from natsune.connector import Connector
 from natsune.executor import Executor
-from natsune.ports import Expansion
-from natsune.ports import ForkPort, Graft, Wire, Port, WirePort
-from natsune.registers import as_from_register, as_to_register, FromRegister, ToRegister
+from natsune.ports import Expansion, ForkPort, Graft, Port, Wire, WirePort
+from natsune.registers import FromRegister, ToRegister, as_from_register, as_to_register
 
 
 @dataclasses.dataclass(slots=True)

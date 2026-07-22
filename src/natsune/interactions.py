@@ -1,20 +1,21 @@
-from typing import TYPE_CHECKING
-from .connector import Connector
 import copy
 import dataclasses
+from typing import TYPE_CHECKING
 
 from natsune.ports import (
-    ExtMergeFuncPort,
-    ValuePort,
-    Erasure,
-    Wire,
-    ExtSplitFuncPort,
     CombPort,
-    Port,
-    WirePort,
+    Erasure,
+    ExtMergeFuncPort,
+    ExtSplitFuncPort,
     ForkPort,
     Graft,
+    Port,
+    ValuePort,
+    Wire,
+    WirePort,
 )
+
+from .connector import Connector
 
 if TYPE_CHECKING:
     from .executor import Executor

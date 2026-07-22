@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "ty>=0.0.61",
     "black>=26.5.1",
+    "isort>=6.0.0",
     "pytest>=9.1.1",
     "pre-commit>=4.0.0",
     "karakuri>=0.1.0"
@@ -47,6 +48,14 @@ exclude = '''
     | dist
 )/
 '''
+
+# isort import sorting configuration
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["natsune"]
+known_third_party = ["ty"]
+skip_gitignore = true
 
 # pytest configuration
 [tool.pytest.ini_options]

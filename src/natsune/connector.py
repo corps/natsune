@@ -5,20 +5,20 @@ import dataclasses
 from collections import defaultdict
 from contextlib import AbstractContextManager
 from functools import cached_property
-from typing import Generator, Iterator, Callable, Sequence, Self, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Generator, Iterator, Self, Sequence
 
 from natsune.ports import (
-    Port,
-    Wire,
-    WirePort,
-    Target,
     CombPort,
     Erasure,
-    ValuePort,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
     ForkPort,
     Graft,
+    Port,
+    Target,
+    ValuePort,
+    Wire,
+    WirePort,
 )
 
 if TYPE_CHECKING:

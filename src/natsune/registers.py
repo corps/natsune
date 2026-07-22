@@ -1,10 +1,11 @@
-from karakuri.inference.mapping_inference import MappingInference
 import dataclasses
-from typing import Sequence, Protocol, Any, Literal, Callable, Self, cast, Iterable
+from typing import Any, Callable, Iterable, Literal, Protocol, Self, Sequence, cast
 
-from natsune.adapters import Adapter, ParValueAdapter, ValueAdapter, ReferenceAdapter
+from karakuri.inference.mapping_inference import MappingInference
+
+from natsune.adapters import Adapter, ParValueAdapter, ReferenceAdapter, ValueAdapter
 from natsune.connector import Connector
-from natsune.ports import Port, WirePort, Target, Wire, ConstantValuePort, Graft
+from natsune.ports import ConstantValuePort, Graft, Port, Target, Wire, WirePort
 
 __all__ = [
     "FromRegister",
@@ -19,6 +20,10 @@ __all__ = [
     "join_to_registers",
     "join_from_registers",
     "borrow_registers",
+    "serialize_values",
+    "as_constant_register",
+    "FromInterfaceRegister",
+    "ToInterfaceRegister",
 ]
 
 register_inferences: list[MappingInference] = []

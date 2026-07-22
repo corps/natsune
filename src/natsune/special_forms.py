@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, TypeVar, Generic
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 _A = TypeVar("_A")
 if TYPE_CHECKING:

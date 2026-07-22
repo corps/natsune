@@ -1,32 +1,32 @@
 import dataclasses
 from collections import defaultdict
-from typing import Any, Iterator, Self, Sequence, Callable, Literal
+from typing import Any, Callable, Iterator, Literal, Self, Sequence
 
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.ambiguous import AmbiguousPair
 from natsune.connector import serialize_active_pairs
-from natsune.executor import SynchronizedExecutor, Executor
+from natsune.executor import Executor, SynchronizedExecutor
 from natsune.optimizer import optimize
 from natsune.ports import (
-    Wire,
-    Port,
-    Target,
-    ExtSplitFuncPort,
+    CombPort,
     Erasure,
     Expansion,
-    Graft,
-    CombPort,
-    ValuePort,
     ExtMergeFuncPort,
+    ExtSplitFuncPort,
     ForkPort,
+    Graft,
+    Port,
+    Target,
+    ValuePort,
+    Wire,
     WirePort,
 )
 from natsune.registers import (
-    ToRegister,
-    as_to_register,
     FromRegister,
-    as_from_register,
+    ToRegister,
     as_constant_register,
+    as_from_register,
+    as_to_register,
 )
 
 

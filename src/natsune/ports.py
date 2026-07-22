@@ -1,13 +1,13 @@
 import copy
 import dataclasses
 from typing import (
-    Self,
-    MutableSequence,
+    TYPE_CHECKING,
     Any,
     Callable,
+    MutableSequence,
     Protocol,
+    Self,
     Sequence,
-    TYPE_CHECKING,
     cast,
 )
 

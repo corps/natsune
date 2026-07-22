@@ -1,34 +1,34 @@
-import sys
-
 import dataclasses
+import sys
 from contextlib import AbstractContextManager
-from typing import Protocol, Callable, Any, Sequence, runtime_checkable, Iterator, cast
+from typing import Any, Callable, Iterator, Protocol, Sequence, cast, runtime_checkable
 
 from karakuri.annotations import Annotation
 from karakuri.call_mapping import CallMapping
 from karakuri.codegen_buffer import generate
 from karakuri.concrete_typing import DataclassTyping
+
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.connector import Connector
 from natsune.executor import Executor
 from natsune.ports import (
-    Graft,
-    Wire,
     Expansion,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
+    Graft,
     Port,
+    Wire,
 )
 from natsune.registers import (
-    ToRegister,
-    FromRegister,
-    as_to_register,
-    as_from_register,
-    send_value,
-    InterfaceRegister,
-    as_constant_register,
-    ToInterfaceRegister,
     FromInterfaceRegister,
+    FromRegister,
+    InterfaceRegister,
+    ToInterfaceRegister,
+    ToRegister,
+    as_constant_register,
+    as_from_register,
+    as_to_register,
+    send_value,
 )
 
 

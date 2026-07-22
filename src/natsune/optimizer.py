@@ -6,12 +6,11 @@ __all__ = ["optimize"]
 
 from natsune.interactions import (
     execute_commute_or_anihilate,
-    execute_read_wire,
     execute_erasure,
     execute_interaction,
+    execute_read_wire,
 )
-
-from natsune.ports import CombPort, WirePort, Erasure, Port
+from natsune.ports import CombPort, Erasure, Port, WirePort
 
 
 def optimize(

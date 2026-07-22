@@ -1,12 +1,11 @@
-from natsune.optimizer import optimize
 import dataclasses
 from functools import cached_property
-from typing import Sequence, Self, Callable, Any
+from typing import Any, Callable, Self, Sequence
 
 from natsune.adapters import (
     Adapter,
-    ValueAdapter,
     ParValueAdapter,
+    ValueAdapter,
     Variables,
 )
 from natsune.ambiguous import AmbiguousPair
@@ -18,48 +17,49 @@ from natsune.connector import (
 )
 from natsune.control_flow_generated import (
     FlowControlFrom,
-    FlowInputFrom,
     FlowControlInto,
+    FlowInputFrom,
     FlowInputInto,
-    IfThenElseOutputInto,
-    MergeOutputInto,
-    MergeOutputFrom,
     IfThenElseOutputFrom,
+    IfThenElseOutputInto,
+    MergeOutputFrom,
+    MergeOutputInto,
 )
 from natsune.executor import Executor
 from natsune.invocations import (
+    LHS,
+    RHS,
     ExpansionWithAdapters,
+    Invocation,
+    closer,
     expansion_invocation,
     filter_invocation,
-    send_parameter,
+    generate_register_pair_types,
     merge_invocation,
+    pack_from,
+    pack_into,
+    send_parameter,
     send_parameters,
     unpack_port_and_wires,
     unpack_wires,
-    RHS,
-    generate_register_pair_types,
-    pack_into,
-    pack_from,
-    LHS,
-    closer,
-    Invocation,
 )
+from natsune.optimizer import optimize
 from natsune.ports import (
-    Port,
-    Wire,
-    ValuePort,
     Erasure,
     Graft,
+    Port,
+    ValuePort,
+    Wire,
 )
 from natsune.registers import (
+    FlowRegister,
+    FromInterfaceRegister,
+    FromRegister,
+    ToInterfaceRegister,
+    as_from_register,
     as_to_register,
     send_value,
-    as_from_register,
-    FromRegister,
-    FlowRegister,
     send_values,
-    FromInterfaceRegister,
-    ToInterfaceRegister,
 )
 
 

@@ -11,6 +11,15 @@ repos:
         # Only check Python files in src/ directory
         files: ^src/.*\.py$
         
+      # isort import sorting
+      - id: isort
+        name: isort
+        entry: isort
+        language: system
+        types: [python]
+        args: [--check-only, --diff]
+        files: ^src/.*\.py$
+
       # ty type checking
       - id: ty
         name: ty

@@ -2,18 +2,18 @@ import dataclasses
 from enum import IntEnum
 from functools import cached_property
 from typing import (
-    Protocol,
-    Iterator,
-    Sequence,
-    MutableMapping,
-    get_origin,
-    get_args,
     Any,
+    Iterator,
+    MutableMapping,
+    Protocol,
+    Sequence,
+    get_args,
+    get_origin,
 )
 
 from natsune.connector import Connector
-from natsune.ports import Wire, WirePort, Target, Port, Erasure, CombPort
-from natsune.special_forms import Par, Ref, Inverse
+from natsune.ports import CombPort, Erasure, Port, Target, Wire, WirePort
+from natsune.special_forms import Inverse, Par, Ref
 
 
 class LinearWiringType(IntEnum):

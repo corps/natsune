@@ -7,11 +7,11 @@ from natsune.calculus import Calculus
 from natsune.control_flow import VariablesFlow
 from natsune.executor import Executor
 from natsune.invocations import ExpansionWithAdapters, expansion_invocation, unpack_port_and_wires, filter_invocation, \
-    send_parameter
+    send_parameter, merge_invocation, send_parameters
 from natsune.optimizer import optimize
 from natsune.ports import ValuePort, Port, Wire
-from natsune.registers import serialize_values, send_value, send_values, parallelize_value, InterfaceRegister, \
-    as_from_register, as_constant_register, FlowRegister, join_to_registers, join_from_registers, FromInterfaceRegister, \
+from natsune.registers import serialize_values, send_value, send_values, parallelize_value, as_from_register, \
+    as_constant_register, FlowRegister, join_to_registers, join_from_registers, FromInterfaceRegister, \
     ToInterfaceRegister, borrow_registers
 
 
@@ -216,6 +216,22 @@ def test_inverse_adapter(c: Calculus) -> None:
     assert list(c.readout(3)) == [3]
 
 
+def test_inverse_adapter_with_close(c: Calculus) -> None:
+    value = FlowRegister(ValueAdapter(), c.executor)
+    inv1 = FlowRegister(InverseAdapter(ValueAdapter()), c.executor)
+    inv2 = FlowRegister(InverseAdapter(ValueAdapter()), c.executor)
+
+    send_value(inv1.readout(), value.readin())
+    send_value(inv1.readout(), inv2.readin())
+    inv1.close()
+    send_value(c.const(1), inv2.readin())
+    inv2.close()
+
+    send_value(value.readout(), c.to_key(0))
+    assert list(c.readout(0)) == [1]
+
+
+
 def test_inverse_compound_adapter(c: Calculus) -> None:
     inv1 = FlowRegister(InverseAdapter(ReferenceAdapter(ValueAdapter())), c.executor)
     ref1 = FlowRegister(ReferenceAdapter(ValueAdapter()), c.executor)
@@ -269,3 +285,31 @@ def test_borrow_registers(c: Calculus) -> None:
     send_value(c.const(1), r.interface_readin())
     assert list(c.continue_readout()) == [[1]]
 
+
+def test_borrow_registers_inverse(c: Calculus) -> None:
+    ref_r = FlowRegister(ReferenceAdapter(ValueAdapter()), c.executor)
+    inv_r = FlowRegister(InverseAdapter(ValueAdapter()), c.executor)
+
+    send_value(c.const([]), ref_r.readin())
+
+    r = FromInterfaceRegister(ValueAdapter(), c.executor)
+
+    results = borrow_registers(
+        [ref_r.readout(), inv_r.readout()],
+        r.readout()
+    )
+
+    result = send_parameters(
+        merge_invocation(lambda x, y: (x, y), c.executor),
+        (results[0], results[1])
+    )
+
+    send_value(result, c.to_key(0))
+    assert list(c.readout(0)) == []
+
+
+    send_value(c.const(1), r.interface_readin())
+    assert list(c.continue_readout()) == []
+
+    send_value(c.const(1), inv_r.readin())
+    assert list(c.continue_readout()) == [([], 1)]

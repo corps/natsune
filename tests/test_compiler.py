@@ -62,6 +62,24 @@ def basic_sum_with_while(start: int, end: int) -> int:
     return total
 
 @inet
+def simple_inverse_example() -> list:
+    a: Ref[list] = []
+    b: Inverse[int] = 1
+    a.append(b)
+    a.append(b)
+    b = 5
+    return a
+
+@inet
+def simple_inverse_loop_example(scale: int) -> int:
+    total = 0
+    b: Inverse[int] = -1
+    for _ in range(scale):
+        total += b
+    b = 3
+    return total
+
+@inet
 def shift_list_by_smallest(l: list[int]) -> list[int]:
     if len(l) == 0:
         return []
@@ -95,4 +113,6 @@ def test_compiled_functions() -> None:
     # assert is_it_even(11) == False
     # assert basic_sum_with_while(1, 10) == 45
     # assert ref_for_expressions() == [1, 2]
+    assert simple_inverse_example() == [5, 5]
+    assert simple_inverse_loop_example(10) == -10
     assert shift_list_by_smallest([4, 9, 1, 10]) == []

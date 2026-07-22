@@ -7,61 +7,61 @@ import string
 import sys
 import textwrap
 from functools import cached_property
-from typing import cast, Any, get_type_hints, Iterable, Sequence, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator, Sequence, cast, get_type_hints
 
 from natsune.adapters import (
     Adapter,
-    ValueAdapter,
-    adapter_from_type,
-    TypeExpression,
     ParValueAdapter,
-    Variables,
     ReferenceAdapter,
+    TypeExpression,
+    ValueAdapter,
+    Variables,
+    adapter_from_type,
 )
 from natsune.connector import Connector, serialize_active_pairs
 from natsune.control_flow import (
-    VariablesFlow,
-    Loop,
-    IfThenElse,
-    ConcurrentMerge,
-    WeakeningSelection,
     CloseAfterContingent,
+    ConcurrentMerge,
+    IfThenElse,
+    Loop,
     MergeInputTo,
+    VariablesFlow,
+    WeakeningSelection,
 )
 from natsune.control_flow_generated import (
-    FlowInputInto,
     FlowControlInto,
+    FlowInputInto,
     MergeOutputInto,
 )
 from natsune.executor import SynchronizedExecutor
 from natsune.invocations import (
-    merge_invocation,
-    send_parameters,
-    filter_invocation,
-    send_parameter,
     closer,
-    pack_into,
-    pack_from,
-    split_invocation,
     expansion_invocation,
+    filter_invocation,
+    merge_invocation,
+    pack_from,
+    pack_into,
+    send_parameter,
+    send_parameters,
+    split_invocation,
 )
-from natsune.ports import Wire, ConstantValuePort, Erasure
+from natsune.ports import ConstantValuePort, Erasure, Wire
 from natsune.registers import (
+    FlowRegister,
     FromRegister,
+    InterfaceRegister,
+    ToInterfaceRegister,
     ToRegister,
-    as_to_register,
+    as_constant_register,
     as_from_register,
+    as_to_register,
+    borrow_registers,
+    join_from_registers,
+    join_to_registers,
+    parallelize_value,
     send_value,
     send_values,
     serialize_values,
-    as_constant_register,
-    join_to_registers,
-    InterfaceRegister,
-    ToInterfaceRegister,
-    FlowRegister,
-    parallelize_value,
-    join_from_registers,
-    borrow_registers,
 )
 
 unsupported_expr: tuple[type[ast.expr], ...] = (
