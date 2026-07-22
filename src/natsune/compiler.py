@@ -15,7 +15,8 @@ from natsune.adapters import (
     adapter_from_type,
     TypeExpression,
     ParValueAdapter,
-    Variables, ReferenceAdapter,
+    Variables,
+    ReferenceAdapter,
 )
 from natsune.connector import Connector, serialize_active_pairs
 from natsune.control_flow import (
@@ -23,11 +24,14 @@ from natsune.control_flow import (
     Loop,
     IfThenElse,
     ConcurrentMerge,
-    WeakeningSelection, CloseAfterContingent, MergeInputTo,
+    WeakeningSelection,
+    CloseAfterContingent,
+    MergeInputTo,
 )
 from natsune.control_flow_generated import (
     FlowInputInto,
-    FlowControlInto, MergeOutputInto,
+    FlowControlInto,
+    MergeOutputInto,
 )
 from natsune.executor import SynchronizedExecutor
 from natsune.invocations import (
@@ -38,7 +42,8 @@ from natsune.invocations import (
     closer,
     pack_into,
     pack_from,
-    split_invocation, expansion_invocation,
+    split_invocation,
+    expansion_invocation,
 )
 from natsune.ports import Wire, ConstantValuePort, Erasure
 from natsune.registers import (
@@ -52,7 +57,11 @@ from natsune.registers import (
     as_constant_register,
     join_to_registers,
     InterfaceRegister,
-    ToInterfaceRegister, FlowRegister, parallelize_value, join_from_registers,
+    ToInterfaceRegister,
+    FlowRegister,
+    parallelize_value,
+    join_from_registers,
+    borrow_registers,
 )
 
 unsupported_expr: tuple[type[ast.expr], ...] = (
@@ -121,28 +130,7 @@ class ReplaceWithSerializedVariables(ast.NodeTransformer):
                 return candidate
 
     def construct_context(self, finished_from: FromRegister) -> FromRegister:
-        held_context = [
-            FlowRegister(ReferenceAdapter(ValueAdapter()), self.branch_compiler.flow) for _ in self.used_names.values()
-        ]
-
-        # "cast" values into a reference
-        send_values(
-            list(self.used_names.values()),
-            [r.readin() for r in held_context]
-        )
-
-        value_readout = [r.readout() for r in held_context]
-
-        # Implicit close here as we transfer the state directly
-        joined_content = join_from_registers([
-            as_from_register(r.state, r.adapter, r.connector) for r in held_context
-        ], self.branch_compiler.flow)
-
-        with expansion_invocation(CloseAfterContingent(finished_from.adapter, joined_content.adapter), self.branch_compiler.flow, MergeInputTo, MergeOutputInto) as invocation:
-            send_value(finished_from, invocation.port.readin())
-            send_value(joined_content, invocation.wire.second_value.readin())
-            invocation.wire.result.readout().close()
-
+        value_readout = borrow_registers(list(self.used_names.values()), finished_from)
 
         return send_parameters(
             serialize_values(self.branch_compiler.flow, 2),
@@ -380,7 +368,8 @@ class InetBranchCompiler:
             if inet:
                 if expr.keywords:
                     raise self.function_compiler.syntax_error(
-                        expr, "Keyword arguments are currently not supported for inet invocations"
+                        expr,
+                        "Keyword arguments are currently not supported for inet invocations",
                     )
 
                 if len(expr.args) != len(inet.args_adapter.concurrent_items):
@@ -475,7 +464,6 @@ class InetBranchCompiler:
 
         rewriter = ReplaceWithSerializedVariables(self)
         inner = textwrap.dedent(ast.unparse(rewriter.visit(expr)))
-
 
         (a, b), c = merge_invocation(eval_expression, self.flow)
         c1, c2 = c.duplicate("share")

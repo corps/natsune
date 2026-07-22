@@ -181,7 +181,7 @@ class ReferenceAdapter(Adapter):
         taken_incoming, taken_outgoing = connector.tuplate(taken)
         given_incoming, given_outgoing = connector.tuplate(given)
 
-        given_outgoing1, given_outgoing2 = connector.duplicate(given_outgoing)
+        given_outgoing1, given_outgoing2 = connector.duplicate(given_outgoing, "share")
         self.inner.close(taken_incoming, connector)
 
         readout = CombPort("x")
@@ -192,7 +192,7 @@ class ReferenceAdapter(Adapter):
 
     def unpack(self, target: Target, connector: Connector) -> Target:
         taken_incoming, taken_outgoing = connector.tuplate(target)
-        incoming1, incoming2 = connector.duplicate(taken_incoming)
+        incoming1, incoming2 = connector.duplicate(taken_incoming, "share")
         connector.connect(incoming1, taken_outgoing)
         return incoming2
 

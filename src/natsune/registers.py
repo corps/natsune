@@ -1,7 +1,8 @@
+from karakuri.inference.mapping_inference import MappingInference
 import dataclasses
-from typing import Sequence, Protocol, Any, Literal, Callable, Self, cast
+from typing import Sequence, Protocol, Any, Literal, Callable, Self, cast, Iterable
 
-from natsune.adapters import Adapter, ParValueAdapter, ValueAdapter
+from natsune.adapters import Adapter, ParValueAdapter, ValueAdapter, ReferenceAdapter
 from natsune.connector import Connector
 from natsune.ports import Port, WirePort, Target, Wire, ConstantValuePort, Graft
 
@@ -17,7 +18,10 @@ __all__ = [
     "parallelize_value",
     "join_to_registers",
     "join_from_registers",
+    "borrow_registers",
 ]
+
+register_inferences: list[MappingInference] = []
 
 
 # These represent public interface wrappers around the inner register concept
@@ -119,7 +123,6 @@ class _FromRegister:
         g = Graft(Tracer(label), [Wire()])
         self.connector.connect(self.port, g)
         return _FromRegister(g.wires[0], self.adapter, self.connector)
-
 
 
 @dataclasses.dataclass(slots=True)
@@ -405,3 +408,42 @@ def fold_merge(
     assert isinstance(a, _ToRegister)
     a.set(acc.port)
     return c, b
+
+
+def borrow_registers(
+    registers: list[FromRegister], finished_from: FromRegister
+) -> list[FromRegister]:
+    from natsune.control_flow import CloseAfterContingent, MergeInputTo, MergeOutputInto
+    from natsune.invocations import expansion_invocation
+
+    if not registers:
+        return registers
+
+    connector = registers[0].connector
+
+    held_context = [
+        FlowRegister(ReferenceAdapter(ValueAdapter()), connector) for _ in registers
+    ]
+
+    # "cast" values into a reference
+    send_values(registers, [r.readin() for r in held_context])
+
+    value_readout = [r.readout() for r in held_context]
+
+    # Implicit close here as we transfer the state directly
+    joined_content = join_from_registers(
+        [as_from_register(r.state, r.adapter, r.connector) for r in held_context],
+        connector,
+    )
+
+    with expansion_invocation(
+        CloseAfterContingent(finished_from.adapter, joined_content.adapter),
+        connector,
+        MergeInputTo,
+        MergeOutputInto,
+    ) as invocation:
+        send_value(finished_from, invocation.port.readin())
+        send_value(joined_content, invocation.wire.second_value.readin())
+        invocation.wire.result.readout().close()
+
+    return value_readout

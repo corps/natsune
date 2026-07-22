@@ -242,6 +242,7 @@ class ExpansionBuilder(Connector):
         self.input_interface.close()
 
         from natsune.optimizer import optimize
+
         optimize(self, self.active_pairs)
 
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:

@@ -12,7 +12,7 @@ from natsune.optimizer import optimize
 from natsune.ports import ValuePort, Port, Wire
 from natsune.registers import serialize_values, send_value, send_values, parallelize_value, InterfaceRegister, \
     as_from_register, as_constant_register, FlowRegister, join_to_registers, join_from_registers, FromInterfaceRegister, \
-    ToInterfaceRegister
+    ToInterfaceRegister, borrow_registers
 
 
 @pytest.fixture(scope="function")
@@ -234,3 +234,38 @@ def test_inverse_compound_adapter(c: Calculus) -> None:
     inv1.close()
 
     assert list(c.readout(0)) == [10]
+
+
+def test_borrow_registers(c: Calculus) -> None:
+    value_r = FlowRegister(ValueAdapter(), c.executor)
+    ref_r = FlowRegister(ReferenceAdapter(ValueAdapter()), c.executor)
+    par_r = FlowRegister(ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor)
+
+    send_value(c.const(10), value_r.readin())
+    send_value(c.const([]), ref_r.readin())
+    send_value(c.const((1, 2)), par_r.readin())
+
+    r = FromInterfaceRegister(ValueAdapter(), c.executor)
+
+    results = borrow_registers(
+        [value_r.readout(), ref_r.readout(), par_r.readout()],
+        r.readout()
+    )
+
+    send_values([results[0], results[2]], [c.to_key(0), c.to_key(2)])
+    assert list(c.readout(0)) == [10]
+    assert list(c.readout(2)) == [(1, 2)]
+
+    send_parameter(
+        filter_invocation(lambda x: x.append(1), c.executor),
+        results[1]
+    )
+
+    send_values([value_r.readout(), ref_r.readout(), par_r.readout()], [c.to_key(3), c.to_key(4), c.to_key(5)])
+    assert list(c.readout(3)) == [10]
+    assert list(c.readout(4)) == []
+    assert list(c.readout(5)) == [(1, 2)]
+
+    send_value(c.const(1), r.interface_readin())
+    assert list(c.continue_readout()) == [[1]]
+

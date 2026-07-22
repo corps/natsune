@@ -6,13 +6,14 @@ requires-python = ">=3.14"
 authors = [{ name = "Zachary Collins", email = "recursive.cookie.jar@gmail.com" }]
 license = { text = "Apache-2" }
 dependencies = [
+    "ty>=0.0.49",
 ]
 
 [project.scripts]
 
 [project.optional-dependencies]
 dev = [
-    "ty>=0.0.49",
+    "ty>=0.0.61",
     "black>=26.5.1",
     "pytest>=9.1.1",
     "pre-commit>=4.0.0",

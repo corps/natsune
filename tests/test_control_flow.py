@@ -160,3 +160,4 @@ def test_expansion_builder_interface_mutations(c: Calculus) -> None:
 
     assert c.reduce_to_value(0) == 0
     assert c.reduce_to_value(1) == 0
+

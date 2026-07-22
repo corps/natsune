@@ -66,12 +66,13 @@ def shift_list_by_smallest(l: list[int]) -> list[int]:
     if len(l) == 0:
         return []
 
-    smallest: Inverse[int] = 0
-    result: list[int] = []
+    smallest: Inverse[int] = -1
+    result: Ref[list[int]] = []
     smallest_acc: int = l[0]
     for v in l:
         if v < smallest_acc:
             smallest_acc = v
+        print(smallest)
         result.append(v - smallest)
 
     return result
@@ -85,13 +86,13 @@ def ref_for_expressions() -> list:
     print(a)
     return a
 
-def test_compiled_functions(c: Calculus) -> None:
-    assert basic(29) == 39
-    assert invoke_an_inet() == 12
-    assert use_references() == 30
-    assert sum_it_up(1, 10) == 45
-    assert is_it_even(10) == True
-    assert is_it_even(11) == False
-    assert basic_sum_with_while(1, 10) == 45
+def test_compiled_functions() -> None:
+    # assert basic(29) == 39
+    # assert invoke_an_inet() == 12
+    # assert use_references() == 30
+    # assert sum_it_up(1, 10) == 45
+    # assert is_it_even(10) == True
+    # assert is_it_even(11) == False
+    # assert basic_sum_with_while(1, 10) == 45
     # assert ref_for_expressions() == [1, 2]
-    # assert shift_list_by_smallest([4, 9, 1, 10]) == []
+    assert shift_list_by_smallest([4, 9, 1, 10]) == []

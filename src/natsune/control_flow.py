@@ -284,6 +284,7 @@ class VariablesFlow(ExpansionBuilder):
         closer(self.control_output).close()
         optimize(self, self.active_pairs)
 
+
 @dataclasses.dataclass
 class CloseAfterContingent(ExpansionWithAdapters):
     left: Adapter
@@ -295,21 +296,17 @@ class CloseAfterContingent(ExpansionWithAdapters):
 
     @cached_property
     def output_adapter(self) -> Adapter:
-        return ParValueAdapter([
-            self.right,
-            self.left
-        ])
+        return ParValueAdapter([self.right, self.left])
 
     def __copy__(self) -> Self:
         return self
 
     def __call__(
-            self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Executor, port: Port, wires: Sequence[Wire], /
     ) -> None:
         with executor.sequenced_tuplate_from(wires[0]) as wire_iter:
             self.right.close(next(wire_iter), executor)
             executor.connect(port, next(wire_iter))
-
 
 
 @dataclasses.dataclass
