@@ -199,18 +199,21 @@ def test_inverse_adapter(c: Calculus) -> None:
     send_value(c.const(1), inv1.readin())
     send_value(inv1.readout(), c.to_key(0))
 
+
     assert list(c.readout(0)) == []
 
-    send_value(inv1.readout(), c.to_key(1))
     send_value(c.const(2), inv1.readin())
 
     # The original readout also completes with the duplicated value.
-    assert list(c.readout(1)) == [2, 2]
+    assert list(c.continue_readout()) == [2]
+
 
     send_value(inv1.readout(), c.to_key(2))
     send_value(inv2.readout(), c.to_key(3))
     send_value(inv2.readout(), inv1.readin())
     send_value(c.const(3), inv2.readin())
+
+    c.optimize()
 
     assert list(c.readout(2)) == [3]
     assert list(c.readout(3)) == [3]
@@ -222,7 +225,7 @@ def test_inverse_adapter_with_close(c: Calculus) -> None:
     inv2 = FlowRegister(InverseAdapter(ValueAdapter()), c.executor)
 
     send_value(inv1.readout(), value.readin())
-    send_value(inv1.readout(), inv2.readin())
+    send_value(inv2.readout(), inv1.readin())
     inv1.close()
     send_value(c.const(1), inv2.readin())
     inv2.close()

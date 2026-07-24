@@ -250,8 +250,12 @@ class VariablesFlow(ExpansionBuilder):
 
     def variables_readout(self) -> FromRegister:
         x1, x2 = Wire.as_tautology()
+        readouts: list[FromRegister] = []
+        for k, r in self.variable_registers.items():
+            g, _ = r.extend()
+            readouts.append(as_from_register(g, r.adapter, r.connector))
         send_values(
-            [r.readout() for k, r in self.variable_registers.items()],
+            readouts,
             as_to_register(x1, self.variables.adapter, self).split(),
         )
 

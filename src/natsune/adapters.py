@@ -19,6 +19,7 @@ from natsune.special_forms import Inverse, Par, Ref
 class LinearWiringType(IntEnum):
     VALUE = 0
     REFERENCE = 1
+    INVERSE = 2
 
 
 type AdapterWiringType = LinearWiringType | tuple[AdapterWiringType, ...]
@@ -192,6 +193,9 @@ class ReferenceAdapter(Adapter):
 
     def unpack(self, target: Target, connector: Connector) -> Target:
         taken_incoming, taken_outgoing = connector.tuplate(target)
+        # pproduce egression??A
+        # yeah let's not be sharing.  that's not cool.  that's something a special variable can have.  maybe a unique
+        # share variable
         incoming1, incoming2 = connector.duplicate(taken_incoming, "share")
         connector.connect(incoming1, taken_outgoing)
         return incoming2
@@ -212,8 +216,10 @@ class InverseAdapter(Adapter):
     inner: Adapter
 
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
+        if initial:
+            self.inner.close(initial, connector)
         wp = WirePort()
-        self.inner.close(wp, connector)
+        self.inner.close(wp.wires[0], connector)
         return wp
 
     def close(self, target: Target, connector: Connector) -> None:
@@ -225,21 +231,23 @@ class InverseAdapter(Adapter):
     def produce_ingression(
         self, taken: Wire, given: Wire, connector: Connector
     ) -> Port:
-        return self.inner.produce_ingression(given, taken, connector)
+        connector.connect(given, self.initialize(connector))
+        wp = WirePort()
+        connector.connect(wp, taken)
+        return wp
 
     def unpack(self, target: Target, connector: Connector) -> Target:
-        return self.inner.unpack(target, connector)
+        return target
 
     def repack(self, target: Target, connector: Connector) -> Target:
-        return self.inner.repack(target, connector)
+        return target
 
     def __iter__(self) -> Iterator[Adapter]:
-        parts = list(self.inner)
-        yield from parts[:-1]
+        yield from self.inner
         yield self
 
     def adapter_wiring_type(self) -> AdapterWiringType:
-        return self.inner.adapter_wiring_type()
+        return LinearWiringType.INVERSE
 
 
 @dataclasses.dataclass
