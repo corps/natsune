@@ -33,11 +33,11 @@ class Adapter(Protocol):
     def close(self, target: Target, connector: Connector) -> None: ...
 
     def produce_egression(
-        self, taken: Wire, given: Wire, connector: Connector
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port: ...
 
     def produce_ingression(
-        self, taken: Wire, given: Wire, connector: Connector
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port: ...
 
     def unpack(self, target: Target, connector: Connector) -> Target: ...
@@ -59,13 +59,15 @@ class ValueAdapter(Adapter):
     def close(self, target: Target, connector: Connector) -> None:
         connector.annihilate(target)
 
-    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
-        left, right = connector.duplicate(taken)
+    def produce_egression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
+    ) -> Port:
+        left, right = connector.duplicate(taken, "share" if share else "dup")
         connector.connect(given, right)
         return connector.as_port(left)
 
     def produce_ingression(
-        self, taken: Wire, given: Wire, connector: Connector
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
         connector.annihilate(taken)
         return connector.as_port(given)
@@ -101,24 +103,8 @@ class ParValueAdapter(Adapter):
             for adapter, wire in zip(self.concurrent_items, packing_iter):
                 adapter.close(wire, connector)
 
-    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
-        x1, x2 = Wire.as_tautology()
-        with (
-            connector.sequenced_tuplate_from(x2) as packing_iter,
-            connector.sequenced_tuplate_from(given) as given_iter,
-            connector.sequenced_tuplate_from(taken) as taken_iter,
-        ):
-            for adapter, packing_wire, given_wire, taken_wire in zip(
-                self.concurrent_items, packing_iter, given_iter, taken_iter
-            ):
-                connector.connect(
-                    packing_wire,
-                    adapter.produce_egression(taken_wire, given_wire, connector),
-                )
-        return x1
-
-    def produce_ingression(
-        self, taken: Wire, given: Wire, connector: Connector
+    def produce_egression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
         x1, x2 = Wire.as_tautology()
         with (
@@ -131,7 +117,29 @@ class ParValueAdapter(Adapter):
             ):
                 connector.connect(
                     packing_wire,
-                    adapter.produce_ingression(taken_wire, given_wire, connector),
+                    adapter.produce_egression(
+                        taken_wire, given_wire, connector, share=False
+                    ),
+                )
+        return x1
+
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
+    ) -> Port:
+        x1, x2 = Wire.as_tautology()
+        with (
+            connector.sequenced_tuplate_from(x2) as packing_iter,
+            connector.sequenced_tuplate_from(given) as given_iter,
+            connector.sequenced_tuplate_from(taken) as taken_iter,
+        ):
+            for adapter, packing_wire, given_wire, taken_wire in zip(
+                self.concurrent_items, packing_iter, given_iter, taken_iter
+            ):
+                connector.connect(
+                    packing_wire,
+                    adapter.produce_ingression(
+                        taken_wire, given_wire, connector, share=False
+                    ),
                 )
         return x1
 
@@ -167,7 +175,9 @@ class ReferenceAdapter(Adapter):
         incoming, outgoing = connector.tuplate(target)
         connector.connect(incoming, outgoing)
 
-    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
+    def produce_egression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
+    ) -> Port:
         taken_incoming, taken_outgoing = connector.tuplate(taken)
         given_incoming, given_outgoing = connector.tuplate(given)
         readout = CombPort("x")
@@ -177,28 +187,27 @@ class ReferenceAdapter(Adapter):
         return readout
 
     def produce_ingression(
-        self, taken: Wire, given: Wire, connector: Connector
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
         taken_incoming, taken_outgoing = connector.tuplate(taken)
         given_incoming, given_outgoing = connector.tuplate(given)
+        readout = CombPort("x")
 
-        given_outgoing1, given_outgoing2 = connector.duplicate(given_outgoing, "share")
+        given_outgoing2 = self.inner.produce_egression(
+            given_outgoing, taken_outgoing, connector, share=True
+        )
+        # given_outgoing1, given_outgoing2 = connector.duplicate(given_outgoing, "share")
         self.inner.close(taken_incoming, connector)
 
-        readout = CombPort("x")
         connector.connect(readout.wires[0], given_incoming)
-        connector.connect(readout.wires[1], given_outgoing1)
-        connector.connect(taken_outgoing, given_outgoing2)
+        connector.connect(readout.wires[1], given_outgoing2)
         return readout
 
     def unpack(self, target: Target, connector: Connector) -> Target:
         taken_incoming, taken_outgoing = connector.tuplate(target)
-        # pproduce egression??A
-        # yeah let's not be sharing.  that's not cool.  that's something a special variable can have.  maybe a unique
-        # share variable
-        incoming1, incoming2 = connector.duplicate(taken_incoming, "share")
-        connector.connect(incoming1, taken_outgoing)
-        return incoming2
+        return self.inner.produce_egression(
+            taken_incoming, taken_outgoing, connector, share=True
+        )
 
     def repack(self, target: Target, connector: Connector) -> Target:
         return self.initialize(connector, connector.as_wire(target))
@@ -225,11 +234,13 @@ class InverseAdapter(Adapter):
     def close(self, target: Target, connector: Connector) -> None:
         connector.annihilate(target)
 
-    def produce_egression(self, taken: Wire, given: Wire, connector: Connector) -> Port:
-        return self.inner.produce_egression(given, taken, connector)
+    def produce_egression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
+    ) -> Port:
+        return self.inner.produce_egression(given, taken, connector, share)
 
     def produce_ingression(
-        self, taken: Wire, given: Wire, connector: Connector
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
         connector.connect(given, self.initialize(connector))
         wp = WirePort()
