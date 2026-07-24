@@ -6,9 +6,10 @@ from natsune.compiler import inet, InetFunctionCompiler
 from natsune.special_forms import Par, Ref, Inverse
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope="function")
 def c() -> Calculus:
     return Calculus()
+
 
 @inet
 def basic(b: int) -> int:
@@ -18,24 +19,29 @@ def basic(b: int) -> int:
     print(123)
     return a
 
+
 @inet
 def other_basic(b: int) -> Par[int, int]:
     return b + 2, b * 4
+
 
 @inet
 def invoke_an_inet() -> int:
     a, b = other_basic(10)
     return a
 
+
 @inet
 def take_reference(a: Ref[int]) -> None:
     a += 10
+
 
 @inet
 def use_references() -> int:
     a: Ref[int] = 20
     take_reference(a)
     return a
+
 
 @inet
 def sum_it_up(start: int, end: int) -> int:
@@ -46,11 +52,13 @@ def sum_it_up(start: int, end: int) -> int:
         total += i
     return total
 
+
 @inet
 def is_it_even(input: int) -> bool:
     if input % 2 == 0:
         return True
     return False
+
 
 @inet
 def basic_sum_with_while(start: int, end: int) -> int:
@@ -61,6 +69,7 @@ def basic_sum_with_while(start: int, end: int) -> int:
         i += 1
     return total
 
+
 @inet
 def simple_inverse_example() -> list:
     a: Ref[list] = []
@@ -70,6 +79,7 @@ def simple_inverse_example() -> list:
     b = 5
     return a
 
+
 @inet
 def simple_inverse_loop_example(scale: int) -> int:
     total = 0
@@ -78,6 +88,7 @@ def simple_inverse_loop_example(scale: int) -> int:
         total += b
     b = 3
     return total
+
 
 @inet
 def shift_list_by_smallest(l: list[int]) -> list[int]:
@@ -99,12 +110,27 @@ def shift_list_by_smallest(l: list[int]) -> list[int]:
 
 
 @inet
+def delayed_inverse() -> Par[int, Inverse[int]]:
+    b: Inverse[int] = 1
+    a = b + 10
+    return a, b
+
+
+@inet
+def test_delayed_inverse() -> int:
+    a, b = delayed_inverse()
+    b = 30
+    return a
+
+
+@inet
 def ref_for_expressions() -> list:
     a: Ref[list] = []
     a.append(1)
     a.append(2)
     print(a)
     return a
+
 
 def test_compiled_functions() -> None:
     assert basic(29) == 39
@@ -118,3 +144,4 @@ def test_compiled_functions() -> None:
     assert simple_inverse_example() == [5, 5]
     assert simple_inverse_loop_example(10) == 30
     assert shift_list_by_smallest([4, 9, 1, 10]) == [3, 8, 0, 9]
+    assert test_delayed_inverse() == 11
