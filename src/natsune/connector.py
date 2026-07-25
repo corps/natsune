@@ -92,6 +92,13 @@ class Connector(abc.ABC):
         self.connect(w, port)
         return p
 
+    def as_wire_port(self, port: Target) -> WirePort:
+        if isinstance(port, WirePort):
+            return port
+        wp = WirePort()
+        self.connect(port, wp.wires[0])
+        return wp
+
     def annihilate(self, target: Target, erasure: Erasure | Port | None = None) -> None:
         self.connect(
             copy.copy(erasure) if isinstance(erasure, Erasure) else Erasure(), target

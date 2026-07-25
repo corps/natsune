@@ -227,31 +227,61 @@ class InverseAdapter(Adapter):
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
         if initial:
             self.inner.close(initial, connector)
-        wp = WirePort()
-        self.inner.close(wp.wires[0], connector)
-        return wp
+        cx = CombPort("x")
+        self.inner.close(cx.wires[1], connector)
+        connector.annihilate(cx.wires[0])
+        return connector.as_wire_port(cx)
 
     def close(self, target: Target, connector: Connector) -> None:
-        connector.annihilate(target)
+        x0, x1 = connector.tuplate(target)
+        connector.connect(x0, x1)
 
     def produce_egression(
         self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
-        return self.inner.produce_egression(given, taken, connector, share)
+        cx = CombPort("x")
+        x0, x1 = connector.tuplate(taken)
+        u0, u1 = connector.tuplate(cx.wires[0])
+        connector.annihilate(x0)
+        connector.annihilate(u0)
+        connector.connect(u1, x1)
+        y0, y1 = connector.tuplate(cx.wires[1])
+        z0, z1 = connector.tuplate(given)
+        connector.connect(z0, y0)
+        connector.connect(z1, y1)
+        return cx
 
     def produce_ingression(
         self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
-        connector.connect(given, self.initialize(connector))
-        wp = WirePort()
-        connector.connect(wp, taken)
-        return wp
+        cx = CombPort("x")
+        x0, x1 = connector.tuplate(taken)
+        u0, u1 = connector.tuplate(cx.wires[0])
+        connector.annihilate(x0)
+        connector.connect(u0, x1)
+
+        y0, y1 = connector.tuplate(cx.wires[1])
+        z0, z1 = connector.tuplate(given)
+        connector.connect(y0, z1)
+        connector.annihilate(z0)
+        connector.connect(u1, y1)
+        return cx
 
     def unpack(self, target: Target, connector: Connector) -> Target:
-        return target
+        x, y = connector.tuplate(target)
+        y0, y1 = connector.tuplate(y)
+        x0, x1 = connector.tuplate(x)
+        connector.annihilate(y0)
+        connector.annihilate(x0)
+        return self.inner.produce_egression(y1, x1, connector)
 
     def repack(self, target: Target, connector: Connector) -> Target:
-        return target
+        cx = CombPort("x")
+        x0, x1 = connector.tuplate(cx.wires[0])
+        connector.connect(target, x0)
+        connector.annihilate(x1)
+        connector.connect(cx.wires[1], self.initialize(connector))
+        return cx
 
     def __iter__(self) -> Iterator[Adapter]:
         yield from self.inner

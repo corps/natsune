@@ -73,7 +73,7 @@ def basic_sum_with_while(start: int, end: int) -> int:
 @inet
 def simple_inverse_example() -> list:
     a: Ref[list] = []
-    b: Inverse[int] = 1
+    b: Inverse[int] = 0
     a.append(b)
     a.append(b)
     b = 5
@@ -96,8 +96,10 @@ def shift_list_by_smallest(l: list[int]) -> list[int]:
         return []
 
     smallest: Inverse[int] = -1
-    result: Ref[list[int]] = []
     smallest_acc: int = l[0]
+
+    result: Ref[list[int]] = []
+
     for v in l:
         if v < smallest_acc:
             smallest_acc = v
@@ -111,7 +113,7 @@ def shift_list_by_smallest(l: list[int]) -> list[int]:
 
 @inet
 def delayed_inverse() -> Par[int, Inverse[int]]:
-    b: Inverse[int] = 1
+    b: Inverse[int] = -1
     a = b + 10
     return a, b
 
@@ -120,6 +122,7 @@ def delayed_inverse() -> Par[int, Inverse[int]]:
 def test_delayed_inverse() -> int:
     a, b = delayed_inverse()
     b = 30
+
     return a
 
 
@@ -144,4 +147,4 @@ def test_compiled_functions() -> None:
     assert simple_inverse_example() == [5, 5]
     assert simple_inverse_loop_example(10) == 30
     assert shift_list_by_smallest([4, 9, 1, 10]) == [3, 8, 0, 9]
-    assert test_delayed_inverse() == 11
+    assert test_delayed_inverse() == 40
