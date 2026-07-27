@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 authors = [{ name = "Zachary Collins", email = "recursive.cookie.jar@gmail.com" }]
 license = { text = "Apache-2" }
 dependencies = [
+    "karakuri",
     "ty>=0.0.49",
 ]
 
@@ -17,8 +18,7 @@ dev = [
     "black>=26.5.1",
     "isort>=6.0.0",
     "pytest>=9.1.1",
-    "pre-commit>=4.0.0",
-    "karakuri>=0.1.0"
+    "pre-commit>=4.0.0"
 ]
 
 [build-system]
@@ -26,8 +26,6 @@ requires = ["hatchling", "editables"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel.force-include]
-[tool.uv.sources]
-karakuri = { editable = true, path = "/Users/zach/karakuri" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/natsune"]
@@ -64,3 +62,6 @@ python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v --tb=short"
 testpaths = ["tests", "src"]
+
+[tool.uv.sources]
+karakuri = { git = "https://codeberg.org/kazuya/karakuri.git" }

@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterator, Protocol, Sequence, cast, runtime_ch
 from karakuri.annotations import Annotation
 from karakuri.call_mapping import CallMapping
 from karakuri.codegen_buffer import generate
-from karakuri.concrete_typing import DataclassTyping
+from karakuri.fielded import DataclassTyping
 
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.connector import Connector

@@ -19,12 +19,13 @@
 
       let
         pkgs = import nixpkgs { inherit system; };
+        python = pkgs.python314;
       in
       {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             uv
-            pkgs.python314
+            python
             pkgs.pre-commit
           ];
 
