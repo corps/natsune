@@ -214,22 +214,12 @@ class FromInterfaceRegister(InterfaceRegister):
         self.connector.annihilate(given)
         return _FromRegister(taken, self.adapter, self.connector)
 
-    def invert(self) -> ToInterfaceRegister:
-        return ToInterfaceRegister(
-            self.adapter, self.connector, self.interface, self.state
-        )
-
 
 class ToInterfaceRegister(InterfaceRegister):
     def readin(self) -> ToRegister:
         taken, given = self.extend()
         self.connector.annihilate(given)
         return _ToRegister(taken, self.adapter, self.connector)
-
-    def invert(self) -> FromInterfaceRegister:
-        return FromInterfaceRegister(
-            self.adapter, self.connector, self.interface, self.state
-        )
 
 
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out

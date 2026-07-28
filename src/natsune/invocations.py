@@ -202,7 +202,15 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
     if issubclass(struct, ToInterfaceRegister):
         return cast(T, to_register)
     elif issubclass(struct, FromInterfaceRegister):
-        return cast(T, to_register.invert())
+        return cast(
+            T,
+            FromInterfaceRegister(
+                to_register.adapter,
+                to_register.connector,
+                to_register.interface,
+                to_register.state,
+            ),
+        )
 
     assert dataclasses.is_dataclass(struct)
     args: dict = {}
@@ -216,7 +224,12 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
         elif Annotation.from_type_expression(
             field.type
         ) <= Annotation.from_type_expression(FromInterfaceRegister):
-            field_from: FromInterfaceRegister = register.invert()
+            field_from: FromInterfaceRegister = FromInterfaceRegister(
+                register.adapter,
+                register.connector,
+                register.interface,
+                register.state,
+            )
             args[field.name] = field_from
         else:
             args[field.name] = pack_into(
@@ -228,7 +241,15 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
 
 def pack_from[T](from_register: FromInterfaceRegister, struct: type[T]) -> T:
     if issubclass(struct, ToInterfaceRegister):
-        return cast(T, from_register.invert())
+        return cast(
+            T,
+            ToInterfaceRegister(
+                from_register.adapter,
+                from_register.connector,
+                from_register.interface,
+                from_register.state,
+            ),
+        )
     elif issubclass(struct, FromInterfaceRegister):
         return cast(T, from_register)
 
@@ -239,7 +260,12 @@ def pack_from[T](from_register: FromInterfaceRegister, struct: type[T]) -> T:
         if Annotation.from_type_expression(
             field.type
         ) <= Annotation.from_type_expression(ToInterfaceRegister):
-            field_to: ToInterfaceRegister = register.invert()
+            field_to: ToInterfaceRegister = ToInterfaceRegister(
+                register.adapter,
+                register.connector,
+                register.interface,
+                register.state,
+            )
             args[field.name] = field_to
         elif Annotation.from_type_expression(
             field.type
