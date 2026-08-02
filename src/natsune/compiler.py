@@ -12,31 +12,27 @@ from typing import Any, Callable, Iterable, Iterator, Sequence, cast, get_type_h
 from natsune.adapters import (
     Adapter,
     ParValueAdapter,
-    ReferenceAdapter,
     TypeExpression,
     ValueAdapter,
     Variables,
     adapter_from_type,
 )
-from natsune.connector import Connector, serialize_active_pairs
+from natsune.connector import Connector
 from natsune.control_flow import (
-    CloseAfterContingent,
     ConcurrentMerge,
+    FlowVariableMap,
     IfThenElse,
+    IfThenElseStatement,
     Loop,
-    MergeInputTo,
     VariablesFlow,
-    WeakeningSelection,
 )
 from natsune.control_flow_generated import (
     FlowControlInto,
     FlowInputInto,
-    MergeOutputInto,
 )
 from natsune.executor import SynchronizedExecutor
 from natsune.invocations import (
     closer,
-    expansion_invocation,
     filter_invocation,
     merge_invocation,
     pack_from,
@@ -45,20 +41,15 @@ from natsune.invocations import (
     send_parameters,
     split_invocation,
 )
-from natsune.ports import ConstantValuePort, Erasure, Wire
+from natsune.ports import ConstantValuePort, Wire
 from natsune.registers import (
-    FlowRegister,
     FromRegister,
-    InterfaceRegister,
-    ToInterfaceRegister,
     ToRegister,
     as_constant_register,
     as_from_register,
     as_to_register,
     borrow_registers,
-    join_from_registers,
     join_to_registers,
-    parallelize_value,
     send_value,
     send_values,
     serialize_values,
@@ -556,39 +547,76 @@ class InetBranchCompiler:
         return branch.flow
 
     def wire_continuation(
-        self, control: FlowControlInto, body_iter: Iterable[ast.stmt]
+        self,
+        control: FlowControlInto,
+        body_iter: Iterable[ast.stmt],
+        control_flow_map: FlowVariableMap,
+        resolve_continuation_eagerly: bool,
     ):
-        with (
-            self.function_compiler.new_branch()
-            .parse_statement_body(body_iter)
-            .invocation(self.flow) as continuation
-        ):
+        continuation = self.function_compiler.new_branch().parse_statement_body(
+            body_iter
+        )
+
+        self.flow.flow_map.update(continuation.flow_map)
+        self.flow.flow_map.update(control_flow_map)
+
+        x1, x2 = Wire.as_tautology()
+        y1, y2 = Wire.as_tautology()
+
+        control_flow_continue_in = as_to_register(
+            x1, self.flow.variables.adapter, self.flow
+        )
+        control_flow_continue_out = as_from_register(
+            x2, self.flow.variables.adapter, self.flow
+        )
+
+        control_flow_break_in = as_to_register(
+            y1, self.flow.variables.adapter, self.flow
+        )
+        control_flow_break_out = as_from_register(
+            y2, self.flow.variables.adapter, self.flow
+        )
+
+        with (continuation.invocation(self.flow) as continuation_invocation,):
+            # flows return exclusively and without need for variable management consideration.
+            a = continuation_invocation.wire.return_value.readout()
+            b = control.return_value.readout()
             send_value(
-                control.finish_variables.readout(),
-                continuation.port.variables.readin(),
+                a | b if resolve_continuation_eagerly else b | a,
+                self.flow.control_output.return_value.readin(),
             )
 
-            # This finishes iff the continuation finishes
+            control_out, control_in_ = (
+                (
+                    control.finish_variables.readout()
+                    & ~continuation_invocation.port.variables.readin()
+                )
+                | (control.continue_variables.readout() & ~control_flow_continue_in)
+                | (control.break_variables.readout() & ~control_flow_break_in)
+            ).split()
+
             send_value(
-                continuation.wire.finish_variables.readout(),
+                control_out,
+                self.flow.mapped_variables_readin(
+                    control_flow_map,
+                    ~control_in_,
+                ),
+            )
+
+            send_value(
+                continuation_invocation.wire.finish_variables.readout(),
                 self.flow.control_output.finish_variables.readin(),
             )
 
             send_value(
-                control.return_value.readout()
-                | continuation.wire.return_value.readout(),
-                self.flow.control_output.return_value.readin(),
-            )
-
-            send_value(
-                control.continue_variables.readout()
-                | continuation.wire.continue_variables.readout(),
+                continuation_invocation.wire.continue_variables.readout()
+                | control_flow_continue_out,
                 self.flow.control_output.continue_variables.readin(),
             )
 
             send_value(
-                control.break_variables.readout()
-                | continuation.wire.break_variables.readout(),
+                continuation_invocation.wire.break_variables.readout()
+                | control_flow_break_out,
                 self.flow.control_output.break_variables.readin(),
             )
 
@@ -626,22 +654,21 @@ class InetBranchCompiler:
                             self.evaluate_to_expression(stmt.target),
                         )
                 elif isinstance(stmt, (ast.For, ast.While)):
-                    with (
-                        Loop(
-                            (
-                                self.parse_deconstruct_iter(stmt.target)
-                                if isinstance(stmt, ast.For)
-                                else self.parse_test(stmt.test)
-                            ),
-                            self.function_compiler.new_branch().parse_statement_body(
-                                stmt.body
-                            ),
-                            self.function_compiler.new_branch().parse_statement_body(
-                                stmt.orelse
-                            ),
-                        ).invocation(self.flow) as for_invocation,
-                    ):
+                    loop = Loop(
+                        (
+                            self.parse_deconstruct_iter(stmt.target)
+                            if isinstance(stmt, ast.For)
+                            else self.parse_test(stmt.test)
+                        ),
+                        self.function_compiler.new_branch().parse_statement_body(
+                            stmt.body
+                        ),
+                        self.function_compiler.new_branch().parse_statement_body(
+                            stmt.orelse
+                        ),
+                    )
 
+                    with (loop.invocation(self.flow) as for_invocation,):
                         if isinstance(stmt, ast.For):
                             send_value(
                                 send_parameter(
@@ -652,11 +679,13 @@ class InetBranchCompiler:
                             )
 
                         send_value(
-                            self.flow.variables_readout(),
+                            self.flow.variables_readout(loop.flow_map),
                             for_invocation.port.variables.readin(),
                         )
 
-                        self.wire_continuation(for_invocation.wire, body_iter)
+                        self.wire_continuation(
+                            for_invocation.wire, body_iter, loop.flow_map, True
+                        )
 
                         return self.flow
 
@@ -672,11 +701,9 @@ class InetBranchCompiler:
                         )
                     )
 
-                    with (
-                        IfThenElse(true_case, false_case).invocation(
-                            self.flow
-                        ) as if_invocation,
-                    ):
+                    conditional = IfThenElseStatement(true_case, false_case)
+
+                    with (conditional.invocation(self.flow) as if_invocation,):
                         send_value(
                             self.evaluate_from_expression(stmt.test),
                             if_invocation.port.readin(),
@@ -686,13 +713,15 @@ class InetBranchCompiler:
                             pack_into(if_invocation.wire.context, FlowInputInto)
                         ) as conditional_context:
                             send_value(
-                                self.flow.variables_readout(),
+                                self.flow.variables_readout(conditional.flow_map),
                                 conditional_context.variables.readin(),
                             )
 
                         self.wire_continuation(
                             pack_from(if_invocation.wire.result, FlowControlInto),
                             body_iter,
+                            conditional.flow_map,
+                            False,
                         )
 
                         return self.flow

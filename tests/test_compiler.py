@@ -1,8 +1,7 @@
-from natsune.registers import send_value
 import pytest
 
 from natsune.calculus import Calculus
-from natsune.compiler import inet, InetFunctionCompiler
+from natsune.compiler import inet
 from natsune.special_forms import Par, Ref, Inverse
 
 
@@ -135,6 +134,20 @@ def ref_for_expressions() -> list:
     return a
 
 
+@inet
+def ignored_infinite_loop() -> Par[int, int]:
+    b = 0
+    while True:
+        b += 1
+    return 10, b
+
+
+@inet
+def drops_infinite_loop() -> int:
+    a, b = ignored_infinite_loop()
+    return a
+
+
 def test_compiled_functions() -> None:
     assert basic(29) == 39
     assert invoke_an_inet() == 12
@@ -148,3 +161,4 @@ def test_compiled_functions() -> None:
     assert simple_inverse_loop_example(10) == 30
     assert shift_list_by_smallest([4, 9, 1, 10]) == [3, 8, 0, 9]
     assert test_delayed_inverse() == 40
+    assert drops_infinite_loop() == 10

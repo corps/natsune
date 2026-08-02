@@ -10,6 +10,7 @@ from natsune.ports import ConstantValuePort, Graft, Port, Target, Wire, WirePort
 __all__ = [
     "FromRegister",
     "ToRegister",
+    "Register",
     "InterfaceRegister",
     "FlowRegister",
     "as_to_register",
@@ -28,10 +29,11 @@ __all__ = [
 
 register_inferences: list[MappingInference] = []
 
-
 # These represent public interface wrappers around the inner register concept
 # Ideally, one does not interact directly with inner register methods, but uses "send_value" and "send_values"
 # alongside as_from_register and as_to_register.
+
+
 class FromRegister(Protocol):
     def close(self) -> None: ...
     @property
@@ -44,6 +46,7 @@ class FromRegister(Protocol):
     def duplicate(self, label: str = "dup") -> tuple[FromRegister, FromRegister]: ...
     def __or__(self, other: FromRegister) -> FromRegister: ...
     def __and__(self, other: FromRegister) -> FromRegister: ...
+    def __invert__(self) -> ToRegister: ...
     def trace(self, label: str) -> FromRegister: ...
 
 
@@ -56,7 +59,7 @@ class ToRegister(Protocol):
     @property
     def connector(self) -> Connector: ...
     def split(self) -> Sequence[ToRegister]: ...
-    def invert(self) -> FromRegister: ...
+    def __invert__(self) -> FromRegister: ...
 
 
 def as_constant_register(value: Any, connector: Connector) -> FromRegister:
@@ -129,6 +132,9 @@ class _FromRegister:
         self.connector.connect(self.port, g)
         return _FromRegister(g.wires[0], self.adapter, self.connector)
 
+    def __invert__(self) -> ToRegister:
+        return _ToRegister(self.port, self.adapter, self.connector)
+
 
 @dataclasses.dataclass(slots=True)
 class _ToRegister:
@@ -158,7 +164,7 @@ class _ToRegister:
             return result
         return [self]
 
-    def invert(self) -> FromRegister:
+    def __invert__(self) -> FromRegister:
         return _FromRegister(self.port, self.adapter, self.connector)
 
 
@@ -222,10 +228,34 @@ class ToInterfaceRegister(InterfaceRegister):
         return _ToRegister(taken, self.adapter, self.connector)
 
 
+@dataclasses.dataclass
+class FlowRegisterUsage:
+    flow_read: bool = False
+    flow_write: bool = False
+
+    def __or__(self, other: FlowRegisterUsage) -> FlowRegisterUsage:
+        return FlowRegisterUsage(
+            flow_read=self.flow_read or other.flow_read,
+            flow_write=self.flow_write or other.flow_write,
+        )
+
+
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out
 # or readin multiple times, producing an extension (sharing) for each.
+@dataclasses.dataclass(slots=True)
 class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
+    adapter: Adapter
+    connector: Connector
+
+    usage: FlowRegisterUsage = dataclasses.field(default_factory=FlowRegisterUsage)
+
     def readout(self) -> FromRegister:
+        # TODO: This should be an adapter responsibility.
+        if isinstance(self.adapter, ValueAdapter):
+            self.usage.flow_read = True
+        else:
+            self.usage.flow_write = True
+
         taken, given = self.extend()
         return _FromRegister(
             (self.adapter.produce_egression(taken, given, self.connector)),
@@ -234,6 +264,7 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
         )
 
     def readin(self) -> ToRegister:
+        self.usage.flow_write = True
         taken, given = self.extend()
         return _ToRegister(
             self.adapter.produce_ingression(taken, given, self.connector),

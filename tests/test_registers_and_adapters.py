@@ -136,7 +136,7 @@ def test_to_register_split(c: Calculus) -> None:
     send_value(c.const(1), parts[0])
     send_value(c.const(2), parts[1])
     send_value(
-        register.interface_readin().invert(),
+        ~register.interface_readin(),
         c.to_key(0),
     )
 

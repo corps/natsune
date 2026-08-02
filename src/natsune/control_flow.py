@@ -1,6 +1,6 @@
 import dataclasses
 from functools import cached_property
-from typing import Any, Callable, Self, Sequence
+from typing import Any, Callable, Self, Sequence, Set
 
 from natsune.adapters import (
     Adapter,
@@ -53,11 +53,14 @@ from natsune.ports import (
 )
 from natsune.registers import (
     FlowRegister,
+    FlowRegisterUsage,
     FromInterfaceRegister,
     FromRegister,
     ToInterfaceRegister,
+    ToRegister,
     as_from_register,
     as_to_register,
+    join_from_registers,
     send_value,
     send_values,
 )
@@ -224,6 +227,20 @@ class Tracer:
         executor.connect(wires[0], port)
 
 
+@dataclasses.dataclass
+class FlowVariableMap:
+    usage: dict[str, FlowRegisterUsage] = dataclasses.field(default_factory=dict)
+
+    def __or__(self, other: FlowVariableMap) -> FlowVariableMap:
+        return FlowVariableMap(
+            {k: self.usage[k] | other.usage[k] for k in self.usage.keys()}
+        )
+
+    def update(self, other: FlowVariableMap) -> None:
+        for k, v in other.usage.items():
+            self.usage[k] |= v
+
+
 @dataclasses.dataclass(kw_only=True)
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
@@ -248,12 +265,21 @@ class VariablesFlow(ExpansionBuilder):
             send_value(variable_input.readout(), flow_register.interface_readin())
             variable_input.close()
 
-    def variables_readout(self) -> FromRegister:
+    def variables_readout(
+        self, flow_map: FlowVariableMap | None = None
+    ) -> FromRegister:
         x1, x2 = Wire.as_tautology()
         readouts: list[FromRegister] = []
+
         for k, r in self.variable_registers.items():
-            g, _ = r.extend()
-            readouts.append(as_from_register(g, r.adapter, r.connector))
+            if not flow_map or flow_map.usage[k].flow_write:
+                g, _ = r.extend()
+                readouts.append(as_from_register(g, r.adapter, r.connector))
+            elif flow_map and flow_map.usage[k].flow_read:
+                readouts.append(r.readout())
+            else:
+                readouts.append(as_from_register(Erasure(), r.adapter, r.connector))
+
         send_values(
             readouts,
             as_to_register(x1, self.variables.adapter, self).split(),
@@ -264,6 +290,35 @@ class VariablesFlow(ExpansionBuilder):
             self.variables.adapter,
             self,
         )
+
+    @cached_property
+    def flow_map(self) -> FlowVariableMap:
+        return FlowVariableMap({k: v.usage for k, v in self.variable_registers.items()})
+
+    def mapped_variables_readin(
+        self,
+        flow_map: FlowVariableMap,
+        target_readin: ToRegister,
+    ) -> ToRegister:
+        assert target_readin.connector == self
+
+        x1, x2 = Wire.as_tautology()
+        readins: list[ToRegister] = []
+
+        for k, target in zip(self.variables, target_readin.split()):
+            if flow_map.usage[k].flow_write:
+                readins.append(target)
+            else:
+                readins.append(as_to_register(Erasure(), target.adapter, self))
+                g, _ = self.variable_registers[k].extend()
+                send_value(as_from_register(g, target.adapter, self), target)
+
+        send_values(
+            as_from_register(x2, self.variables.adapter, self).split(),
+            readins,
+        )
+
+        return as_to_register(x1, self.variables.adapter, self)
 
     @cached_property
     def control_output(self) -> FlowControlFrom:
@@ -318,6 +373,10 @@ class Loop(ExpansionWithAdapters):
     iteration: VariablesFlow
     body: VariablesFlow
     orelse: VariablesFlow
+
+    @cached_property
+    def flow_map(self) -> FlowVariableMap:
+        return self.iteration.flow_map | self.body.flow_map | self.orelse.flow_map
 
     @cached_property
     def input_adapter(self) -> Adapter:
@@ -542,6 +601,16 @@ class IfThenElse(ExpansionWithAdapters):
         ):
             send_value(conditional.context.readout(), invocation.port.readin())
             send_value(invocation.wire.readout(), conditional.result.readin())
+
+
+@dataclasses.dataclass(frozen=True)
+class IfThenElseStatement(IfThenElse):
+    true_case: VariablesFlow
+    false_case: VariablesFlow
+
+    @cached_property
+    def flow_map(self) -> FlowVariableMap:
+        return self.true_case.flow_map | self.false_case.flow_map
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1,6 +1,7 @@
 from dataclasses import dataclass as _dataclass
-from natsune.registers import ToInterfaceRegister as _ToInterfaceRegister
+
 from natsune.registers import FromInterfaceRegister as _FromInterfaceRegister
+from natsune.registers import ToInterfaceRegister as _ToInterfaceRegister
 
 @_dataclass(slots=True)
 class FlowInputInto:
