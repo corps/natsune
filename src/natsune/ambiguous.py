@@ -3,7 +3,6 @@ from typing import Any, Self, Sequence
 
 from natsune.adapters import ValueAdapter
 from natsune.connector import Connector
-from natsune.executor import Executor
 from natsune.ports import Expansion, ForkPort, Graft, Port, Wire, WirePort
 from natsune.registers import FromRegister, ToRegister, as_from_register, as_to_register
 
@@ -36,16 +35,15 @@ class AmbiguousPair(Expansion):
             )
         return self.copy
 
-    def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
         if self.second_amb_half is not None:
             exec.connect_ports(port, self.second_amb_half)
             return
 
-        forked = exec.fork()
-        ambiguous_primary = ForkPort(forked)
-        ambiguous_secondary = ForkPort(forked)
-        ambiguous_primary_aux = ForkPort(forked)
-        ambiguous_secondary_aux = ForkPort(forked)
+        ambiguous_primary = ForkPort()
+        ambiguous_secondary = ForkPort()
+        ambiguous_primary_aux = ForkPort()
+        ambiguous_secondary_aux = ForkPort()
         self.second_amb_half = ambiguous_secondary
 
         exec.connect(ambiguous_primary.wires[0], ambiguous_primary_aux.wires[0])

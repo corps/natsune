@@ -10,7 +10,6 @@ from karakuri.fielded import DataclassTyping
 
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.connector import Connector
-from natsune.executor import Executor
 from natsune.ports import (
     Expansion,
     ExtMergeFuncPort,
@@ -57,7 +56,7 @@ def expansion_invocation[P, W](
 
 
 def unpack_wires[W](
-    expansion: ExpansionWithAdapters, wires: Sequence[Wire], exec: Executor, w: type[W]
+    expansion: ExpansionWithAdapters, wires: Sequence[Wire], exec: Connector, w: type[W]
 ) -> closer[W]:
     interface = ToInterfaceRegister(expansion.output_adapter, exec)
     exec.connect(wires[0], interface.interface)
@@ -68,7 +67,7 @@ def unpack_port_and_wires[P, W](
     expansion: ExpansionWithAdapters,
     port: Port,
     wires: Sequence[Wire],
-    exec: Executor,
+    exec: Connector,
     p: type[P],
     w: type[W],
 ) -> closer[Invocation[P, W]]:

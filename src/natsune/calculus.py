@@ -4,8 +4,8 @@ from typing import Any, Callable, Iterator, Literal, Self, Sequence
 
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.ambiguous import AmbiguousPair
-from natsune.connector import serialize_active_pairs
-from natsune.executor import Executor, SynchronizedExecutor
+from natsune.connector import Connector, serialize_active_pairs
+from natsune.executor import SynchronizedExecutor
 from natsune.optimizer import optimize
 from natsune.ports import (
     CombPort,
@@ -38,7 +38,7 @@ class TraceExpansion(Expansion):
         return self
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         if isinstance(port, Erasure):
             if port.value:
@@ -130,7 +130,7 @@ class Calculus:
         return self[ExtSplitFuncPort(f, [a, b])]
 
     def fork(self, a: Wire, b: Wire) -> Wire:
-        return self[ForkPort(self.executor, [a, b])]
+        return self[ForkPort([a, b])]
 
     def dup(self, a: Wire, b: Wire) -> Wire:
         return self[CombPort("dup", [a, b])]

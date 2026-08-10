@@ -25,7 +25,6 @@ from natsune.control_flow_generated import (
     MergeOutputFrom,
     MergeOutputInto,
 )
-from natsune.executor import Executor
 from natsune.invocations import (
     LHS,
     RHS,
@@ -156,7 +155,7 @@ class WeakeningSelection(ExpansionWithAdapters):
         return self
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         if isinstance(port, Erasure):
             with unpack_wires(self, wires, executor, MergeOutputFrom) as outputs:
@@ -196,7 +195,7 @@ class GatedSelection(ExpansionWithAdapters):
         return self
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         if isinstance(port, Erasure):
             for wire in wires:
@@ -221,7 +220,7 @@ class Tracer:
         return dataclasses.replace(self, wires_cache=new_wires_cache())
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         print(f"{self.label} from: {serialize_port(port, self.wires_cache, False)}")
         executor.connect(wires[0], port)
@@ -361,7 +360,7 @@ class CloseAfterContingent(ExpansionWithAdapters):
         return self
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         with executor.sequenced_tuplate_from(wires[0]) as wire_iter:
             self.right.close(next(wire_iter), executor)
@@ -477,7 +476,7 @@ class Loop(ExpansionWithAdapters):
             return builder
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         if isinstance(port, Erasure):
             for wire in wires:
@@ -580,7 +579,7 @@ class IfThenElse(ExpansionWithAdapters):
             self, invoker, IfThenElseInputInto, IfThenElseOutputInto
         )
 
-    def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
         if not isinstance(port, ValuePort):
             for wire in wires:
                 exec.annihilate(wire, port)
@@ -665,7 +664,7 @@ class ConcurrentMerge(ExpansionWithAdapters):
     def conditional(self) -> IfThenElse:
         return IfThenElse(self.true_case, self.false_case)
 
-    def __call__(self, exec: Executor, port: Port, wires: Sequence[Wire]) -> None:
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
         pair = AmbiguousPair()
         pair_invocation = pair.invocation(exec)
         left, right = as_from_register(port, self.input_adapter, exec).split()

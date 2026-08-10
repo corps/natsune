@@ -18,7 +18,7 @@ from natsune.ports import (
 from .connector import Connector
 
 if TYPE_CHECKING:
-    from .executor import Executor
+    from .connector import Connector
 
 __all__ = [
     "execute_ext_merge_func",
@@ -119,7 +119,7 @@ def execute_fork(connector: Connector, p: Port, l: ForkPort) -> None:
     new_p = copy.copy(p)
 
     for i in range(len(p.wires)):
-        amb = ForkPort(l.fork)
+        amb = ForkPort()
         connector.connect(p.wires[i], amb)
         p.wires[i] = Wire()
         new_p.wires[i] = Wire()
@@ -128,10 +128,10 @@ def execute_fork(connector: Connector, p: Port, l: ForkPort) -> None:
         connector.connect(new_p.wires[i], amb.wires[1])
 
     connector.connect(l.wires[0], p)
-    l.fork.connect(l.wires[1], new_p)
+    connector.connect(l.wires[1], new_p)
 
 
-def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
+def execute_interaction(executor: Connector, l: Port, r: Port) -> None:
     # WirePorts execute with highest priority as the wires themselves can be shared references,
     # and we don't want to thus copy via Graft behaviors.  They are "pass through" behaviors of
     # wires.
@@ -143,6 +143,9 @@ def execute_interaction(executor: Executor, l: Port, r: Port) -> None:
         execute_read_wire(executor, l, r)
         return
 
+    # Fork is considered the highest level copy construction.  It does not "deconstruct" like comb ports, and thus is
+    # exponential with itself.  It is useful but it must be used with care: any usage of exponentiation needs ot have
+    # some closing property that merges those exponential parts back together.
     if isinstance(l, ForkPort):
         execute_fork(executor, r, l)
         return

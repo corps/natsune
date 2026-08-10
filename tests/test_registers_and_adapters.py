@@ -12,7 +12,7 @@ from natsune.adapters import (
 )
 from natsune.calculus import Calculus
 from natsune.control_flow import VariablesFlow
-from natsune.executor import Executor
+from natsune.connector import Connector
 from natsune.invocations import (
     ExpansionWithAdapters,
     expansion_invocation,
@@ -174,7 +174,7 @@ class TestExpansion(ExpansionWithAdapters):
         return ValueAdapter()
 
     def __call__(
-        self, executor: Executor, port: Port, wires: Sequence[Wire], /
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None:
         with unpack_port_and_wires(
             self, port, wires, executor, FromInterfaceRegister, ToInterfaceRegister
