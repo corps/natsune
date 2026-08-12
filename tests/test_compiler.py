@@ -148,6 +148,24 @@ def drops_infinite_loop() -> int:
     return a
 
 
+@inet
+def and_or_with_finites_and_infinites() -> list:
+    a = 0
+    paths: Ref[list] = []
+    while True:
+        a += 1
+
+    if a < 10 or True:
+        paths.append("Infinite Or")
+
+    if a < 10 and False:
+        paths.append("Infinite And")
+
+    paths.append(10 and 0)
+    paths.append(10 or 0)
+    return paths
+
+
 def test_compiled_functions() -> None:
     assert basic(29) == 39
     assert invoke_an_inet() == 12
@@ -162,3 +180,4 @@ def test_compiled_functions() -> None:
     assert shift_list_by_smallest([4, 9, 1, 10]) == [3, 8, 0, 9]
     assert test_delayed_inverse() == 40
     assert drops_infinite_loop() == 10
+    assert and_or_with_finites_and_infinites() == ["Infinite Or", 10, 10]

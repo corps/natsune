@@ -423,7 +423,7 @@ class InetBranchCompiler:
         if isinstance(expr, ast.BoolOp):
             op = expr.op
             merger: Callable[[Any, Any], Any] = lambda x, y: (
-                x & y if isinstance(op, ast.And) else lambda x, y: x | y
+                x and y if isinstance(op, ast.And) else lambda x, y: x or y
             )
             should_shortcircuit = (
                 (lambda x: not x) if isinstance(op, ast.And) else lambda x: bool(x)
@@ -434,8 +434,10 @@ class InetBranchCompiler:
                     self.flow
                 ) as invocation:
                     a, b = invocation.port.readin().split()
-                    send_value(acc, a)
-                    send_value(self.evaluate_from_expression(n), b)
+                    send_value(acc.trace("acc arrived"), a)
+                    send_value(
+                        self.evaluate_from_expression(n).trace("evaluation occured"), b
+                    )
                     acc = invocation.wire.readout()
 
             return acc
