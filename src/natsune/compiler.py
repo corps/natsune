@@ -30,7 +30,7 @@ from natsune.control_flow_generated import (
     FlowControlInto,
     FlowInputInto,
 )
-from natsune.executor import SynchronizedExecutor
+from natsune.executor import DeterministicSerialExecutor
 from natsune.invocations import (
     closer,
     filter_invocation,
@@ -865,7 +865,7 @@ def inet[C: Callable](f: C) -> C:
     @functools.wraps(f)
     def impl(*args: Any) -> Any:
         outputs: list = []
-        executor = SynchronizedExecutor()
+        executor = DeterministicSerialExecutor()
         inputs, output = compiler.invocation(executor)
         for to_register, arg in zip(inputs, args):
             send_value(as_constant_register(arg, executor), to_register)

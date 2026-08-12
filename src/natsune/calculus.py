@@ -5,7 +5,7 @@ from typing import Any, Callable, Iterator, Literal, Self, Sequence
 from natsune.adapters import Adapter, ValueAdapter
 from natsune.ambiguous import AmbiguousPair
 from natsune.connector import Connector, serialize_active_pairs
-from natsune.executor import SynchronizedExecutor
+from natsune.executor import DeterministicSerialExecutor
 from natsune.optimizer import optimize
 from natsune.ports import (
     CombPort,
@@ -55,8 +55,8 @@ class Calculus:
     _wires: dict[int, Wire] = dataclasses.field(
         default_factory=lambda: defaultdict(Wire)
     )
-    executor: SynchronizedExecutor = dataclasses.field(
-        default_factory=SynchronizedExecutor
+    executor: DeterministicSerialExecutor = dataclasses.field(
+        default_factory=DeterministicSerialExecutor
     )
     tracer: TraceExpansion = dataclasses.field(default_factory=TraceExpansion)
 
