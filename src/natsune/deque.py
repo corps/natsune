@@ -25,7 +25,26 @@ Py_DecRef.restype = None
 
 def load_atomic_lib():
     if sys.platform == "darwin":
-        return ctypes.CDLL(ctypes.util.find_library("c"))
+        # Try to load our wrapper library from the package directory
+        try:
+            lib_path = ctypes.util.find_library("atomic_wrapper")
+            if lib_path:
+                return ctypes.CDLL(lib_path)
+        except:
+            pass
+
+        # Try to load from the package's lib/darwin directory
+        try:
+            import os
+
+            lib_dir = os.path.join(os.path.dirname(__file__), "lib", "darwin")
+            lib_path = os.path.join(lib_dir, "libatomic_wrapper.dylib")
+            if os.path.exists(lib_path):
+                return ctypes.CDLL(lib_path)
+        except:
+            pass
+
+        raise RuntimeError("Failed to load atomic library")
     else:
         return ctypes.CDLL(ctypes.util.find_library("atomic"))
 
@@ -34,24 +53,57 @@ libatomic = load_atomic_lib()
 ATOMIC_SEQ_CST = ctypes.c_int(5)
 NOT_WEAK = ctypes.c_int(0)
 
+# Set up the atomic function prototypes
+libatomic.__atomic_load_8.argtypes = [ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
+libatomic.__atomic_load_8.restype = ctypes.c_uint64
+
+libatomic.__atomic_store_8.argtypes = [
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.c_uint64,
+    ctypes.c_int,
+]
+libatomic.__atomic_store_8.restype = None
+
+libatomic.__atomic_compare_exchange_n_8.argtypes = [
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.POINTER(ctypes.c_uint64),
+    ctypes.c_uint64,
+    ctypes.c_bool,
+    ctypes.c_int,
+    ctypes.c_int,
+]
+libatomic.__atomic_compare_exchange_n_8.restype = ctypes.c_bool
+
 
 def cas_ptr(ptr: ctypes.c_int64, expected: int, desired: int) -> bool:
-    expected_val = ctypes.c_int64(expected)
-    desired_val = ctypes.c_int64(desired)
+    """Compare and swap 64-bit pointer atomically."""
+    expected_val = ctypes.c_uint64(expected)
+    desired_val = ctypes.c_uint64(desired)
+    # cas_ptr takes a c_int64 (which is a value), we need to get its address
+    ptr_addr = ctypes.addressof(ptr)
+    ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
     return libatomic.__atomic_compare_exchange_n_8(
-        ctypes.byref(ptr),
+        ptr_ref,
         ctypes.byref(expected_val),
         desired_val,
-        NOT_WEAK,
-        ATOMIC_SEQ_CST,
-        ATOMIC_SEQ_CST,
+        False,  # not weak
+        ATOMIC_SEQ_CST.value,
+        ATOMIC_SEQ_CST.value,
     )
 
 
 def atomic_load(ptr: ctypes.c_int64) -> int:
-    val = ctypes.c_int64()
-    libatomic.__atomic_load_8(ctypes.byref(ptr), ctypes.byref(val), ATOMIC_SEQ_CST)
-    return val.value
+    """Load 64-bit value atomically."""
+    ptr_addr = ctypes.addressof(ptr)
+    ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
+    return libatomic.__atomic_load_8(ptr_ref, ATOMIC_SEQ_CST.value)
+
+
+def atomic_store(ptr: ctypes.c_int64, value: int) -> None:
+    """Store 64-bit value atomically."""
+    ptr_addr = ctypes.addressof(ptr)
+    ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
+    libatomic.__atomic_store_8(ptr_ref, ctypes.c_uint64(value), ATOMIC_SEQ_CST.value)
 
 
 # Pack address (48 bits) + version (16 bits) into 64 bits
@@ -74,6 +126,20 @@ class Node:
         self.task = task
         self.next = next_packed  # Packed address
         self.prev = prev_packed  # Packed address
+
+
+class IdleCounter:
+    __slots__ = ("_value", "total")
+
+    def __init__(self, total: int):
+        self._value = ctypes.c_int64(0)
+        self.total = total
+
+    def signal(self, worker_id: int) -> bool:
+        return False
+
+    def reset(self) -> None:
+        pass
 
 
 class LockFreeDeque[A]:
@@ -180,28 +246,22 @@ class LockFreeDeque[A]:
 
     # Approximate length
     def __len__(self) -> int:
-        head_packed = atomic_load(self.head)
-        head_addr, _ = unpack_addr(head_packed)
-        if head_addr == self.sentinel_addr:
-            return 0
         count = 0
-        current_packed = head_packed
-        while True:
+        current_packed = atomic_load(self.head)
+        while current_packed != self.sentinel_addr:
             current, _ = self._deref(current_packed)
             count += 1
             current_packed = current.next
-            next_addr, _ = unpack_addr(current_packed)
-            if next_addr == self.sentinel_addr:
-                break
         return count
 
-    def __del__(self):
-        current_packed = atomic_load(self.head)
-        while True:
-            current_addr, _ = unpack_addr(current_packed)
-            if current_addr == self.sentinel_addr:
-                break
-            current, _ = self._deref(current_packed)
-            next_packed = current.next
-            Py_DecRef(current)
-            current_packed = next_packed
+    #
+    # def __del__(self):
+    #     current_packed = atomic_load(self.head)
+    #     while True:
+    #         current_addr, _ = unpack_addr(current_packed)
+    #         if current_addr == self.sentinel_addr:
+    #             break
+    #         current, _ = self._deref(current_packed)
+    #         next_packed = current.next
+    #         Py_DecRef(current)
+    #         current_packed = next_packed

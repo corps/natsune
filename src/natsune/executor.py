@@ -11,7 +11,7 @@ import threading
 from typing import Any, cast
 
 from natsune.connector import Connector
-from natsune.deque import LockFreeDeque
+from natsune.deque import LockFreeDeque, IdleCounter
 from natsune.interactions import execute_interaction
 from natsune.ports import Port
 
@@ -46,6 +46,7 @@ class ThreadPoolExecutor(Executor):
         default_factory=list
     )
     running: bool = False
+    idle_counter: IdleCounter = cast(Any, None)
 
     def connect_ports(self, l: Port, r: Port) -> None:
         # Select the next free worker queue and set i.
@@ -57,6 +58,7 @@ class ThreadPoolExecutor(Executor):
         # Borrowed from how threadpoolexecutor sees sane default worker counts
         if self.workers is None:
             self.workers = min(32, (os.process_cpu_count() or 1) + 4)
+        self.idle_counter = IdleCounter(self.workers)
         # Initialize queues for connect_ports to work before run()
         # The actual worker threads will reuse these queues
         for _ in range(self.workers):
@@ -68,7 +70,7 @@ class ThreadPoolExecutor(Executor):
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.workers)
             with pool:
                 for i in range(self.workers):
-                    worker = ThreadWorker(self.queues, i, end_event)
+                    worker = ThreadWorker(self.idle_counter, self.queues, i, end_event)
                     pool.submit(worker)
         finally:
             self.running = False
@@ -76,6 +78,7 @@ class ThreadPoolExecutor(Executor):
 
 @dataclasses.dataclass(slots=True)
 class ThreadWorker(Connector):
+    idle_counter: IdleCounter
     queues: list[LockFreeDeque[tuple[Port, Port]]]
     worker_id: int
     end_event: threading.Event
@@ -100,24 +103,18 @@ class ThreadWorker(Connector):
         if next_pair is not None:
             if self.end_event.is_set():
                 return True
+            self.idle_counter.reset()
             l, r = next_pair
             execute_interaction(self, l, r)
             return True
 
         return False
 
-    def signal_idle(self) -> bool:
-        with self.pool.idle_lock:
-            self.pool.idle_count += 1
-            if self.pool.idle_count >= self.pool.workers:
-                self.pool.all_idle_event.set()
-                return True
-        return False
-
     def __call__(self) -> None:
         while not self.end_event.is_set():
             if not self.process_pair():
-                if self.signal_idle():
+                # All workers are idle, stop
+                if self.idle_counter.signal(self.worker_id):
                     return
                 # Prevent busy sleep
                 time.sleep(0.001)

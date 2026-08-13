@@ -8,25 +8,23 @@
     };
   };
 
-  outputs =
-    {
-      nixpkgs,
-      flake-utils,
-      ...
-    }:
+  outputs = {
+    nixpkgs,
+    flake-utils,
+    ...
+  }:
     flake-utils.lib.eachDefaultSystem (
-      system:
-
-      let
-        pkgs = import nixpkgs { inherit system; };
+      system: let
+        pkgs = import nixpkgs {inherit system;};
         python = pkgs.python314;
-      in
-      {
+      in {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             uv
             python
             pkgs.pre-commit
+            clang
+            pkg-config
           ];
 
           shellHook = ''
@@ -39,10 +37,13 @@
             source .venv/bin/activate
 
             pre-commit install -t pre-commit || true
+
+            # Ensure C extension can be built
+            # python -m pip install -e . --no-build-isolation || true
           '';
         };
 
-        checks = { };
+        checks = {};
       }
     );
 }
