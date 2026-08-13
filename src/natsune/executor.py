@@ -1,8 +1,14 @@
+import time
+
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+
 import concurrent.futures
 import dataclasses
 import os
-from functools import cached_property
-from typing import Any, Self, cast
+import random
+import threading
+from typing import Any, cast
 
 from natsune.connector import Connector
 from natsune.deque import LockFreeDeque
@@ -10,13 +16,13 @@ from natsune.interactions import execute_interaction
 from natsune.ports import Port
 
 
-class DeadLetter(Connector):
-    def connect_ports(self, l: Port, r: Port) -> None:
-        pass
+class Executor(Connector, ABC):
+    @abstractmethod
+    def run(self, end_event: threading.Event) -> None: ...
 
 
 @dataclasses.dataclass
-class DeterministicSerialExecutor(Connector):
+class DeterministicSerialExecutor(Executor):
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
 
     def connect_ports(self, l: Port, r: Port) -> None:
@@ -27,46 +33,52 @@ class DeterministicSerialExecutor(Connector):
             l, r = self.active_pairs.pop()
             execute_interaction(self, l, r)
 
-    def run(self) -> None:
-        while self.active_pairs:
+    def run(self, end_event: threading.Event) -> None:
+        while self.active_pairs and not end_event.is_set():
             self.process_pair()
 
 
 @dataclasses.dataclass(slots=True)
-class ThreadPoolExecutor(Connector):
+class ThreadPoolExecutor(Executor):
     # None implies let the system decide.
     workers: int = cast(Any, None)
     queues: list[LockFreeDeque[tuple[Port, Port]]] = dataclasses.field(
         default_factory=list
     )
-    pool: concurrent.futures.ThreadPoolExecutor = cast(Any, None)
+    running: bool = False
+
+    def connect_ports(self, l: Port, r: Port) -> None:
+        # Select the next free worker queue and set i.
+        assert not self.running
+        i = random.randint(0, len(self.queues) - 1)
+        self.queues[i].push((l, r))
 
     def __post_init__(self) -> None:
-        # We reserve one queue for ourselves that can be stolen from by other workers.
+        # Borrowed from how threadpoolexecutor sees sane default worker counts
         if self.workers is None:
             self.workers = min(32, (os.process_cpu_count() or 1) + 4)
-
-        self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.workers)
-
-        for i in range(self.workers):
+        # Initialize queues for connect_ports to work before run()
+        # The actual worker threads will reuse these queues
+        for _ in range(self.workers):
             self.queues.append(LockFreeDeque())
-            thread_exec = ThreadExecutor(self.queues, i)
-            future = self.pool.submit(lambda f=future: thread_exec(f))
 
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.shutdown()
-
-    def shutdown(self) -> None:
-        self.pool.shutdown(cancel_futures=True)
+    def run(self, end_event: threading.Event) -> None:
+        self.running = True
+        try:
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.workers)
+            with pool:
+                for i in range(self.workers):
+                    worker = ThreadWorker(self.queues, i, end_event)
+                    pool.submit(worker)
+        finally:
+            self.running = False
 
 
 @dataclasses.dataclass(slots=True)
-class ThreadExecutor(Connector):
+class ThreadWorker(Connector):
     queues: list[LockFreeDeque[tuple[Port, Port]]]
     worker_id: int
+    end_event: threading.Event
 
     def connect_ports(self, l: Port, r: Port) -> None:
         self.queues[self.worker_id].push((l, r))
@@ -77,6 +89,8 @@ class ThreadExecutor(Connector):
         if next_pair is None:
             idx = self.worker_id + 1 % len(self.queues)
             while idx != self.worker_id:
+                if self.end_event.is_set():
+                    return True
                 q = self.queues[idx]
                 next_pair = q.steal()
                 if next_pair:
@@ -84,12 +98,26 @@ class ThreadExecutor(Connector):
                 idx = idx + 1 % len(self.queues)
 
         if next_pair is not None:
+            if self.end_event.is_set():
+                return True
             l, r = next_pair
             execute_interaction(self, l, r)
             return True
 
         return False
 
-    def __call__(self, future: concurrent.futures.Future) -> None:
-        while not future.cancelled():
-            self.process_pair()
+    def signal_idle(self) -> bool:
+        with self.pool.idle_lock:
+            self.pool.idle_count += 1
+            if self.pool.idle_count >= self.pool.workers:
+                self.pool.all_idle_event.set()
+                return True
+        return False
+
+    def __call__(self) -> None:
+        while not self.end_event.is_set():
+            if not self.process_pair():
+                if self.signal_idle():
+                    return
+                # Prevent busy sleep
+                time.sleep(0.001)

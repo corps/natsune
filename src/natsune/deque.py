@@ -25,10 +25,7 @@ Py_DecRef.restype = None
 
 def load_atomic_lib():
     if sys.platform == "darwin":
-        try:
-            return ctypes.CDLL(ctypes.util.find_library("atomic"))
-        except:
-            return ctypes.CDLL(ctypes.util.find_library("c"))
+        return ctypes.CDLL(ctypes.util.find_library("c"))
     else:
         return ctypes.CDLL(ctypes.util.find_library("atomic"))
 

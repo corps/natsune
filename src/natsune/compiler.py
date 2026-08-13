@@ -6,6 +6,7 @@ import random
 import string
 import sys
 import textwrap
+import threading
 from functools import cached_property
 from typing import Any, Callable, Iterable, Iterator, Sequence, cast, get_type_hints
 
@@ -30,7 +31,7 @@ from natsune.control_flow_generated import (
     FlowControlInto,
     FlowInputInto,
 )
-from natsune.executor import DeterministicSerialExecutor
+from natsune.executor import DeterministicSerialExecutor, Executor
 from natsune.invocations import (
     closer,
     filter_invocation,
@@ -858,32 +859,60 @@ def eval_expression(expr_str: str, context: tuple[dict, dict]) -> Any:
     return eval(expr_str, globals=globals, locals=locals)
 
 
-def inet[C: Callable](f: C) -> C:
-    g = sys._getframe(1).f_globals
-    compiler = InetFunctionCompiler(f, g, g.get("__file__", "<anonymous>"))
-    compiler.compile()
-    setattr(f, "__inet__", compiler)
+def inet(f: Callable | None = None, *, executor: Executor | None = None) -> Callable:
+    def make_decorator(func: Callable, exec_arg: Executor | None = None, depth: int = 2) -> Callable:
+        # Get globals from the function's module
+        # For functions defined at module level, func.__globals__ is the module globals
+        # For nested functions, func.__globals__ is still the module globals
+        # But we need the actual module where the function is defined
+        # Use sys._getframe to get the caller's frame for the filename
+        g: dict[str, Any] = getattr(func, "__globals__", {})
+        try:
+            caller_frame = sys._getframe(depth)
+            filename = caller_frame.f_globals.get("__file__", "<anonymous>")
+        except ValueError:
+            filename = "<anonymous>"
+        compiler = InetFunctionCompiler(func, g, filename)
+        compiler.compile()
+        setattr(func, "__inet__", compiler)
 
-    @functools.wraps(f)
-    def impl(*args: Any) -> Any:
-        outputs: list = []
-        executor = DeterministicSerialExecutor()
-        inputs, output = compiler.invocation(executor)
-        for to_register, arg in zip(inputs, args):
-            send_value(as_constant_register(arg, executor), to_register)
+        default_executor = exec_arg
 
-        to_register, from_register = filter_invocation(
-            lambda x: outputs.append(x), executor
-        )
-        from_register.close()
-        send_value(output, to_register)
+        @functools.wraps(func)
+        def impl(*args: Any, executor: Executor | None = None) -> Any:
+            outputs: list = []
+            if executor is not None:
+                exec_to_use = executor
+            elif default_executor is not None:
+                exec_to_use = default_executor
+            else:
+                exec_to_use = DeterministicSerialExecutor()
+            inputs, output = compiler.invocation(exec_to_use)
+            for to_register, arg in zip(inputs, args):
+                send_value(as_constant_register(arg, exec_to_use), to_register)
 
-        while not outputs and executor.active_pairs:
-            executor.process_pair()
+            end_event = threading.Event()
 
-        if not outputs:
-            raise ValueError("No output produced by the function")
+            def output_callback(x):
+                outputs.append(x)
+                end_event.set()
 
-        return outputs[0]
+            to_register, from_register = filter_invocation(
+                output_callback, exec_to_use
+            )
+            from_register.close()
+            send_value(output, to_register)
 
-    return cast(C, impl)
+            exec_to_use.run(end_event)
+
+            if not outputs:
+                raise ValueError("No output produced by the function")
+
+            return outputs[0]
+
+        return cast(Callable, impl)
+    
+    if f is not None:
+        return make_decorator(f, executor, depth=2)
+    else:
+        return lambda func: make_decorator(func, executor, depth=2)
