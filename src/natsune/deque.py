@@ -76,10 +76,8 @@ libatomic.__atomic_compare_exchange_n_8.restype = ctypes.c_bool
 
 
 def cas_ptr(ptr: ctypes.c_int64, expected: int, desired: int) -> bool:
-    """Compare and swap 64-bit pointer atomically."""
     expected_val = ctypes.c_uint64(expected)
     desired_val = ctypes.c_uint64(desired)
-    # cas_ptr takes a c_int64 (which is a value), we need to get its address
     ptr_addr = ctypes.addressof(ptr)
     ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
     return libatomic.__atomic_compare_exchange_n_8(
@@ -93,22 +91,19 @@ def cas_ptr(ptr: ctypes.c_int64, expected: int, desired: int) -> bool:
 
 
 def atomic_load(ptr: ctypes.c_int64) -> int:
-    """Load 64-bit value atomically."""
     ptr_addr = ctypes.addressof(ptr)
     ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
     return libatomic.__atomic_load_8(ptr_ref, ATOMIC_SEQ_CST.value)
 
 
 def atomic_store(ptr: ctypes.c_int64, value: int) -> None:
-    """Store 64-bit value atomically."""
     ptr_addr = ctypes.addressof(ptr)
     ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
     libatomic.__atomic_store_8(ptr_ref, ctypes.c_uint64(value), ATOMIC_SEQ_CST.value)
 
 
-# Pack address (48 bits) + version (16 bits) into 64 bits
-TAG_MASK = 0xFFFF000000000000  # Upper 16 bits for version
-ADDR_MASK = 0x0000FFFFFFFFFFFF  # Lower 48 bits for address
+TAG_MASK = 0xFFFF000000000000
+ADDR_MASK = 0x0000FFFFFFFFFFFF
 
 
 def pack_addr(address: int, version: int) -> int:
@@ -119,15 +114,21 @@ def unpack_addr(packed: int) -> tuple[int, int]:
     return (packed & ADDR_MASK), (packed >> 48)
 
 
+# We use a python object not a cstruct because we actually /do/ want CPYthon to maintain
+# GC ownership of these nodes (implicitly the tasks as well).  This prevents us from
+# having to create an ownership model directly inside our deque.
 class Node:
     __slots__ = ("task", "next", "prev")
 
-    def __init__(self, task, next_packed: int = 0, prev_packed: int = 0):
+    def __init__(self, task, next_addr: int = 0, prev_addr: int = 0):
         self.task = task
-        self.next = next_packed  # Packed address
-        self.prev = prev_packed  # Packed address
+        # These are unpacked because we aren't executing any CAS operations on them,
+        # it is safe for them to be raw virtual address pointers.
+        self.next = next_addr
+        self.prev = prev_addr
 
 
+# Idle counter is a concurrent way to detect when all workers have reached a specific terminal state (idle).
 class IdleCounter:
     __slots__ = ("_value", "total")
 
@@ -148,36 +149,48 @@ class LockFreeDeque[A]:
     def __init__(self):
         self.sentinel = Node(task=None)
         self.sentinel_addr = id(self.sentinel) & ADDR_MASK
-        sentinel_packed = pack_addr(self.sentinel_addr, 0)
-        self.sentinel.next = sentinel_packed
-        self.sentinel.prev = sentinel_packed
-        self.head = ctypes.c_int64(sentinel_packed)
-        self.tail = ctypes.c_int64(sentinel_packed)
+        self.sentinel.next = self.sentinel_addr
+        self.sentinel.prev = self.sentinel_addr
+        # We don't need to pack here -- it is already implicitly packed by the ADDR_MASK
+        # and the version is 0 so....
+        self.head = ctypes.c_int64(self.sentinel_addr)
+        self.tail = ctypes.c_int64(self.sentinel_addr)
 
-    def _deref(self, packed: int) -> tuple[Node, int]:
-        if packed == 0:
+    def _deref(self, unpacked: int) -> Node:
+        if unpacked == 0:
             raise ValueError("Null pointer dereference")
-        addr, version = unpack_addr(packed)
-        node_ptr = ctypes.cast(addr, ctypes.POINTER(ctypes.py_object))
-        node = node_ptr.contents.value
-        return node, version
+        node_ptr = ctypes.cast(ctypes.c_void_p(unpacked), ctypes.py_object)
+        node = node_ptr.value
+        return node
 
     def push(self, task: A):
         new_node = Node(task=task)
         new_node_addr = id(new_node) & ADDR_MASK
-        Py_IncRef(new_node)
 
         while True:
             head_packed = atomic_load(self.head)
             head_addr, head_ver = unpack_addr(head_packed)
 
-            new_node.next = head_packed
-            new_node.prev = pack_addr(self.sentinel_addr, 0)
+            tail_packed = atomic_load(self.tail)
+            tail_addr, tail_ver = unpack_addr(tail_packed)
+
+            new_node.next = head_addr
+            new_node.prev = self.sentinel_addr
 
             if cas_ptr(self.head, head_packed, pack_addr(new_node_addr, head_ver + 1)):
+                # yes -- we are storing this node into the linked list with implied GC ownership
+                Py_IncRef(new_node)
+
                 if head_addr != self.sentinel_addr:
-                    head_node, _ = self._deref(head_packed)
+                    head_node = self._deref(head_addr)
                     head_node.prev = pack_addr(new_node_addr, head_ver + 1)
+
+                if tail_addr == self.sentinel_addr:
+                    # This is safe -- tail_addr == sentinel_addr is a terminal state for that process, so it cannot
+                    # meaningfully concurrently modify this.  We don't want to use CAS because there is no coherent
+                    # recovery from being unable to set the second pointer.
+                    atomic_store(self.tail, pack_addr(new_node_addr, tail_ver + 1))
+
                 return
 
     def pop(self) -> A | None:
@@ -190,9 +203,9 @@ class LockFreeDeque[A]:
 
             if head_addr == tail_addr:
                 if head_addr == self.sentinel_addr:
-                    return None  # Empty
-                head_node, _ = self._deref(head_packed)
-                task = head_node.task  # Read BEFORE DecRef
+                    return None
+                head_node = self._deref(head_addr)
+                task = head_node.task
 
                 new_head = pack_addr(self.sentinel_addr, head_ver + 1)
                 if cas_ptr(self.head, head_packed, new_head):
@@ -201,13 +214,13 @@ class LockFreeDeque[A]:
                         Py_DecRef(head_node)
                         return task
             else:
-                head_node, _ = self._deref(head_packed)
-                task = head_node.task  # Read BEFORE DecRef
+                head_node = self._deref(head_addr)
+                task = head_node.task
                 next_packed = head_node.next
                 next_addr, _ = unpack_addr(next_packed)
 
                 if cas_ptr(self.head, head_packed, pack_addr(next_addr, head_ver + 1)):
-                    next_node, _ = self._deref(next_packed)
+                    next_node = self._deref(next_addr)
                     next_node.prev = pack_addr(self.sentinel_addr, head_ver + 1)
                     Py_DecRef(head_node)
                     return task
@@ -222,9 +235,9 @@ class LockFreeDeque[A]:
 
             if tail_addr == head_addr:
                 if tail_addr == self.sentinel_addr:
-                    return None  # Empty
-                tail_node, _ = self._deref(tail_packed)
-                task = tail_node.task  # Read BEFORE DecRef
+                    return None
+                tail_node = self._deref(tail_addr)
+                task = tail_node.task
 
                 new_tail = pack_addr(self.sentinel_addr, tail_ver + 1)
                 if cas_ptr(self.tail, tail_packed, new_tail):
@@ -233,13 +246,13 @@ class LockFreeDeque[A]:
                         Py_DecRef(tail_node)
                         return task
             else:
-                tail_node, _ = self._deref(tail_packed)
-                task = tail_node.task  # Read BEFORE DecRef
+                tail_node = self._deref(tail_addr)
+                task = tail_node.task
                 prev_packed = tail_node.prev
                 prev_addr, _ = unpack_addr(prev_packed)
 
                 if cas_ptr(self.tail, tail_packed, pack_addr(prev_addr, tail_ver + 1)):
-                    prev_node, _ = self._deref(prev_packed)
+                    prev_node = self._deref(prev_addr)
                     prev_node.next = pack_addr(self.sentinel_addr, tail_ver + 1)
                     Py_DecRef(tail_node)
                     return task
@@ -248,10 +261,12 @@ class LockFreeDeque[A]:
     def __len__(self) -> int:
         count = 0
         current_packed = atomic_load(self.head)
-        while current_packed != self.sentinel_addr:
-            current, _ = self._deref(current_packed)
+        current_addr, _ = unpack_addr(current_packed)
+        while current_addr != self.sentinel_addr:
+            current = self._deref(current_addr)
             count += 1
             current_packed = current.next
+            current_addr, _ = unpack_addr(current_packed)
         return count
 
     #
