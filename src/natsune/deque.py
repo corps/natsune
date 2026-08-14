@@ -1,3 +1,5 @@
+from typing import Literal
+
 import ctypes
 import ctypes.util
 import sys
@@ -50,8 +52,11 @@ def load_atomic_lib():
 
 
 libatomic = load_atomic_lib()
-ATOMIC_SEQ_CST = ctypes.c_int(5)
-NOT_WEAK = ctypes.c_int(0)
+ATOMIC_SEQ_RELAXED = 0
+ATOMIC_SEQ_ACQUIRE = 2
+ATOMIC_SEQ_RELEASE = 3
+ATOMIC_SEQ_CST = 5
+NOT_WEAK = 0
 
 # Set up the atomic function prototypes
 libatomic.__atomic_load_8.argtypes = [ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
@@ -85,47 +90,21 @@ def cas_ptr(ptr: ctypes.c_int64, expected: int, desired: int) -> bool:
         ctypes.byref(expected_val),
         desired_val,
         False,  # not weak
-        ATOMIC_SEQ_CST.value,
-        ATOMIC_SEQ_CST.value,
+        ATOMIC_SEQ_CST,
+        ATOMIC_SEQ_CST,
     )
 
 
-def atomic_load(ptr: ctypes.c_int64) -> int:
+def atomic_load(ptr: ctypes.c_int64, mode: int = ATOMIC_SEQ_CST) -> int:
     ptr_addr = ctypes.addressof(ptr)
     ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
-    return libatomic.__atomic_load_8(ptr_ref, ATOMIC_SEQ_CST.value)
+    return libatomic.__atomic_load_8(ptr_ref, mode)
 
 
-def atomic_store(ptr: ctypes.c_int64, value: int) -> None:
+def atomic_store(ptr: ctypes.c_int64, value: int, mode: int = ATOMIC_SEQ_CST) -> None:
     ptr_addr = ctypes.addressof(ptr)
     ptr_ref = ctypes.cast(ptr_addr, ctypes.POINTER(ctypes.c_uint64))
-    libatomic.__atomic_store_8(ptr_ref, ctypes.c_uint64(value), ATOMIC_SEQ_CST.value)
-
-
-TAG_MASK = 0xFFFF000000000000
-ADDR_MASK = 0x0000FFFFFFFFFFFF
-
-
-def pack_addr(address: int, version: int) -> int:
-    return (version << 48) | (address & ADDR_MASK)
-
-
-def unpack_addr(packed: int) -> tuple[int, int]:
-    return (packed & ADDR_MASK), (packed >> 48)
-
-
-# We use a python object not a cstruct because we actually /do/ want CPYthon to maintain
-# GC ownership of these nodes (implicitly the tasks as well).  This prevents us from
-# having to create an ownership model directly inside our deque.
-class Node:
-    __slots__ = ("task", "next", "prev")
-
-    def __init__(self, task, next_addr: int = 0, prev_addr: int = 0):
-        self.task = task
-        # These are unpacked because we aren't executing any CAS operations on them,
-        # it is safe for them to be raw virtual address pointers.
-        self.next = next_addr
-        self.prev = prev_addr
+    libatomic.__atomic_store_8(ptr_ref, ctypes.c_uint64(value), mode)
 
 
 # Idle counter is a concurrent way to detect when all workers have reached a specific terminal state (idle).
@@ -137,146 +116,91 @@ class IdleCounter:
         self.total = total
 
     def signal(self, worker_id: int) -> bool:
-        return False
+        cas_ptr(self._value, worker_id, worker_id + 1)
+        # This can only happen when all workers have signaled idle consecutively, since any
+        # other state involves a reset.
+        return atomic_load(self._value) == self.total
 
+    # If this is called, it implies that not all workers are truly idle.
     def reset(self) -> None:
-        pass
+        atomic_store(self._value, 0)
 
 
 class LockFreeDeque[A]:
-    __slots__ = ("head", "tail", "sentinel", "sentinel_addr")
+    __slots__ = (
+        "left",
+        "right",
+        "store",
+        "capacity",
+        "max_reentrant_push",
+        "wrap_mask",
+    )
 
-    def __init__(self):
-        self.sentinel = Node(task=None)
-        self.sentinel_addr = id(self.sentinel) & ADDR_MASK
-        self.sentinel.next = self.sentinel_addr
-        self.sentinel.prev = self.sentinel_addr
-        # We don't need to pack here -- it is already implicitly packed by the ADDR_MASK
-        # and the version is 0 so....
-        self.head = ctypes.c_int64(self.sentinel_addr)
-        self.tail = ctypes.c_int64(self.sentinel_addr)
+    store: list[A | None]
+    left: ctypes.c_int64
+    right: ctypes.c_int64
+    max_reentrant_push: int
+    capacity: int
+    wrap_mask: int
 
-    def _deref(self, unpacked: int) -> Node:
-        if unpacked == 0:
-            raise ValueError("Null pointer dereference")
-        node_ptr = ctypes.cast(ctypes.c_void_p(unpacked), ctypes.py_object)
-        node = node_ptr.value
-        return node
+    def __init__(self, storage_hint: int, max_reentrant_push: int):
+        if storage_hint < max_reentrant_push or max_reentrant_push < 1:
+            raise ValueError(
+                "storage_hint must be greater than max_reentrant_push and max_reentrant_push must be greater than 0"
+            )
 
-    def push(self, task: A):
-        new_node = Node(task=task)
-        new_node_addr = id(new_node) & ADDR_MASK
+        storage_hint -= 1
+        for i in (1, 2, 4, 8, 16, 32):
+            storage_hint |= storage_hint >> i
+        self.capacity = storage_hint + 1
+        self.wrap_mask = storage_hint
 
-        while True:
-            head_packed = atomic_load(self.head)
-            head_addr, head_ver = unpack_addr(head_packed)
+        self.store = [None] * self.capacity
+        # Thieve side
+        self.left = ctypes.c_int64(0)
+        # Owner side
+        self.right = ctypes.c_int64(0)
+        self.max_reentrant_push = max_reentrant_push
 
-            tail_packed = atomic_load(self.tail)
-            tail_addr, tail_ver = unpack_addr(tail_packed)
+    def push(self, task: A) -> None:
+        cur_left = atomic_load(self.left)
+        cur_right = atomic_load(self.right)
 
-            new_node.next = head_addr
-            new_node.prev = self.sentinel_addr
+        # Workers should avoid this case as much as possible by avoiding pop or steal when
+        # the capacity to push does not exist.
+        assert (
+            cur_right - cur_left < self.capacity
+        ), "Re-entrant push greater than expected capacity"
 
-            if cas_ptr(self.head, head_packed, pack_addr(new_node_addr, head_ver + 1)):
-                # yes -- we are storing this node into the linked list with implied GC ownership
-                Py_IncRef(new_node)
+        atomic_store(self.right, cur_right + 1)
+        self.store[cur_right & self.wrap_mask] = task
 
-                if head_addr != self.sentinel_addr:
-                    head_node = self._deref(head_addr)
-                    head_node.prev = pack_addr(new_node_addr, head_ver + 1)
+    def pop(self) -> A | None | Literal[0]:
+        cur_left = atomic_load(self.left)
+        cur_right = atomic_load(self.right)
 
-                if tail_addr == self.sentinel_addr:
-                    # This is safe -- tail_addr == sentinel_addr is a terminal state for that process, so it cannot
-                    # meaningfully concurrently modify this.  We don't want to use CAS because there is no coherent
-                    # recovery from being unable to set the second pointer.
-                    atomic_store(self.tail, pack_addr(new_node_addr, tail_ver + 1))
+        if cur_right <= cur_left:
+            return None
 
-                return
+        # Don't pop work that we won't be able to complete with potential additional push
+        if cur_right - cur_left - 1 >= self.capacity - self.max_reentrant_push:
+            return 0
 
-    def pop(self) -> A | None:
-        while True:
-            head_packed = atomic_load(self.head)
-            tail_packed = atomic_load(self.tail)
+        if cur_right - cur_left == 1:
+            if cas_ptr(self.left, cur_left, cur_left + 1):
+                return self.store[cur_left & self.wrap_mask]
+            return None
 
-            head_addr, head_ver = unpack_addr(head_packed)
-            tail_addr, tail_ver = unpack_addr(tail_packed)
-
-            if head_addr == tail_addr:
-                if head_addr == self.sentinel_addr:
-                    return None
-                head_node = self._deref(head_addr)
-                task = head_node.task
-
-                new_head = pack_addr(self.sentinel_addr, head_ver + 1)
-                if cas_ptr(self.head, head_packed, new_head):
-                    new_tail = pack_addr(self.sentinel_addr, tail_ver + 1)
-                    if cas_ptr(self.tail, tail_packed, new_tail):
-                        Py_DecRef(head_node)
-                        return task
-            else:
-                head_node = self._deref(head_addr)
-                task = head_node.task
-                next_packed = head_node.next
-                next_addr, _ = unpack_addr(next_packed)
-
-                if cas_ptr(self.head, head_packed, pack_addr(next_addr, head_ver + 1)):
-                    next_node = self._deref(next_addr)
-                    next_node.prev = pack_addr(self.sentinel_addr, head_ver + 1)
-                    Py_DecRef(head_node)
-                    return task
+        atomic_store(self.right, cur_right - 1)
+        return self.store[(cur_right - 1) & self.wrap_mask]
 
     def steal(self) -> A | None:
-        while True:
-            tail_packed = atomic_load(self.tail)
-            head_packed = atomic_load(self.head)
+        cur_left = atomic_load(self.left)
+        cur_right = atomic_load(self.right)
 
-            tail_addr, tail_ver = unpack_addr(tail_packed)
-            head_addr, head_ver = unpack_addr(head_packed)
+        if cur_right <= cur_left:
+            return None
 
-            if tail_addr == head_addr:
-                if tail_addr == self.sentinel_addr:
-                    return None
-                tail_node = self._deref(tail_addr)
-                task = tail_node.task
-
-                new_tail = pack_addr(self.sentinel_addr, tail_ver + 1)
-                if cas_ptr(self.tail, tail_packed, new_tail):
-                    new_head = pack_addr(self.sentinel_addr, head_ver + 1)
-                    if cas_ptr(self.head, head_packed, new_head):
-                        Py_DecRef(tail_node)
-                        return task
-            else:
-                tail_node = self._deref(tail_addr)
-                task = tail_node.task
-                prev_packed = tail_node.prev
-                prev_addr, _ = unpack_addr(prev_packed)
-
-                if cas_ptr(self.tail, tail_packed, pack_addr(prev_addr, tail_ver + 1)):
-                    prev_node = self._deref(prev_addr)
-                    prev_node.next = pack_addr(self.sentinel_addr, tail_ver + 1)
-                    Py_DecRef(tail_node)
-                    return task
-
-    # Approximate length
-    def __len__(self) -> int:
-        count = 0
-        current_packed = atomic_load(self.head)
-        current_addr, _ = unpack_addr(current_packed)
-        while current_addr != self.sentinel_addr:
-            current = self._deref(current_addr)
-            count += 1
-            current_packed = current.next
-            current_addr, _ = unpack_addr(current_packed)
-        return count
-
-    #
-    # def __del__(self):
-    #     current_packed = atomic_load(self.head)
-    #     while True:
-    #         current_addr, _ = unpack_addr(current_packed)
-    #         if current_addr == self.sentinel_addr:
-    #             break
-    #         current, _ = self._deref(current_packed)
-    #         next_packed = current.next
-    #         Py_DecRef(current)
-    #         current_packed = next_packed
+        if cas_ptr(self.left, cur_left, cur_left + 1):
+            return self.store[cur_left & self.wrap_mask]
+        return None

@@ -42,6 +42,9 @@ class DeterministicSerialExecutor(Executor):
 class ThreadPoolExecutor(Executor):
     # None implies let the system decide.
     workers: int = cast(Any, None)
+    worker_queue_size_hint: int = 1024
+    max_reentrant: int = 16
+
     queues: list[LockFreeDeque[tuple[Port, Port]]] = dataclasses.field(
         default_factory=list
     )
@@ -62,7 +65,9 @@ class ThreadPoolExecutor(Executor):
         # Initialize queues for connect_ports to work before run()
         # The actual worker threads will reuse these queues
         for _ in range(self.workers):
-            self.queues.append(LockFreeDeque())
+            self.queues.append(
+                LockFreeDeque(self.worker_queue_size_hint, self.max_reentrant)
+            )
 
     def run(self, end_event: threading.Event) -> None:
         self.running = True
@@ -89,6 +94,7 @@ class ThreadWorker(Connector):
     def process_pair(self) -> bool:
         q = self.queues[self.worker_id]
         next_pair = q.pop()
+
         if next_pair is None:
             idx = self.worker_id + 1 % len(self.queues)
             while idx != self.worker_id:
@@ -100,7 +106,7 @@ class ThreadWorker(Connector):
                     break
                 idx = idx + 1 % len(self.queues)
 
-        if next_pair is not None:
+        if next_pair:
             if self.end_event.is_set():
                 return True
             self.idle_counter.reset()
