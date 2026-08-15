@@ -2,6 +2,7 @@ import ast
 import dataclasses
 import functools
 import inspect
+import operator
 import random
 import string
 import sys
@@ -20,7 +21,7 @@ from natsune.adapters import (
 )
 from natsune.connector import Connector
 from natsune.control_flow import (
-    ConcurrentMerge,
+    ConcurrentValueMerge,
     FlowVariableMap,
     IfThenElse,
     IfThenElseStatement,
@@ -423,22 +424,22 @@ class InetBranchCompiler:
 
         if isinstance(expr, ast.BoolOp):
             op = expr.op
-            merger: Callable[[Any, Any], Any] = lambda x, y: (
-                x and y if isinstance(op, ast.And) else lambda x, y: x or y
+            merger: Callable[[Any, Any], Any] = (
+                (lambda x, y: x and y)
+                if isinstance(op, ast.And)
+                else lambda x, y: x or y
             )
             should_shortcircuit = (
-                (lambda x: not x) if isinstance(op, ast.And) else lambda x: bool(x)
+                operator.not_ if isinstance(op, ast.And) else operator.truth
             )
             acc = self.evaluate_from_expression(expr.values[0])
             for n in expr.values[1:]:
-                with ConcurrentMerge(should_shortcircuit, merger).invocation(
+                with ConcurrentValueMerge(should_shortcircuit, merger).invocation(
                     self.flow
                 ) as invocation:
                     a, b = invocation.port.readin().split()
-                    send_value(acc.trace("acc arrived"), a)
-                    send_value(
-                        self.evaluate_from_expression(n).trace("evaluation occured"), b
-                    )
+                    send_value(acc, a)
+                    send_value(self.evaluate_from_expression(n), b)
                     acc = invocation.wire.readout()
 
             return acc
@@ -590,12 +591,12 @@ class InetBranchCompiler:
             )
 
             control_out, control_in_ = (
-                (
-                    control.finish_variables.readout()
-                    & ~continuation_invocation.port.variables.readin()
-                )
-                | (control.continue_variables.readout() & ~control_flow_continue_in)
+                (control.continue_variables.readout() & ~control_flow_continue_in)
                 | (control.break_variables.readout() & ~control_flow_break_in)
+                | (
+                    control.finish_variables.readout()
+                    + ~continuation_invocation.port.variables.readin()
+                )
             ).split()
 
             send_value(
@@ -860,7 +861,9 @@ def eval_expression(expr_str: str, context: tuple[dict, dict]) -> Any:
 
 
 def inet(f: Callable | None = None, *, executor: Executor | None = None) -> Callable:
-    def make_decorator(func: Callable, exec_arg: Executor | None = None, depth: int = 2) -> Callable:
+    def make_decorator(
+        func: Callable, exec_arg: Executor | None = None, depth: int = 2
+    ) -> Callable:
         # Get globals from the function's module
         # For functions defined at module level, func.__globals__ is the module globals
         # For nested functions, func.__globals__ is still the module globals
@@ -897,9 +900,7 @@ def inet(f: Callable | None = None, *, executor: Executor | None = None) -> Call
                 outputs.append(x)
                 end_event.set()
 
-            to_register, from_register = filter_invocation(
-                output_callback, exec_to_use
-            )
+            to_register, from_register = filter_invocation(output_callback, exec_to_use)
             from_register.close()
             send_value(output, to_register)
 
@@ -911,7 +912,7 @@ def inet(f: Callable | None = None, *, executor: Executor | None = None) -> Call
             return outputs[0]
 
         return cast(Callable, impl)
-    
+
     if f is not None:
         return make_decorator(f, executor, depth=2)
     else:

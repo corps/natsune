@@ -111,19 +111,10 @@ class ExtSplitFuncPort(Port):
         return f"ExtSplitFuncPort({getattr(self.fn, '__name__', str(self.fn))})"
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class ForkPort(Port):
-    wires: MutableSequence[Wire] = dataclasses.field(
-        default_factory=lambda: [Wire(), Wire()]
-    )
-
-
 class Expansion(Protocol):
     def __call__(
         self, executor: Connector, port: Port, wires: Sequence[Wire], /
     ) -> None: ...
-
-    def __copy__(self) -> Self: ...
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

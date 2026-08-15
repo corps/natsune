@@ -46,6 +46,7 @@ class FromRegister(Protocol):
     def duplicate(self, label: str = "dup") -> tuple[FromRegister, FromRegister]: ...
     def __or__(self, other: FromRegister) -> FromRegister: ...
     def __and__(self, other: FromRegister) -> FromRegister: ...
+    def __add__(self, other: FromRegister) -> FromRegister: ...
     def __invert__(self) -> ToRegister: ...
     def trace(self, label: str) -> FromRegister: ...
 
@@ -108,22 +109,34 @@ class _FromRegister:
         )
 
     def __or__(self, other: FromRegister) -> FromRegister:
-        from natsune.control_flow import WeakeningSelection
+        from natsune.control_flow import SerialOr
 
-        with WeakeningSelection(other.adapter).invocation(self.connector) as selection:
+        with SerialOr(other.adapter).invocation(self.connector) as selection:
             send_value(self, selection.port.readin())
             send_value(other, selection.wire.second_value.readin())
             return selection.wire.result.readout()
 
     def __and__(self, other: FromRegister) -> FromRegister:
-        from natsune.control_flow import GatedSelection
+        from natsune.control_flow import SerialAnd
 
-        with GatedSelection(self.adapter, other.adapter).invocation(
+        with SerialAnd(self.adapter, other.adapter).invocation(
             self.connector
         ) as selection:
             send_value(self, selection.port.readin())
             send_value(other, selection.wire.second_value.readin())
             return selection.wire.result.readout()
+
+    def __add__(self, other: FromRegister) -> FromRegister:
+        x1, x2 = Wire.as_tautology()
+        assert isinstance(other, _FromRegister)
+
+        with self.connector.sequenced_tuplate_from(x1) as packing_iter:
+            self.connector.connect(self.port, next(packing_iter))
+            self.connector.connect(other.port, next(packing_iter))
+
+        return as_from_register(
+            x2, ParValueAdapter([self.adapter, other.adapter]), self.connector
+        )
 
     def trace(self, label: str) -> FromRegister:
         from natsune.control_flow import Tracer

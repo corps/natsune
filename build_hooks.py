@@ -1,11 +1,12 @@
 """Custom build hooks for Hatchling to compile native extensions."""
+
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -15,7 +16,7 @@ class CustomBuildHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """Initialize the build hook.
-        
+
         This is called before each build and is where we compile
         the native extension for macOS so the files are available
         for inclusion in the wheel.
@@ -52,6 +53,8 @@ class CustomBuildHook(BuildHookInterface):
             shutil.copy2(dylib_src, target_dir)
             self.app.display_info(f"Copied {dylib_src} to {target_dir}")
 
-    def finalize(self, version: str, build_data: dict[str, Any], artifact_path: str) -> None:
+    def finalize(
+        self, version: str, build_data: dict[str, Any], artifact_path: str
+    ) -> None:
         """Finalize the build hook."""
         pass

@@ -1,17 +1,15 @@
-import time
-
-from abc import ABC, abstractmethod
-from collections.abc import Callable
-
 import concurrent.futures
 import dataclasses
 import os
 import random
 import threading
+import time
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any, cast
 
 from natsune.connector import Connector
-from natsune.deque import LockFreeDeque, IdleCounter
+from natsune.deque import IdleCounter, LockFreeDeque
 from natsune.interactions import execute_interaction
 from natsune.ports import Port
 

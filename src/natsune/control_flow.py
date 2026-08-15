@@ -1,4 +1,5 @@
 import dataclasses
+import operator
 from functools import cached_property
 from typing import Any, Callable, Self, Sequence, Set
 
@@ -24,6 +25,7 @@ from natsune.control_flow_generated import (
     IfThenElseOutputInto,
     MergeOutputFrom,
     MergeOutputInto,
+    ParallelMergeInputInto,
 )
 from natsune.invocations import (
     LHS,
@@ -129,8 +131,73 @@ class MergeOutput:
 generate_register_pair_types(MergeOutput)
 
 
+@dataclasses.dataclass
+class ParallelMergeInput:
+    first_value: LHS
+    second_value: LHS
+
+
+ParallelMergeOutputTo = FromInterfaceRegister
+ParallelMergeOutputFrom = ToInterfaceRegister
+
+
+generate_register_pair_types(ParallelMergeInput)
+
+
 @dataclasses.dataclass(frozen=True)
-class WeakeningSelection(ExpansionWithAdapters):
+class ParallelOr(ExpansionWithAdapters):
+    adapter: Adapter
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return self.adapter
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return ParValueAdapter(
+            [
+                self.adapter,
+                self.adapter,
+            ]
+        )
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[ParallelMergeInputInto, ParallelMergeOutputTo]]:
+        return expansion_invocation(
+            self, invoker, ParallelMergeInputInto, ParallelMergeOutputTo
+        )
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __call__(
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        pair = AmbiguousPair()
+        pair_invocation = pair.invocation(executor, self.adapter)
+        left, right = as_from_register(port, self.input_adapter, executor).split()
+
+        send_value(left, pair_invocation.i_value_1)
+        send_value(right, pair_invocation.i_value_2)
+
+        with SerialOr(self.adapter).invocation(executor) as selection:
+            send_value(
+                pair_invocation.o_first_value,
+                selection.port.readin(),
+            )
+            send_value(
+                pair_invocation.o_second_value,
+                selection.wire.second_value.readin(),
+            )
+            send_value(
+                selection.wire.result.readout(),
+                as_to_register(wires[0], self.output_adapter, executor),
+            )
+
+
+@dataclasses.dataclass(frozen=True)
+class SerialOr(ExpansionWithAdapters):
     adapter: Adapter
 
     @cached_property
@@ -169,7 +236,7 @@ class WeakeningSelection(ExpansionWithAdapters):
 
 
 @dataclasses.dataclass(frozen=True)
-class GatedSelection(ExpansionWithAdapters):
+class SerialAnd(ExpansionWithAdapters):
     left: Adapter
     right: Adapter
 
@@ -208,6 +275,83 @@ class GatedSelection(ExpansionWithAdapters):
             send_values(
                 [invocation.port.readout(), invocation.wire.second_value.readout()],
                 invocation.wire.result.readin().split(),
+            )
+
+
+@dataclasses.dataclass(frozen=True)
+class ConcurrentValueMerge(ExpansionWithAdapters):
+    should_short: Callable[[Any], bool]
+    merge_operation: Callable[[Any, Any], Any]
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return ParValueAdapter([ValueAdapter(), ValueAdapter()])
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return ValueAdapter()
+
+    def __copy__(self) -> Self:
+        return self
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[MergeInputTo, MergeInputFrom]]:
+        return expansion_invocation(self, invoker, MergeInputTo, MergeInputFrom)
+
+    @cached_property
+    def true_case(self) -> ExpansionBuilder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
+            v1, v2 = builder.input_interface.readout().split()
+
+            send_value(
+                v1,
+                builder.output_interface.readin(),
+            )
+
+            return builder
+
+    @cached_property
+    def false_case(self) -> ExpansionBuilder:
+        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
+            v1, v2 = builder.input_interface.readout().split()
+
+            send_value(
+                send_parameters(
+                    merge_invocation(self.merge_operation, builder),
+                    (v1, v2),
+                ),
+                builder.output_interface.readin(),
+            )
+
+            return builder
+
+    @cached_property
+    def conditional(self) -> IfThenElse:
+        return IfThenElse(self.true_case, self.false_case)
+
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
+        pair = AmbiguousPair()
+        pair_invocation = pair.invocation(exec, ValueAdapter())
+        left, right = as_from_register(port, self.input_adapter, exec).split()
+
+        send_value(left, pair_invocation.i_value_1)
+        send_value(right, pair_invocation.i_value_2)
+
+        first_value_1, first_value_2 = pair_invocation.o_first_value.duplicate("share")
+        with self.conditional.invocation(exec) as conditional:
+            send_value(
+                send_parameter(
+                    filter_invocation(self.should_short, exec), first_value_1
+                ),
+                conditional.port.readin(),
+            )
+            a, b = conditional.wire.context.split()
+            send_value(first_value_2, a.readin())
+            send_value(pair_invocation.o_second_value, b.readin())
+            send_value(
+                conditional.wire.result.readout(),
+                as_to_register(wires[0], self.output_adapter, exec),
             )
 
 
@@ -610,80 +754,3 @@ class IfThenElseStatement(IfThenElse):
     @cached_property
     def flow_map(self) -> FlowVariableMap:
         return self.true_case.flow_map | self.false_case.flow_map
-
-
-@dataclasses.dataclass(frozen=True)
-class ConcurrentMerge(ExpansionWithAdapters):
-    should_short: Callable[[Any], bool]
-    merge_operation: Callable[[Any, Any], Any]
-
-    @cached_property
-    def input_adapter(self) -> Adapter:
-        return ParValueAdapter([ValueAdapter(), ValueAdapter()])
-
-    @cached_property
-    def output_adapter(self) -> Adapter:
-        return ValueAdapter()
-
-    def __copy__(self) -> Self:
-        return self
-
-    def invocation(
-        self, invoker: Connector
-    ) -> closer[Invocation[MergeInputTo, MergeInputFrom]]:
-        return expansion_invocation(self, invoker, MergeInputTo, MergeInputFrom)
-
-    @cached_property
-    def true_case(self) -> ExpansionBuilder:
-        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
-            v1, v2 = builder.input_interface.readout().split()
-
-            send_value(
-                v1,
-                builder.output_interface.readin(),
-            )
-
-            return builder
-
-    @cached_property
-    def false_case(self) -> ExpansionBuilder:
-        with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
-            v1, v2 = builder.input_interface.readout().split()
-
-            send_value(
-                send_parameters(
-                    merge_invocation(self.merge_operation, builder),
-                    (v1, v2),
-                ),
-                builder.output_interface.readin(),
-            )
-
-            return builder
-
-    @cached_property
-    def conditional(self) -> IfThenElse:
-        return IfThenElse(self.true_case, self.false_case)
-
-    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
-        pair = AmbiguousPair()
-        pair_invocation = pair.invocation(exec)
-        left, right = as_from_register(port, self.input_adapter, exec).split()
-
-        send_value(left, pair_invocation.i_value_1)
-        send_value(right, pair_invocation.i_value_2)
-
-        first_value_1, first_value_2 = pair_invocation.o_first_value.duplicate()
-        with self.conditional.invocation(exec) as conditional:
-            send_value(
-                send_parameter(
-                    filter_invocation(self.should_short, exec), first_value_1
-                ),
-                conditional.port.readin(),
-            )
-            a, b = conditional.wire.context.split()
-            send_value(first_value_2, a.readin())
-            send_value(pair_invocation.o_second_value, b.readin())
-            send_value(
-                conditional.wire.result.readout(),
-                as_to_register(wires[0], self.output_adapter, exec),
-            )

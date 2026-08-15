@@ -1,5 +1,3 @@
-import threading
-
 import abc
 import contextlib
 import copy
@@ -14,7 +12,6 @@ from natsune.ports import (
     Erasure,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
-    ForkPort,
     Graft,
     Port,
     Target,
@@ -160,8 +157,6 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
         front = "fnM"
     elif isinstance(port, ExtSplitFuncPort):
         front = "fnS"
-    elif isinstance(port, ForkPort):
-        front = "fork"
     elif isinstance(port, CombPort):
         front = port.label
     elif isinstance(port, Graft):

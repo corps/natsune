@@ -1,9 +1,8 @@
-from typing import Literal
-
 import ctypes
 import ctypes.util
 import sys
 from ctypes import pythonapi
+from typing import Literal
 
 # This is a lock free dequeue with work stealing implementation that makes many... reasonable assumptions that
 # will break in the future.

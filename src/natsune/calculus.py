@@ -13,7 +13,6 @@ from natsune.ports import (
     Expansion,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
-    ForkPort,
     Graft,
     Port,
     Target,
@@ -128,9 +127,6 @@ class Calculus:
 
     def split(self, f: Callable[[Any], tuple[Any, Any]], a: Wire, b: Wire) -> Wire:
         return self[ExtSplitFuncPort(f, [a, b])]
-
-    def fork(self, a: Wire, b: Wire) -> Wire:
-        return self[ForkPort([a, b])]
 
     def dup(self, a: Wire, b: Wire) -> Wire:
         return self[CombPort("dup", [a, b])]

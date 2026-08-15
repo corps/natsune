@@ -1,62 +1,38 @@
+import ctypes
 import dataclasses
-from typing import Any, Self, Sequence
+from typing import Sequence
 
-from natsune.adapters import ValueAdapter
+from natsune.adapters import Adapter
 from natsune.connector import Connector
-from natsune.ports import Expansion, ForkPort, Graft, Port, Wire, WirePort
+from natsune.deque import cas_ptr
+from natsune.ports import Expansion, Graft, Port, Wire
 from natsune.registers import FromRegister, ToRegister, as_from_register, as_to_register
 
 
 @dataclasses.dataclass(slots=True)
 class AmbiguousPair(Expansion):
-    second_amb_half: ForkPort | None = None
+    copied: ctypes.c_int64 = dataclasses.field(
+        default_factory=lambda: ctypes.c_int64(0)
+    )
 
-    # Once one side is copied, the other side must agree to the copy.
-    # In essence, a graft itself is only copied at most once, and
-    # at most two graft share this expansion, thus the copy connects
-    # in the same way
-    copy: Any | None = None
-
-    def invocation(self, invoker: Connector) -> AmbiguousInvocation:
+    def invocation(self, invoker: Connector, adapter: Adapter) -> AmbiguousInvocation:
         graft_1 = Graft(self, wires=[Wire(), Wire()])
         graft_2 = Graft(self, wires=graft_1.wires)
-        input_1 = as_to_register(graft_1, ValueAdapter(), invoker)
-        input_2 = as_to_register(graft_2, ValueAdapter(), invoker)
-        output_1 = as_from_register(graft_1.wires[0], ValueAdapter(), invoker)
-        output_2 = as_from_register(graft_1.wires[1], ValueAdapter(), invoker)
+        input_1 = as_to_register(graft_1, adapter, invoker)
+        input_2 = as_to_register(graft_2, adapter, invoker)
+        output_1 = as_from_register(graft_1.wires[0], adapter, invoker)
+        output_2 = as_from_register(graft_1.wires[1], adapter, invoker)
         return AmbiguousInvocation(input_1, input_2, output_1, output_2)
 
-    def __copy__(self) -> Self:
-        if self.copy is None:
-            self.copy = dataclasses.replace(
-                self,
-                copy=None,
-                second_amb_half=None,
-            )
-        return self.copy
-
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
-        if self.second_amb_half is not None:
-            exec.connect_ports(port, self.second_amb_half)
+        if cas_ptr(self.copied, 0, 1):
+            exec.connect(port, wires[0])
             return
 
-        ambiguous_primary = ForkPort()
-        ambiguous_secondary = ForkPort()
-        ambiguous_primary_aux = ForkPort()
-        ambiguous_secondary_aux = ForkPort()
-        self.second_amb_half = ambiguous_secondary
+        exec.connect(port, wires[1])
 
-        exec.connect(ambiguous_primary.wires[0], ambiguous_primary_aux.wires[0])
-        exec.connect(ambiguous_primary.wires[1], ambiguous_secondary_aux.wires[1])
-
-        exec.connect(ambiguous_secondary.wires[0], ambiguous_secondary_aux.wires[0])
-        exec.connect(ambiguous_secondary.wires[1], ambiguous_primary_aux.wires[1])
-
-        exec.connect(wires[0], ambiguous_primary_aux)
-        exec.connect(wires[1], ambiguous_secondary_aux)
-        exec.connect_ports(port, ambiguous_primary)
-
-        return
+    def __copy__(self) -> AmbiguousPair:
+        return AmbiguousPair()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

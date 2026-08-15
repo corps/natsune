@@ -7,7 +7,6 @@ from natsune.ports import (
     Erasure,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
-    ForkPort,
     Graft,
     Port,
     ValuePort,
@@ -110,27 +109,6 @@ def execute_read_wire(connector: Connector, l: Port, r: WirePort) -> None:
     connector.connect(r.wires[0], l)
 
 
-def execute_fork(connector: Connector, p: Port, l: ForkPort) -> None:
-    if isinstance(p, ForkPort):
-        connector.connect(p.wires[0], l.wires[0])
-        connector.connect(p.wires[1], l.wires[1])
-        return
-
-    new_p = copy.copy(p)
-
-    for i in range(len(p.wires)):
-        amb = ForkPort()
-        connector.connect(p.wires[i], amb)
-        p.wires[i] = Wire()
-        new_p.wires[i] = Wire()
-
-        connector.connect(p.wires[i], amb.wires[0])
-        connector.connect(new_p.wires[i], amb.wires[1])
-
-    connector.connect(l.wires[0], p)
-    connector.connect(l.wires[1], new_p)
-
-
 def execute_interaction(executor: Connector, l: Port, r: Port) -> None:
     # WirePorts execute with highest priority as the wires themselves can be shared references,
     # and we don't want to thus copy via Graft behaviors.  They are "pass through" behaviors of
@@ -141,16 +119,6 @@ def execute_interaction(executor: Connector, l: Port, r: Port) -> None:
 
     elif isinstance(r, WirePort):
         execute_read_wire(executor, l, r)
-        return
-
-    # Fork is considered the highest level copy construction.  It does not "deconstruct" like comb ports, and thus is
-    # exponential with itself.  It is useful but it must be used with care: any usage of exponentiation needs ot have
-    # some closing property that merges those exponential parts back together.
-    if isinstance(l, ForkPort):
-        execute_fork(executor, r, l)
-        return
-    elif isinstance(r, ForkPort):
-        execute_fork(executor, l, r)
         return
 
     if isinstance(l, Graft):
@@ -199,7 +167,5 @@ def execute_interaction(executor: Connector, l: Port, r: Port) -> None:
             + ", "
             + str(r)
         )
-        execute_erasure(executor, l, r)
-        return
 
     assert False, f"unreachable: {l} {r}"
