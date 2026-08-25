@@ -1,7 +1,10 @@
 import dataclasses
 import operator
-from functools import cached_property
+from functools import cache, cached_property
+from multiprocessing import Value
 from typing import Any, Callable, Self, Sequence, Set
+
+from pygments.lexers.special import OutputLexer
 
 from natsune.adapters import (
     Adapter,
@@ -60,10 +63,9 @@ from natsune.registers import (
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
-    as_constant_register,
     as_from_register,
     as_to_register,
-    join_from_registers,
+    borrow_registers,
     send_value,
     send_values,
 )
@@ -436,11 +438,13 @@ class VariablesFlow(ExpansionBuilder):
     def __post_init__(self) -> None:
         self.input_adapter = FlowInput.adapter(self.variables)
         self.output_adapter = FlowControl.adapter(self.return_adapter, self.variables)
-        self.exceptions = FlowRegister(ReferenceAdapter(ValueAdapter()), self)
 
-        for name, variable_input in zip(
-            self.variables.keys(), self.flow_input.variables.split()
-        ):
+        input_variables = iter(self.flow_input.variables.split())
+
+        self.exceptions = FlowRegister(ReferenceAdapter(ValueAdapter()), self)
+        send_value(next(input_variables).readout(), self.exceptions.interface_readin())
+
+        for name, variable_input in zip(self.variables.keys(), input_variables):
             flow_register = self.variable_registers[name] = FlowRegister(
                 self.variables[name], self
             )
@@ -453,6 +457,7 @@ class VariablesFlow(ExpansionBuilder):
         x1, x2 = Wire.as_interface()
         readouts: list[FromRegister] = []
 
+        readouts.append(self.exceptions.readout())
         for k, r in self.variable_registers.items():
             if not flow_map or flow_map.usage[k].flow_write:
                 g, _ = r.extend()
@@ -487,7 +492,10 @@ class VariablesFlow(ExpansionBuilder):
         x1, x2 = Wire.as_interface()
         readins: list[ToRegister] = []
 
-        for k, target in zip(self.variables, target_readin.split()):
+        targets = iter(target_readin.split())
+        readins.append(next(targets))
+
+        for k, target in zip(self.variables, targets):
             if flow_map.usage[k].flow_write:
                 readins.append(target)
             else:
@@ -528,6 +536,52 @@ class VariablesFlow(ExpansionBuilder):
         closer(self.control_output).close()
         self.exceptions.close()
         optimize(self, self.active_pairs)
+
+
+def _push(l: list, v: Any) -> None:
+    l.append(v)
+
+
+@dataclasses.dataclass
+class ExceptionSink:
+    adapter: Adapter
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return self.adapter
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return ParValueAdapter([self.ref_adapter, self.adapter])
+
+    @cached_property
+    def ref_adapter(self) -> Adapter:
+        return ReferenceAdapter(ValueAdapter())
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[MergeInputTo, MergeOutputInto]]:
+        return expansion_invocation(self, invoker, MergeInputTo, MergeOutputInto)
+
+    def __call__(
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        a, b = executor.tuplate(wires[0])
+        executor.connect(b, port)
+
+        if isinstance(port, Erasure):
+            if port.value:
+                (x, y), z = merge_invocation(_push, executor)
+                [
+                    input_x,
+                ] = borrow_registers(
+                    [as_from_register(a, self.ref_adapter, executor)], z
+                )
+                send_value(input_x, x)
+                send_value(as_from_register(port.value, ValueAdapter(), executor), y)
+                return
+
+        self.ref_adapter.close(a, executor)
 
 
 @dataclasses.dataclass

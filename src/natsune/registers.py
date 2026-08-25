@@ -10,7 +10,6 @@ from natsune.ports import ConstantValuePort, Graft, Port, Target, Wire, WirePort
 __all__ = [
     "FromRegister",
     "ToRegister",
-    "Register",
     "InterfaceRegister",
     "FlowRegister",
     "as_to_register",
@@ -312,7 +311,7 @@ def send_values(
                 f"Cannot commute values because they have incompatible shapes."
             )
 
-    for from_register, to_register in zip(from_registers, to_registers):
+    for from_register, to_register in zip(from_registers, to_registers, strict=True):
         send_value(from_register, to_register)
 
 

@@ -22,6 +22,7 @@ from natsune.adapters import (
 from natsune.connector import Connector
 from natsune.control_flow import (
     ConcurrentValueMerge,
+    ExceptionSink,
     FlowVariableMap,
     IfThenElse,
     IfThenElseStatement,
@@ -291,11 +292,12 @@ class InetFunctionCompiler:
     ) -> tuple[Sequence[ToRegister], FromRegister]:
         with self.compiled.invocation(connector) as invocation:
             variable_inputs = invocation.port.variables.readin().split()
-            for input in variable_inputs[len(self.args) :]:
+            variable_inputs[0].close()
+            for input in variable_inputs[len(self.args) + 1 :]:
                 input.close()
 
             return (
-                variable_inputs[: len(self.args)],
+                variable_inputs[1 : len(self.args) + 1],
                 invocation.wire.return_value.readout(),
             )
 
@@ -311,7 +313,7 @@ def _try_iter(i: Iterator) -> Any:
 class InetBranchCompiler:
     function_compiler: InetFunctionCompiler
     flow: VariablesFlow
-    capture_exceptions: bool
+    should_capture_exceptions: bool
 
     def new_branch(self, capture_exceptions: bool | None = None) -> InetBranchCompiler:
         return InetBranchCompiler(
@@ -323,7 +325,7 @@ class InetBranchCompiler:
             (
                 bool(capture_exceptions)
                 if capture_exceptions is not None
-                else bool(self.capture_exceptions)
+                else bool(self.should_capture_exceptions)
             ),
         )
 
@@ -334,7 +336,7 @@ class InetBranchCompiler:
                 variables=Variables(self.function_compiler.variables),
                 return_adapter=ValueAdapter(),
             ),
-            self.capture_exceptions,
+            self.should_capture_exceptions,
         )
 
     def evaluate_to_expression(self, expr: ast.expr) -> ToRegister:
@@ -363,9 +365,11 @@ class InetBranchCompiler:
         rhs_register = as_to_register(x1, ValueAdapter(), self.flow)
 
         (a, b), c = merge_invocation(exec_expression, self.flow)
+        c1, c2 = c.duplicate("share")
+        self.collect_exceptions(c2).close()
 
         send_value(as_constant_register(inner, self.flow), a)
-        send_value(rewriter.construct_context(c), b)
+        send_value(rewriter.construct_context(c1), b)
 
         return rhs_register
 
@@ -391,7 +395,7 @@ class InetBranchCompiler:
                 for input_register, arg in zip(inputs, expr.args, strict=True):
                     send_value(self.evaluate_from_expression(arg), input_register)
 
-                return output
+                return self.collect_exceptions(output)
 
         if isinstance(expr, ast.Name):
             if expr.id not in self.function_compiler.used_as_globals:
@@ -480,7 +484,19 @@ class InetBranchCompiler:
         c1, c2 = c.duplicate("share")
         send_value(as_constant_register(inner, self.flow), a)
         send_value(rewriter.construct_context(c2), b)
-        return c1
+
+        return self.collect_exceptions(c1)
+
+    def collect_exceptions(self, a: FromRegister) -> FromRegister:
+        if self.should_capture_exceptions:
+            with ExceptionSink(a.adapter).invocation(self.flow) as sink_invocation:
+                send_value(a, sink_invocation.port.readin())
+                send_value(
+                    self.flow.exceptions.readout(),
+                    sink_invocation.wire.second_value.readin(),
+                )
+                return sink_invocation.wire.result.readout()
+        return a
 
     def parse_deconstruct_iter(self, deconstructor_expr: ast.expr) -> VariablesFlow:
         with VariablesFlow(
@@ -488,7 +504,7 @@ class InetBranchCompiler:
             return_adapter=ValueAdapter(),
         ) as true_case:
             true_branch = InetBranchCompiler(
-                self.function_compiler, true_case, self.capture_exceptions
+                self.function_compiler, true_case, self.should_capture_exceptions
             )
             send_value(
                 true_case.flow_input.value.readout(),

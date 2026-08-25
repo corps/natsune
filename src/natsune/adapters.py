@@ -3,6 +3,7 @@ from enum import IntEnum
 from functools import cached_property
 from typing import (
     Any,
+    ClassVar,
     Iterator,
     MutableMapping,
     Protocol,
@@ -297,7 +298,12 @@ class Variables(MutableMapping[str, Adapter]):
 
     @cached_property
     def adapter(self) -> ParValueAdapter:
-        return ParValueAdapter(list(self.variables.values()))
+        return ParValueAdapter(
+            [
+                ReferenceAdapter(ValueAdapter()),
+                *self.variables.values(),
+            ]
+        )
 
     def __setitem__(self, key, value, /):
         self.variables[key] = value
