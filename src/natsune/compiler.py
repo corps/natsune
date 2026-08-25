@@ -12,6 +12,7 @@ from functools import cached_property
 from typing import Any, Callable, Iterable, Iterator, Sequence, cast, get_type_hints
 
 from natsune.adapters import (
+    VA,
     Adapter,
     ParValueAdapter,
     TypeExpression,
@@ -197,7 +198,7 @@ class InetFunctionCompiler:
         inet = self.lookup_inet(node)
         if inet is not None:
             return adapter_from_type(inet.return_annot)
-        return ValueAdapter()
+        return VA
 
     def evaluate_subscript(self, base: ParValueAdapter, slice: ast.expr) -> int:
         if not isinstance(slice, ast.Constant) or not isinstance(slice.value, int):
@@ -242,7 +243,7 @@ class InetFunctionCompiler:
                 slice_solution = self.evaluate_subscript(base, node.slice)
                 return base.concurrent_items[slice_solution]
 
-        return ValueAdapter()
+        return VA
 
     @cached_property
     def return_annot(self) -> TypeExpression | None:
@@ -334,7 +335,7 @@ class InetBranchCompiler:
             self.function_compiler,
             VariablesFlow(
                 variables=Variables(self.function_compiler.variables),
-                return_adapter=ValueAdapter(),
+                return_adapter=VA,
             ),
             self.should_capture_exceptions,
         )
@@ -361,8 +362,8 @@ class InetBranchCompiler:
         inner += " = " + assigned
 
         x1, x2 = Wire.as_interface()
-        rewriter.used_names[assigned] = as_from_register(x2, ValueAdapter(), self.flow)
-        rhs_register = as_to_register(x1, ValueAdapter(), self.flow)
+        rewriter.used_names[assigned] = as_from_register(x2, VA, self.flow)
+        rhs_register = as_to_register(x1, VA, self.flow)
 
         (a, b), c = merge_invocation(exec_expression, self.flow)
         c1, c2 = c.duplicate("share")
@@ -501,7 +502,7 @@ class InetBranchCompiler:
     def parse_deconstruct_iter(self, deconstructor_expr: ast.expr) -> VariablesFlow:
         with VariablesFlow(
             variables=self.flow.variables,
-            return_adapter=ValueAdapter(),
+            return_adapter=VA,
         ) as true_case:
             true_branch = InetBranchCompiler(
                 self.function_compiler, true_case, self.should_capture_exceptions
@@ -521,7 +522,7 @@ class InetBranchCompiler:
 
         with VariablesFlow(
             variables=self.flow.variables,
-            return_adapter=ValueAdapter(),
+            return_adapter=VA,
         ) as false_case:
             send_value(
                 as_constant_register(False, false_case),
@@ -534,7 +535,7 @@ class InetBranchCompiler:
 
         with VariablesFlow(
             variables=self.flow.variables,
-            return_adapter=ValueAdapter(),
+            return_adapter=VA,
         ) as flow:
             input_variables = flow.variables_readout()
             input_iter = flow.flow_input.value.readout()
@@ -769,9 +770,7 @@ class InetBranchCompiler:
 
             if default_return_none:
                 send_value(
-                    as_from_register(
-                        ConstantValuePort(None), ValueAdapter(), self.flow
-                    ),
+                    as_from_register(ConstantValuePort(None), VA, self.flow),
                     self.flow.control_output.return_value.readin(),
                 )
             else:
@@ -807,7 +806,7 @@ class InetVariablesEvaluator(ast.NodeVisitor):
             self.compiler.variables[target.id] = adapter
 
     def visit_For(self, node):
-        adapter = ValueAdapter()
+        adapter = VA
 
         for target in ast.walk(node.target):
             if isinstance(target, ast.Name):
@@ -839,7 +838,7 @@ class InetVariablesEvaluator(ast.NodeVisitor):
 
     def visit_AugAssign(self, node):
         if isinstance(node.target, ast.Name):
-            adapter = ValueAdapter()
+            adapter = VA
             self.mark_assign_target(node.target, adapter)
 
     def visit_Assign(self, node):
@@ -857,7 +856,7 @@ class InetVariablesEvaluator(ast.NodeVisitor):
                 else:
                     for target in target.elts:
                         if isinstance(target, ast.Name):
-                            self.mark_assign_target(target, ValueAdapter())
+                            self.mark_assign_target(target, VA)
 
     def infer_expression_adapter(self, node: ast.expr) -> Adapter:
         if isinstance(node, ast.Call):

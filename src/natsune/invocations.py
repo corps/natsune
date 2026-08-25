@@ -8,7 +8,7 @@ from karakuri.call_mapping import CallMapping
 from karakuri.codegen_buffer import generate
 from karakuri.fielded import DataclassTyping
 
-from natsune.adapters import Adapter, ValueAdapter
+from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.connector import Connector
 from natsune.ports import (
     Expansion,
@@ -84,18 +84,18 @@ def merge_invocation(
 ) -> tuple[tuple[ToRegister, ToRegister], FromRegister]:
     port = ExtMergeFuncPort(fn)
     return (
-        as_to_register(port, ValueAdapter(), connector),
-        as_to_register(port.wires[0], ValueAdapter(), connector),
-    ), as_from_register(port.wires[1], ValueAdapter(), connector)
+        as_to_register(port, VA, connector),
+        as_to_register(port.wires[0], VA, connector),
+    ), as_from_register(port.wires[1], VA, connector)
 
 
 def split_invocation(
     fn: Callable[[Any], tuple[Any, Any]], connector: Connector
 ) -> tuple[ToRegister, tuple[FromRegister, FromRegister]]:
     port = ExtSplitFuncPort(fn)
-    return as_to_register(port, ValueAdapter(), connector), (
-        as_from_register(port.wires[0], ValueAdapter(), connector),
-        as_from_register(port.wires[1], ValueAdapter(), connector),
+    return as_to_register(port, VA, connector), (
+        as_from_register(port.wires[0], VA, connector),
+        as_from_register(port.wires[1], VA, connector),
     )
 
 

@@ -3,7 +3,14 @@ from typing import Any, Callable, Iterable, Literal, Protocol, Self, Sequence, c
 
 from karakuri.inference.mapping_inference import MappingInference
 
-from natsune.adapters import Adapter, ParValueAdapter, ReferenceAdapter, ValueAdapter
+from natsune.adapters import (
+    RA_VA,
+    VA,
+    Adapter,
+    ParValueAdapter,
+    ReferenceAdapter,
+    ValueAdapter,
+)
 from natsune.connector import Connector
 from natsune.ports import ConstantValuePort, Graft, Port, Target, Wire, WirePort
 
@@ -63,7 +70,7 @@ class ToRegister(Protocol):
 
 
 def as_constant_register(value: Any, connector: Connector) -> FromRegister:
-    return as_from_register(ConstantValuePort(value), ValueAdapter(), connector)
+    return as_from_register(ConstantValuePort(value), VA, connector)
 
 
 def as_from_register(target: Target, adapter: Adapter, c: Connector) -> FromRegister:
@@ -385,7 +392,7 @@ def serialize_values(
 ) -> tuple[Sequence[ToRegister], FromRegister]:
     result: list[ToRegister] = []
 
-    cur_acc = _FromRegister(ConstantValuePort(()), ValueAdapter(), connector)
+    cur_acc = _FromRegister(ConstantValuePort(()), VA, connector)
 
     for _ in range(count):
         cur_acc, next_n = fold_merge(join, cur_acc)
@@ -459,9 +466,7 @@ def borrow_registers(
 
     connector = registers[0].connector
 
-    held_context = [
-        FlowRegister(ReferenceAdapter(ValueAdapter()), connector) for _ in registers
-    ]
+    held_context = [FlowRegister(RA_VA, connector) for _ in registers]
 
     # "cast" values into a reference
     send_values(registers, [r.readin() for r in held_context])

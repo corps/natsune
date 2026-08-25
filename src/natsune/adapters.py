@@ -292,6 +292,12 @@ class InverseAdapter(Adapter):
         return LinearWiringType.INVERSE
 
 
+# Global singleton instances
+# These are stateless frozen dataclasses, so a single instance can be reused everywhere
+VA = ValueAdapter()
+RA_VA = ReferenceAdapter(VA)
+
+
 @dataclasses.dataclass
 class Variables(MutableMapping[str, Adapter]):
     variables: dict[str, Adapter]
@@ -300,7 +306,7 @@ class Variables(MutableMapping[str, Adapter]):
     def adapter(self) -> ParValueAdapter:
         return ParValueAdapter(
             [
-                ReferenceAdapter(ValueAdapter()),
+                RA_VA,
                 *self.variables.values(),
             ]
         )
@@ -326,7 +332,7 @@ type TypeExpression = Any
 
 def adapter_from_type(te: TypeExpression | None) -> Adapter:
     if te is None:
-        return ValueAdapter()
+        return VA
 
     container = get_origin(te) or te
     args = get_args(te)
@@ -335,13 +341,13 @@ def adapter_from_type(te: TypeExpression | None) -> Adapter:
         if len(args) > 1:
             return ParValueAdapter([adapter_from_type(arg) for arg in args])
         else:
-            return ValueAdapter()
+            return VA
     elif container is Ref:
         if len(args) == 1:
             return ReferenceAdapter(adapter_from_type(args[0]))
-        return ReferenceAdapter(ValueAdapter())
+        return RA_VA
     elif container is Inverse:
         if len(args) == 1:
             return InverseAdapter(adapter_from_type(args[0]))
-        return InverseAdapter(ValueAdapter())
-    return ValueAdapter()
+        return InverseAdapter(VA)
+    return VA

@@ -161,12 +161,12 @@ def test_loop_basic(c: Calculus) -> None:
         orelse,
     ).invocation(c.executor) as loop_invocation:
         send_value(
-            as_constant_register((True, 0), c.executor),
+            as_constant_register((None, True, 0), c.executor),
             loop_invocation.port.variables.readin(),
         )
         send_value(loop_invocation.wire.finish_variables.readout(), c.to_key(0))
 
-    assert c.reduce_to_value(0) == (False, 1)
+    assert c.reduce_to_value(0) == (None, False, 1)
 
 
 def test_variables_readout(c: Calculus) -> None:
@@ -199,12 +199,12 @@ def test_variables_readout(c: Calculus) -> None:
 
     with vf.invocation(c.executor) as invocation:
         send_value(
-            as_constant_register((10, 20), c.executor),
+            as_constant_register((None, 10, 20), c.executor),
             invocation.port.variables.readin(),
         )
         send_value(invocation.wire.finish_variables.readout(), c.to_key(0))
 
-    assert c.reduce_to_value(0) == (23, 22)
+    assert c.reduce_to_value(0) == (None, 23, 22)
 
 
 def test_expansion_builder_interface_mutations(c: Calculus) -> None:

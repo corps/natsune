@@ -7,6 +7,8 @@ from typing import Any, Callable, Self, Sequence, Set
 from pygments.lexers.special import OutputLexer
 
 from natsune.adapters import (
+    RA_VA,
+    VA,
     Adapter,
     ParValueAdapter,
     ReferenceAdapter,
@@ -81,7 +83,7 @@ class FlowInput:
         return ParValueAdapter(
             [
                 variables.adapter,
-                ValueAdapter(),
+                VA,
             ]
         )
 
@@ -324,11 +326,11 @@ class ConcurrentValueMerge(ExpansionWithAdapters):
 
     @cached_property
     def input_adapter(self) -> Adapter:
-        return ParValueAdapter([ValueAdapter(), ValueAdapter()])
+        return ParValueAdapter([VA, VA])
 
     @cached_property
     def output_adapter(self) -> Adapter:
-        return ValueAdapter()
+        return VA
 
     def __copy__(self) -> Self:
         return self
@@ -371,7 +373,7 @@ class ConcurrentValueMerge(ExpansionWithAdapters):
 
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
         pair = AmbiguousPair()
-        pair_invocation = pair.invocation(exec, ValueAdapter())
+        pair_invocation = pair.invocation(exec, VA)
         left, right = as_from_register(port, self.input_adapter, exec).split()
 
         send_value(left, pair_invocation.i_value_1)
@@ -441,10 +443,12 @@ class VariablesFlow(ExpansionBuilder):
 
         input_variables = iter(self.flow_input.variables.split())
 
-        self.exceptions = FlowRegister(ReferenceAdapter(ValueAdapter()), self)
+        self.exceptions = FlowRegister(RA_VA, self)
         send_value(next(input_variables).readout(), self.exceptions.interface_readin())
 
-        for name, variable_input in zip(self.variables.keys(), input_variables):
+        for name, variable_input in zip(
+            self.variables.keys(), input_variables, strict=True
+        ):
             flow_register = self.variable_registers[name] = FlowRegister(
                 self.variables[name], self
             )
@@ -556,7 +560,7 @@ class ExceptionSink:
 
     @cached_property
     def ref_adapter(self) -> Adapter:
-        return ReferenceAdapter(ValueAdapter())
+        return RA_VA
 
     def invocation(
         self, invoker: Connector
@@ -578,7 +582,7 @@ class ExceptionSink:
                     [as_from_register(a, self.ref_adapter, executor)], z
                 )
                 send_value(input_x, x)
-                send_value(as_from_register(port.value, ValueAdapter(), executor), y)
+                send_value(as_from_register(port.value, VA, executor), y)
                 return
 
         self.ref_adapter.close(a, executor)
@@ -795,7 +799,7 @@ class IfThenElse(ExpansionWithAdapters):
 
     @cached_property
     def input_adapter(self) -> Adapter:
-        return ValueAdapter()  # value
+        return VA  # value
 
     @cached_property
     def expansion_inputs_adapter(self) -> Adapter:

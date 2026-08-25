@@ -2,7 +2,7 @@ import dataclasses
 from collections import defaultdict
 from typing import Any, Callable, Iterator, Literal, Self, Sequence
 
-from natsune.adapters import Adapter, ValueAdapter
+from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.ambiguous import AmbiguousPair
 from natsune.connector import Connector, serialize_active_pairs
 from natsune.executor import DeterministicSerialExecutor
@@ -143,15 +143,15 @@ class Calculus:
         return self[Erasure()]
 
     def to_key(self, key: int | Target, adapter: Adapter | None = None) -> ToRegister:
-        return as_to_register(self[key], adapter or ValueAdapter(), self.executor)
+        return as_to_register(self[key], adapter or VA, self.executor)
 
     def from_key(
         self, key: int | Target, adapter: Adapter | None = None
     ) -> FromRegister:
-        return as_from_register(self[key], adapter or ValueAdapter(), self.executor)
+        return as_from_register(self[key], adapter or VA, self.executor)
 
     def const(self, value: Any) -> FromRegister:
         return as_constant_register(value, self.executor)
 
     def erasure(self) -> FromRegister:
-        return as_from_register(Erasure(), ValueAdapter(), self.executor)
+        return as_from_register(Erasure(), VA, self.executor)
