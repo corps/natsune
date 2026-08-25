@@ -45,7 +45,7 @@ class Wire:
         )
 
     @classmethod
-    def as_tautology(cls) -> tuple[WirePort, Wire]:
+    def as_interface(cls) -> tuple[WirePort, Wire]:
         wp = WirePort()
         return wp, wp.wires[0]
 

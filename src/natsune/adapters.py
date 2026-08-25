@@ -52,7 +52,7 @@ class Adapter(Protocol):
 @dataclasses.dataclass(frozen=True, slots=True)
 class ValueAdapter(Adapter):
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
-        wp, w = Wire.as_tautology()
+        wp, w = Wire.as_interface()
         connector.connect(w, initial or Erasure())
         return wp
 
@@ -92,7 +92,7 @@ class ParValueAdapter(Adapter):
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
         if initial is not None:
             raise ValueError("Initial value not supported for par")
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         with connector.sequenced_tuplate_from(x2) as packing_iter:
             for adapter, wire in zip(self.concurrent_items, packing_iter):
                 connector.connect(adapter.initialize(connector), wire)
@@ -106,7 +106,7 @@ class ParValueAdapter(Adapter):
     def produce_egression(
         self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         with (
             connector.sequenced_tuplate_from(x2) as packing_iter,
             connector.sequenced_tuplate_from(given) as given_iter,
@@ -126,7 +126,7 @@ class ParValueAdapter(Adapter):
     def produce_ingression(
         self, taken: Wire, given: Wire, connector: Connector, share: bool = False
     ) -> Port:
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         with (
             connector.sequenced_tuplate_from(x2) as packing_iter,
             connector.sequenced_tuplate_from(given) as given_iter,
@@ -167,7 +167,7 @@ class ReferenceAdapter(Adapter):
         else:
             connector.connect(ref.wires[0], Erasure())
         self.inner.close(ref.wires[1], connector)
-        wp, w = Wire.as_tautology()
+        wp, w = Wire.as_interface()
         connector.connect(w, ref)
         return wp
 

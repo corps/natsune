@@ -80,14 +80,14 @@ class Connector(abc.ABC):
     def as_wire(self, port: Target) -> Wire:
         if isinstance(port, Wire):
             return port
-        p, w = Wire.as_tautology()
+        p, w = Wire.as_interface()
         self.connect_ports(port, p)
         return w
 
     def as_port(self, port: Target) -> Port:
         if isinstance(port, Port):
             return port
-        p, w = Wire.as_tautology()
+        p, w = Wire.as_interface()
         self.connect(w, port)
         return p
 

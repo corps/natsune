@@ -236,6 +236,41 @@ class SerialOr(ExpansionWithAdapters):
 
 
 @dataclasses.dataclass(frozen=True)
+class SerialLeftPass(ExpansionWithAdapters):
+    lhs: Adapter
+    rhs: Adapter
+
+    @cached_property
+    def input_adapter(self) -> Adapter:
+        return self.lhs
+
+    @cached_property
+    def output_adapter(self) -> Adapter:
+        return ParValueAdapter(
+            [
+                self.rhs,
+                self.rhs,
+            ]
+        )
+
+    def __call__(
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        if isinstance(port, Erasure):
+            executor.connect(wires[0], wires[1])
+            return
+
+        executor.annihilate(port)
+        executor.annihilate(wires[0])
+        executor.annihilate(wires[1])
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[ToInterfaceRegister, MergeOutputInto]]:
+        return expansion_invocation(self, invoker, MergeInputTo, MergeOutputInto)
+
+
+@dataclasses.dataclass(frozen=True)
 class SerialAnd(ExpansionWithAdapters):
     left: Adapter
     right: Adapter
@@ -411,7 +446,7 @@ class VariablesFlow(ExpansionBuilder):
     def variables_readout(
         self, flow_map: FlowVariableMap | None = None
     ) -> FromRegister:
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         readouts: list[FromRegister] = []
 
         for k, r in self.variable_registers.items():
@@ -445,7 +480,7 @@ class VariablesFlow(ExpansionBuilder):
     ) -> ToRegister:
         assert target_readin.connector == self
 
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         readins: list[ToRegister] = []
 
         for k, target in zip(self.variables, target_readin.split()):
@@ -477,6 +512,9 @@ class VariablesFlow(ExpansionBuilder):
     def invocation(
         self, invoker: Connector
     ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
+        if isinstance(invoker, VariablesFlow):
+            invoker.flow_map.update(self.flow_map)
+
         return expansion_invocation(self, invoker, FlowInputInto, FlowControlInto)
 
     def close(self) -> None:
@@ -532,6 +570,9 @@ class Loop(ExpansionWithAdapters):
     def invocation(
         self, invoker: Connector
     ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
+        if isinstance(invoker, VariablesFlow):
+            invoker.flow_map.update(self.flow_map)
+
         return expansion_invocation(self, invoker, FlowInputInto, FlowControlInto)
 
     def __copy__(self) -> Self:
@@ -754,3 +795,11 @@ class IfThenElseStatement(IfThenElse):
     @cached_property
     def flow_map(self) -> FlowVariableMap:
         return self.true_case.flow_map | self.false_case.flow_map
+
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[IfThenElseInputInto, IfThenElseOutputInto]]:
+        if isinstance(invoker, VariablesFlow):
+            invoker.flow_map.update(self.flow_map)
+
+        return super().invocation(invoker)

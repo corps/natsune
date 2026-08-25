@@ -73,7 +73,6 @@ unsupported_stmt: tuple[type[ast.stmt], ...] = (
     ast.AsyncFor,
     ast.AsyncWith,
     ast.Match,
-    ast.Try,
     ast.Assert,
     ast.Import,
     ast.ImportFrom,
@@ -342,7 +341,7 @@ class InetBranchCompiler:
         assigned = rewriter.random_identifier()
         inner += " = " + assigned
 
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         rewriter.used_names[assigned] = as_from_register(x2, ValueAdapter(), self.flow)
         rhs_register = as_to_register(x1, ValueAdapter(), self.flow)
 
@@ -412,7 +411,7 @@ class InetBranchCompiler:
             par_adapter = ParValueAdapter(
                 [register.adapter for register in inner_registers]
             )
-            x1, x2 = Wire.as_tautology()
+            x1, x2 = Wire.as_interface()
             to_register = as_to_register(x1, par_adapter, self.flow)
             send_values(inner_registers, to_register.split())
 
@@ -561,11 +560,8 @@ class InetBranchCompiler:
             body_iter
         )
 
-        self.flow.flow_map.update(continuation.flow_map)
-        self.flow.flow_map.update(control_flow_map)
-
-        x1, x2 = Wire.as_tautology()
-        y1, y2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
+        y1, y2 = Wire.as_interface()
 
         control_flow_continue_in = as_to_register(
             x1, self.flow.variables.adapter, self.flow

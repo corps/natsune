@@ -127,7 +127,7 @@ class _FromRegister:
             return selection.wire.result.readout()
 
     def __add__(self, other: FromRegister) -> FromRegister:
-        x1, x2 = Wire.as_tautology()
+        x1, x2 = Wire.as_interface()
         assert isinstance(other, _FromRegister)
 
         with self.connector.sequenced_tuplate_from(x1) as packing_iter:
@@ -192,7 +192,7 @@ class InterfaceRegister:
 
     def __post_init__(self):
         if self.interface is None or self.state is None:
-            self.state, self.interface = Wire.as_tautology()
+            self.state, self.interface = Wire.as_interface()
 
     def extend(self) -> tuple[Wire, Wire]:
         take, give = Wire(), Wire()
@@ -399,7 +399,7 @@ def join_to_registers(
     registers: Sequence[ToRegister], connector: Connector
 ) -> ToRegister:
     par_adapter = ParValueAdapter([register.adapter for register in registers])
-    x1, x2 = Wire.as_tautology()
+    x1, x2 = Wire.as_interface()
     from_register = as_from_register(x1, par_adapter, connector)
     send_values(from_register.split(), registers)
 
@@ -414,7 +414,7 @@ def join_from_registers(
     registers: Sequence[FromRegister], connector: Connector
 ) -> FromRegister:
     par_adapter = ParValueAdapter([register.adapter for register in registers])
-    x1, x2 = Wire.as_tautology()
+    x1, x2 = Wire.as_interface()
     to_register = as_to_register(x1, par_adapter, connector)
     send_values(registers, to_register.split())
 
