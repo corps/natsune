@@ -178,15 +178,7 @@ class InetFunctionCompiler:
                 variables=Variables(self.variables),
                 return_adapter=adapter_from_type(self.return_annot),
             ),
-        )
-
-    def new_test(self) -> InetBranchCompiler:
-        return InetBranchCompiler(
-            self,
-            VariablesFlow(
-                variables=Variables(self.variables),
-                return_adapter=ValueAdapter(),
-            ),
+            False,
         )
 
     def syntax_error(self, node: ast.AST, message: str) -> SyntaxError:
@@ -319,6 +311,31 @@ def _try_iter(i: Iterator) -> Any:
 class InetBranchCompiler:
     function_compiler: InetFunctionCompiler
     flow: VariablesFlow
+    capture_exceptions: bool
+
+    def new_branch(self, capture_exceptions: bool | None = None) -> InetBranchCompiler:
+        return InetBranchCompiler(
+            self.function_compiler,
+            VariablesFlow(
+                variables=Variables(self.function_compiler.variables),
+                return_adapter=adapter_from_type(self.function_compiler.return_annot),
+            ),
+            (
+                bool(capture_exceptions)
+                if capture_exceptions is not None
+                else bool(self.capture_exceptions)
+            ),
+        )
+
+    def new_test(self) -> InetBranchCompiler:
+        return InetBranchCompiler(
+            self.function_compiler,
+            VariablesFlow(
+                variables=Variables(self.function_compiler.variables),
+                return_adapter=ValueAdapter(),
+            ),
+            self.capture_exceptions,
+        )
 
     def evaluate_to_expression(self, expr: ast.expr) -> ToRegister:
         if isinstance(expr, ast.Name):
@@ -470,7 +487,9 @@ class InetBranchCompiler:
             variables=self.flow.variables,
             return_adapter=ValueAdapter(),
         ) as true_case:
-            true_branch = InetBranchCompiler(self.function_compiler, true_case)
+            true_branch = InetBranchCompiler(
+                self.function_compiler, true_case, self.capture_exceptions
+            )
             send_value(
                 true_case.flow_input.value.readout(),
                 true_branch.evaluate_to_expression(deconstructor_expr),
@@ -536,7 +555,7 @@ class InetBranchCompiler:
             return flow
 
     def parse_test(self, test_expr: ast.expr) -> VariablesFlow:
-        branch = self.function_compiler.new_test()
+        branch = self.new_test()
         test_result = branch.evaluate_from_expression(test_expr)
         send_value(
             test_result,
@@ -556,9 +575,7 @@ class InetBranchCompiler:
         control_flow_map: FlowVariableMap,
         resolve_continuation_eagerly: bool,
     ):
-        continuation = self.function_compiler.new_branch().parse_statement_body(
-            body_iter
-        )
+        continuation = self.new_branch().parse_statement_body(body_iter)
 
         x1, x2 = Wire.as_interface()
         y1, y2 = Wire.as_interface()
@@ -621,7 +638,9 @@ class InetBranchCompiler:
             )
 
     def parse_statement_body(
-        self, body: Iterable[ast.stmt], default_return_none: bool = False
+        self,
+        body: Iterable[ast.stmt],
+        default_return_none: bool = False,
     ) -> VariablesFlow:
         body_iter = iter(body)
 
@@ -660,12 +679,8 @@ class InetBranchCompiler:
                             if isinstance(stmt, ast.For)
                             else self.parse_test(stmt.test)
                         ),
-                        self.function_compiler.new_branch().parse_statement_body(
-                            stmt.body
-                        ),
-                        self.function_compiler.new_branch().parse_statement_body(
-                            stmt.orelse
-                        ),
+                        self.new_branch().parse_statement_body(stmt.body),
+                        self.new_branch().parse_statement_body(stmt.orelse),
                     )
 
                     with (loop.invocation(self.flow) as for_invocation,):
@@ -690,16 +705,8 @@ class InetBranchCompiler:
                         return self.flow
 
                 elif isinstance(stmt, ast.If):
-                    true_case = (
-                        self.function_compiler.new_branch().parse_statement_body(
-                            stmt.body
-                        )
-                    )
-                    false_case = (
-                        self.function_compiler.new_branch().parse_statement_body(
-                            stmt.orelse
-                        )
-                    )
+                    true_case = self.new_branch().parse_statement_body(stmt.body)
+                    false_case = self.new_branch().parse_statement_body(stmt.orelse)
 
                     conditional = IfThenElseStatement(true_case, false_case)
 

@@ -6,6 +6,7 @@ from typing import Any, Callable, Self, Sequence, Set
 from natsune.adapters import (
     Adapter,
     ParValueAdapter,
+    ReferenceAdapter,
     ValueAdapter,
     Variables,
 )
@@ -59,6 +60,7 @@ from natsune.registers import (
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
+    as_constant_register,
     as_from_register,
     as_to_register,
     join_from_registers,
@@ -423,6 +425,7 @@ class FlowVariableMap:
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
+    exceptions: FlowRegister = dataclasses.field(init=False)
 
     input_adapter: Adapter = dataclasses.field(init=False)
     output_adapter: Adapter = dataclasses.field(init=False)
@@ -433,6 +436,7 @@ class VariablesFlow(ExpansionBuilder):
     def __post_init__(self) -> None:
         self.input_adapter = FlowInput.adapter(self.variables)
         self.output_adapter = FlowControl.adapter(self.return_adapter, self.variables)
+        self.exceptions = FlowRegister(ReferenceAdapter(ValueAdapter()), self)
 
         for name, variable_input in zip(
             self.variables.keys(), self.flow_input.variables.split()
@@ -522,6 +526,7 @@ class VariablesFlow(ExpansionBuilder):
             register.close()
         closer(self.flow_input).close()
         closer(self.control_output).close()
+        self.exceptions.close()
         optimize(self, self.active_pairs)
 
 
