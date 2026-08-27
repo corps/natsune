@@ -7,6 +7,7 @@ from contextlib import AbstractContextManager
 from functools import cached_property
 from typing import TYPE_CHECKING, Callable, Generator, Iterator, Self, Sequence
 
+from natsune.deque import cas_ptr
 from natsune.ports import (
     CombPort,
     Erasure,
@@ -37,10 +38,14 @@ __all__ = [
 
 
 def connect_wire_to_port(connector: Connector, wire: Wire, port: Port) -> None:
-    old = wire.target
-    wire.target = port
-    if old is not None:
-        connector.connect_ports(old, port)
+    # Spin is required when cas ptr fails but the wire.target is not ready to be read
+    while True:
+        if cas_ptr(wire.state, 0, 1):
+            wire.target = port
+            break
+        elif (old := wire.target) is not None:
+            connector.connect_ports(old, port)
+            break
 
 
 def connect_wire_to_wire(connector: Connector, l: Wire, r: Wire) -> None:

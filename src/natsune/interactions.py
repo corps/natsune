@@ -35,7 +35,7 @@ def execute_ext_merge_func(
     rhs = l.wires[0].target
 
     if isinstance(rhs, ValuePort):
-        l.wires[0].target = None
+        l.wires[0] = Wire()
         if l.swapped:
             try:
                 result = ValuePort(l.fn(rhs.value, r.value))

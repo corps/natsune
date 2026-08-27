@@ -1,4 +1,5 @@
 import copy
+import ctypes
 import dataclasses
 from typing import (
     TYPE_CHECKING,
@@ -28,9 +29,10 @@ class Port:
         return copy
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class Wire:
     target: Port | None = None
+    state: ctypes.c_int64 = dataclasses.field(default_factory=lambda: ctypes.c_int64(0))
 
     def __hash__(self) -> int:
         return id(self)
@@ -42,6 +44,7 @@ class Wire:
         return dataclasses.replace(
             self,
             target=copy.copy(self.target) if self.target else None,
+            state=ctypes.c_int64(self.state.value),
         )
 
     @classmethod
