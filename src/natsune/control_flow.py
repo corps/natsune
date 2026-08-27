@@ -1,3 +1,4 @@
+import ctypes
 import dataclasses
 from functools import cached_property
 from typing import Any, Callable, Self, Sequence
@@ -9,7 +10,6 @@ from natsune.adapters import (
     ParValueAdapter,
     Variables,
 )
-from natsune.ambiguous import AmbiguousPair
 from natsune.connector import (
     Connector,
     ExpansionBuilder,
@@ -27,6 +27,7 @@ from natsune.control_flow_generated import (
     MergeOutputInto,
     ParallelMergeInputInto,
 )
+from natsune.deque import cas_ptr
 from natsune.invocations import (
     LHS,
     RHS,
@@ -47,6 +48,8 @@ from natsune.invocations import (
 from natsune.optimizer import optimize
 from natsune.ports import (
     Erasure,
+    Expansion,
+    Graft,
     Port,
     ValuePort,
     Wire,
@@ -64,6 +67,40 @@ from natsune.registers import (
     send_value,
     send_values,
 )
+
+
+@dataclasses.dataclass(slots=True)
+class AmbiguousPair(Expansion):
+    copied: ctypes.c_int64 = dataclasses.field(
+        default_factory=lambda: ctypes.c_int64(0)
+    )
+
+    def invocation(self, invoker: Connector, adapter: Adapter) -> "AmbiguousInvocation":
+        graft_1 = Graft(self, wires=[Wire(), Wire()])
+        graft_2 = Graft(self, wires=graft_1.wires)
+        input_1 = as_to_register(graft_1, adapter, invoker)
+        input_2 = as_to_register(graft_2, adapter, invoker)
+        output_1 = as_from_register(graft_1.wires[0], adapter, invoker)
+        output_2 = as_from_register(graft_1.wires[1], adapter, invoker)
+        return AmbiguousInvocation(input_1, input_2, output_1, output_2)
+
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
+        if cas_ptr(self.copied, 0, 1):
+            exec.connect(port, wires[0])
+            return
+
+        exec.connect(port, wires[1])
+
+    def __copy__(self) -> "AmbiguousPair":
+        return AmbiguousPair()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AmbiguousInvocation:
+    i_value_1: ToRegister
+    i_value_2: ToRegister
+    o_first_value: FromRegister
+    o_second_value: FromRegister
 
 
 @dataclasses.dataclass

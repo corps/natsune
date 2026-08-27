@@ -3,8 +3,8 @@ from collections import defaultdict
 from typing import Any, Callable, Iterator, Literal, Self, Sequence
 
 from natsune.adapters import VA, Adapter, ValueAdapter
-from natsune.ambiguous import AmbiguousPair
 from natsune.connector import Connector, serialize_active_pairs
+from natsune.control_flow import AmbiguousPair
 from natsune.executor import DeterministicSerialExecutor
 from natsune.optimizer import optimize
 from natsune.ports import (

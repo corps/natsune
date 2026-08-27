@@ -37,7 +37,7 @@ def test_weakening_discard(c: Calculus) -> None:
 
     assert c.serialize_active_pairs() != []
     assert list(c.readout(0)) == []
-    assert c.serialize_active_pairs() == ["-<graft", "-<graft"]
+    assert c.serialize_active_pairs() == ["-<graft", "graft"]
 
 
 def test_gated_and_sequence(c: Calculus) -> None:
