@@ -52,8 +52,10 @@ from natsune.registers import (
     as_constant_register,
     as_from_register,
     as_to_register,
+    as_value_register,
     borrow_registers,
     join_to_registers,
+    parallelize_value,
     send_value,
     send_values,
     serialize_values,
@@ -81,7 +83,7 @@ unsupported_stmt: tuple[type[ast.stmt], ...] = (
     ast.Global,
     ast.Nonlocal,
     ast.Raise,
-    ast.TryStar,
+    ast.Try,
     ast.TypeAlias,
     ast.Delete,
 )
@@ -310,6 +312,30 @@ def _try_iter(i: Iterator) -> Any:
         return None, False
 
 
+def _match_exception_group(
+    exceptions: list[Exception], handler_group: tuple | type | None
+) -> tuple[list, list]:
+    if handler_group is None:
+        return exceptions, []
+
+    matches: list[Exception] = []
+    remaining = [*exceptions]
+
+    while remaining:
+        e = remaining.pop(0)
+        if isinstance(e, ExceptionGroup):
+            matched_group, remaining_group = e.split(handler_group)
+            if matched_group:
+                matches.extend(matched_group.exceptions)
+            if remaining_group:
+                remaining.extend(remaining_group.exceptions)
+        else:
+            if isinstance(e, handler_group):
+                matches.append(e)
+
+    return matches, remaining
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class InetBranchCompiler:
     function_compiler: InetFunctionCompiler
@@ -499,7 +525,9 @@ class InetBranchCompiler:
                 return sink_invocation.wire.result.readout()
         return a
 
-    def parse_deconstruct_iter(self, deconstructor_expr: ast.expr) -> VariablesFlow:
+    def parse_deconstruct_iter(
+        self, deconstructor_expr: ast.expr | None
+    ) -> VariablesFlow:
         with VariablesFlow(
             variables=self.flow.variables,
             return_adapter=VA,
@@ -507,10 +535,11 @@ class InetBranchCompiler:
             true_branch = InetBranchCompiler(
                 self.function_compiler, true_case, self.should_capture_exceptions
             )
-            send_value(
-                true_case.flow_input.value.readout(),
-                true_branch.evaluate_to_expression(deconstructor_expr),
-            )
+            if deconstructor_expr is not None:
+                send_value(
+                    true_case.flow_input.value.readout(),
+                    true_branch.evaluate_to_expression(deconstructor_expr),
+                )
             send_value(
                 as_constant_register(True, true_case),
                 true_case.control_output.return_value.readin(),
@@ -545,7 +574,6 @@ class InetBranchCompiler:
                 _try_iter,
                 flow,
             )
-            # it receives the iter
             send_value(input_iter, try_iter_in)
 
             with IfThenElse(true_case, false_case).invocation(flow) as conditional:
@@ -571,6 +599,130 @@ class InetBranchCompiler:
 
             return flow
 
+    def parse_try_star(
+        self, stmt: ast.TryStar, body_iter: Iterable[ast.stmt]
+    ) -> VariablesFlow:
+        new_branch = self.new_branch(capture_exceptions=True)
+        send_value(
+            as_value_register([], new_branch.flow),
+            new_branch.flow.exceptions.readin(),
+        )
+        body_flow = new_branch.parse_statement_body(stmt.body)
+
+        with (body_flow.invocation(self.flow) as invocation,):
+            send_value(
+                self.flow.variables_readout(body_flow.flow_map),
+                invocation.port.variables.readin(),
+            )
+
+            self.wire_continuation(
+                invocation.wire,
+                self.new_branch().parse_try_fork(stmt, body_iter),
+                body_flow.flow_map,
+            )
+
+            return self.flow
+
+    def parse_try_handler(self, stmt: ast.TryStar, handler_idx: int) -> VariablesFlow:
+        if handler_idx > len(stmt.handlers):
+            # Exceptions are passed along at this point.
+            send_value(
+                self.flow.flow_input.variables.readout(),
+                self.flow.control_output.finish_variables.readin(),
+            )
+            return self.flow
+
+        handler_branch = self.new_branch()
+        handler = stmt.handlers[handler_idx]
+        handler_body = handler_branch.parse_statement_body(handler.body)
+
+        try:
+            handler_bundle = (
+                eval(ast.unparse(handler.type), self.function_compiler.globals)
+                if handler.type
+                else None
+            )
+        except Exception as e:
+            raise SyntaxError(
+                f"Could not resolve exception handler: {ast.unparse(handler.type) if handler.type else 'None'}"
+            )
+
+        split_input, (matched, remaining) = parallelize_value(self.flow, 2)
+        send_value(
+            send_parameters(
+                merge_invocation(_match_exception_group, self.flow),
+                (
+                    self.flow.exceptions.readout(),
+                    as_constant_register(handler_bundle, self.flow),
+                ),
+            ),
+            split_input,
+        )
+
+        send_value(remaining, self.flow.exceptions.readin())
+
+        loop = Loop(
+            self.parse_deconstruct_iter(
+                ast.Name(handler.name) if handler.name else None,
+            ),
+            handler_body,
+            self.new_branch().parse_statement_body([]),
+        )
+
+        with loop.invocation(self.flow) as invocation:
+            send_value(
+                send_parameter(
+                    filter_invocation(iter, self.flow),
+                    matched,
+                ),
+                invocation.port.value.readin(),
+            )
+
+            send_value(
+                self.flow.variables_readout(loop.flow_map),
+                invocation.port.variables.readin(),
+            )
+
+            self.wire_continuation(
+                invocation.wire,
+                self.new_branch().parse_try_handler(stmt, handler_idx + 1),
+                loop.flow_map,
+            )
+
+            return self.flow
+
+    def parse_try_fork(
+        self, stmt: ast.TryStar, body_iter: Iterable[ast.stmt]
+    ) -> VariablesFlow:
+        body_flow = self.new_branch().parse_statement_body(stmt.orelse)
+
+        has_exception = send_parameter(
+            filter_invocation(bool, self.flow), self.flow.exceptions.readout()
+        )
+
+        conditional = IfThenElseStatement(
+            self.new_branch().parse_try_handler(stmt, 0), body_flow
+        )
+
+        with conditional.invocation(self.flow) as invocation:
+            send_value(has_exception, invocation.port.readin())
+
+            with closer(
+                pack_into(invocation.wire.context, FlowInputInto)
+            ) as conditional_context:
+                send_value(
+                    self.flow.variables_readout(conditional.flow_map),
+                    conditional_context.variables.readin(),
+                )
+
+            self.wire_continuation(
+                pack_from(invocation.wire.result, FlowControlInto),
+                self.new_branch().parse_statement_body(body_iter),
+                conditional.flow_map,
+            )
+
+            return self.flow
+
     def parse_test(self, test_expr: ast.expr) -> VariablesFlow:
         branch = self.new_test()
         test_result = branch.evaluate_from_expression(test_expr)
@@ -588,12 +740,10 @@ class InetBranchCompiler:
     def wire_continuation(
         self,
         control: FlowControlInto,
-        body_iter: Iterable[ast.stmt],
+        continuation: VariablesFlow,
         control_flow_map: FlowVariableMap,
-        resolve_continuation_eagerly: bool,
     ):
-        continuation = self.new_branch().parse_statement_body(body_iter)
-
+        control_flow_map.shortcut(control)
         x1, x2 = Wire.as_interface()
         y1, y2 = Wire.as_interface()
 
@@ -612,11 +762,10 @@ class InetBranchCompiler:
         )
 
         with (continuation.invocation(self.flow) as continuation_invocation,):
-            # flows return exclusively and without need for variable management consideration.
             a = continuation_invocation.wire.return_value.readout()
             b = control.return_value.readout()
             send_value(
-                a | b if resolve_continuation_eagerly else b | a,
+                b | a,
                 self.flow.control_output.return_value.readin(),
             )
 
@@ -664,6 +813,7 @@ class InetBranchCompiler:
         with self.flow:
             for stmt in body_iter:
                 if isinstance(stmt, ast.Return):
+                    self.flow.flow_map.return_output = True
                     from_register = self.evaluate_from_expression(stmt.value)
                     send_value(
                         from_register, self.flow.control_output.return_value.readin()
@@ -716,10 +866,14 @@ class InetBranchCompiler:
                         )
 
                         self.wire_continuation(
-                            for_invocation.wire, body_iter, loop.flow_map, True
+                            for_invocation.wire,
+                            self.new_branch().parse_statement_body(body_iter),
+                            loop.flow_map,
                         )
 
                         return self.flow
+                elif isinstance(stmt, ast.TryStar):
+                    return self.parse_try_star(stmt, body_iter)
 
                 elif isinstance(stmt, ast.If):
                     true_case = self.new_branch().parse_statement_body(stmt.body)
@@ -743,9 +897,8 @@ class InetBranchCompiler:
 
                         self.wire_continuation(
                             pack_from(if_invocation.wire.result, FlowControlInto),
-                            body_iter,
+                            self.new_branch().parse_statement_body(body_iter),
                             conditional.flow_map,
-                            False,
                         )
 
                         return self.flow
@@ -758,22 +911,26 @@ class InetBranchCompiler:
                         self.flow.variables_readout(),
                         self.flow.control_output.break_variables.readin(),
                     )
+                    self.flow.flow_map.break_output = True
                     return self.flow
                 elif isinstance(stmt, ast.Continue):
                     send_value(
                         self.flow.variables_readout(),
                         self.flow.control_output.continue_variables.readin(),
                     )
+                    self.flow.flow_map.continue_output = True
                     return self.flow
                 else:
                     raise NotImplementedError
 
             if default_return_none:
+                self.flow.flow_map.return_output = True
                 send_value(
                     as_from_register(ConstantValuePort(None), VA, self.flow),
                     self.flow.control_output.return_value.readin(),
                 )
             else:
+                self.flow.flow_map.finish_output = True
                 send_value(
                     self.flow.variables_readout(),
                     self.flow.control_output.finish_variables.readin(),

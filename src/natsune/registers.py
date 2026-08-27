@@ -12,7 +12,15 @@ from natsune.adapters import (
     ValueAdapter,
 )
 from natsune.connector import Connector
-from natsune.ports import ConstantValuePort, Graft, Port, Target, Wire, WirePort
+from natsune.ports import (
+    ConstantValuePort,
+    Graft,
+    Port,
+    Target,
+    ValuePort,
+    Wire,
+    WirePort,
+)
 
 __all__ = [
     "FromRegister",
@@ -29,6 +37,7 @@ __all__ = [
     "borrow_registers",
     "serialize_values",
     "as_constant_register",
+    "as_value_register",
     "FromInterfaceRegister",
     "ToInterfaceRegister",
 ]
@@ -71,6 +80,10 @@ class ToRegister(Protocol):
 
 def as_constant_register(value: Any, connector: Connector) -> FromRegister:
     return as_from_register(ConstantValuePort(value), VA, connector)
+
+
+def as_value_register(value: Any, connector: Connector) -> FromRegister:
+    return as_from_register(ValuePort(value), VA, connector)
 
 
 def as_from_register(target: Target, adapter: Adapter, c: Connector) -> FromRegister:
@@ -238,6 +251,11 @@ class FromInterfaceRegister(InterfaceRegister):
         taken, given = self.extend()
         self.connector.annihilate(given)
         return _FromRegister(taken, self.adapter, self.connector)
+
+    def shortcut(self) -> None:
+        taken, given = self.extend()
+        self.connector.annihilate(taken)
+        self.connector.annihilate(given)
 
 
 class ToInterfaceRegister(InterfaceRegister):

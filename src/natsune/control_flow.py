@@ -413,16 +413,39 @@ class Tracer:
 
 @dataclasses.dataclass
 class FlowVariableMap:
-    usage: dict[str, FlowRegisterUsage] = dataclasses.field(default_factory=dict)
+    usage: dict[str, FlowRegisterUsage]
+    finish_output: bool
+    continue_output: bool
+    break_output: bool
+    return_output: bool
+
+    def shortcut(self, flow_control: FlowControlInto) -> None:
+        if not self.finish_output:
+            flow_control.finish_variables.shortcut()
+        if not self.continue_output:
+            flow_control.continue_variables.shortcut()
+        if not self.break_output:
+            flow_control.break_variables.shortcut()
+        if not self.return_output:
+            flow_control.return_value.shortcut()
+        pass
 
     def __or__(self, other: FlowVariableMap) -> FlowVariableMap:
         return FlowVariableMap(
-            {k: self.usage[k] | other.usage[k] for k in self.usage.keys()}
+            {k: self.usage[k] | other.usage[k] for k in self.usage.keys()},
+            self.finish_output | other.finish_output,
+            self.continue_output | other.continue_output,
+            self.break_output | other.break_output,
+            self.return_output | other.return_output,
         )
 
     def update(self, other: FlowVariableMap) -> None:
         for k, v in other.usage.items():
             self.usage[k] |= v
+        self.finish_output |= other.finish_output
+        self.continue_output |= other.continue_output
+        self.break_output |= other.break_output
+        self.return_output |= other.return_output
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -484,7 +507,13 @@ class VariablesFlow(ExpansionBuilder):
 
     @cached_property
     def flow_map(self) -> FlowVariableMap:
-        return FlowVariableMap({k: v.usage for k, v in self.variable_registers.items()})
+        return FlowVariableMap(
+            {k: v.usage for k, v in self.variable_registers.items()},
+            False,
+            False,
+            False,
+            False,
+        )
 
     def mapped_variables_readin(
         self,

@@ -6,11 +6,6 @@ from natsune.compiler import inet, InetFunctionCompiler
 from natsune.special_forms import Par, Ref, Inverse
 
 
-@pytest.fixture(scope="function")
-def c() -> Calculus:
-    return Calculus()
-
-
 @inet
 def basic(b: int) -> int:
     a = 10
