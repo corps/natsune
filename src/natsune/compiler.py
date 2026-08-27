@@ -707,16 +707,14 @@ class InetBranchCompiler:
         with conditional.invocation(self.flow) as invocation:
             send_value(has_exception, invocation.port.readin())
 
-            with closer(
-                pack_into(invocation.wire.context, FlowInputInto)
-            ) as conditional_context:
+            with closer(invocation.wire.context) as conditional_context:
                 send_value(
                     self.flow.variables_readout(conditional.flow_map),
                     conditional_context.variables.readin(),
                 )
 
             self.wire_continuation(
-                pack_from(invocation.wire.result, FlowControlInto),
+                invocation.wire.result,
                 self.new_branch().parse_statement_body(body_iter),
                 conditional.flow_map,
             )
@@ -887,16 +885,14 @@ class InetBranchCompiler:
                             if_invocation.port.readin(),
                         )
 
-                        with closer(
-                            pack_into(if_invocation.wire.context, FlowInputInto)
-                        ) as conditional_context:
+                        with closer(if_invocation.wire.context) as conditional_context:
                             send_value(
                                 self.flow.variables_readout(conditional.flow_map),
                                 conditional_context.variables.readin(),
                             )
 
                         self.wire_continuation(
-                            pack_from(if_invocation.wire.result, FlowControlInto),
+                            if_invocation.wire.result,
                             self.new_branch().parse_statement_body(body_iter),
                             conditional.flow_map,
                         )

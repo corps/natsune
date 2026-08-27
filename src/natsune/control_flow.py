@@ -1,18 +1,12 @@
 import dataclasses
-import operator
-from functools import cache, cached_property
-from multiprocessing import Value
-from typing import Any, Callable, Self, Sequence, Set
-
-from pygments.lexers.special import OutputLexer
+from functools import cached_property
+from typing import Any, Callable, Self, Sequence
 
 from natsune.adapters import (
     RA_VA,
     VA,
     Adapter,
     ParValueAdapter,
-    ReferenceAdapter,
-    ValueAdapter,
     Variables,
 )
 from natsune.ambiguous import AmbiguousPair
@@ -53,7 +47,6 @@ from natsune.invocations import (
 from natsune.optimizer import optimize
 from natsune.ports import (
     Erasure,
-    Graft,
     Port,
     ValuePort,
     Wire,
@@ -120,6 +113,12 @@ IfThenElseInputFrom = FromInterfaceRegister
 class IfThenElseOutput:
     context: LHS
     result: RHS
+
+
+@dataclasses.dataclass(slots=True)
+class IfThenElseStatementOutputInto:
+    context: FlowInputInto
+    result: FlowControlInto
 
 
 generate_register_pair_types(IfThenElseOutput)
@@ -819,7 +818,7 @@ class Loop(ExpansionWithAdapters):
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class IfThenElse(ExpansionWithAdapters):
+class IfThenElseBase(ExpansionWithAdapters):
     true_case: ExpansionWithAdapters
     false_case: ExpansionWithAdapters
 
@@ -849,13 +848,6 @@ class IfThenElse(ExpansionWithAdapters):
             ]
         )
 
-    def invocation(
-        self, invoker: Connector
-    ) -> closer[Invocation[IfThenElseInputInto, IfThenElseOutputInto]]:
-        return expansion_invocation(
-            self, invoker, IfThenElseInputInto, IfThenElseOutputInto
-        )
-
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
         if not isinstance(port, ValuePort):
             for wire in wires:
@@ -879,8 +871,17 @@ class IfThenElse(ExpansionWithAdapters):
             send_value(invocation.wire.readout(), conditional.result.readin())
 
 
+class IfThenElse(IfThenElseBase):
+    def invocation(
+        self, invoker: Connector
+    ) -> closer[Invocation[IfThenElseInputInto, IfThenElseOutputInto]]:
+        return expansion_invocation(
+            self, invoker, IfThenElseInputInto, IfThenElseOutputInto
+        )
+
+
 @dataclasses.dataclass(frozen=True)
-class IfThenElseStatement(IfThenElse):
+class IfThenElseStatement(IfThenElseBase):
     true_case: VariablesFlow
     false_case: VariablesFlow
 
@@ -890,8 +891,10 @@ class IfThenElseStatement(IfThenElse):
 
     def invocation(
         self, invoker: Connector
-    ) -> closer[Invocation[IfThenElseInputInto, IfThenElseOutputInto]]:
+    ) -> closer[Invocation[IfThenElseInputInto, IfThenElseStatementOutputInto]]:
         if isinstance(invoker, VariablesFlow):
             invoker.flow_map.update(self.flow_map)
 
-        return super().invocation(invoker)
+        return expansion_invocation(
+            self, invoker, IfThenElseInputInto, IfThenElseStatementOutputInto
+        )
