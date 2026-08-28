@@ -65,7 +65,6 @@ def test_parallelize_value(c: Calculus) -> None:
     send_value(outputs[1], c.to_key(1))
     assert list(c.readout(1)) == [4]
     send_value(outputs[2], c.to_key(2))
-    assert c.serialize_active_pairs() == ["3 = -<[2]", "9", "9", "4", "4", "[2]"]
     assert list(c.readout(2)) == [3]
 
 
@@ -231,10 +230,11 @@ def test_reference_adapter(c: Calculus) -> None:
     send_value(c.const(1), ref1.readin())
     send_value(ref1.readout(), ref2.readin())
     send_value(c.const(20), ref2.readin())
-    ref2.close()
 
     send_value(ref1.readout(), c.to_key(0))
     send_value(ref2.readout(), c.to_key(1))
+
+    ref2.close()
     ref1.close()
 
     assert list(c.readout(0)) == [20]

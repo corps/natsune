@@ -41,6 +41,7 @@ def connect_wire_to_port(connector: Connector, wire: Wire, port: Port) -> None:
     # Spin is required when cas ptr fails but the wire.target is not ready to be read
     while True:
         if cas_ptr(wire.state, 0, 1):
+            assert wire.target is None
             wire.target = port
             break
         elif (old := wire.target) is not None:

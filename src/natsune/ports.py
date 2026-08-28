@@ -20,7 +20,10 @@ class Port:
     wires: MutableSequence[Wire]
 
     def __copy__(self) -> Self:
-        return copy.replace(self, wires=[*self.wires] if self.wires else self.wires)
+        return copy.replace(
+            self,
+            wires=([*self.wires] if self.wires else self.wires),
+        )
 
     def __replace__(self, /, **kv: Any) -> Self:
         copy = self.__copy__()
@@ -33,6 +36,10 @@ class Port:
 class Wire:
     target: Port | None = None
     state: ctypes.c_int64 = dataclasses.field(default_factory=lambda: ctypes.c_int64(0))
+
+    def __post_init__(self):
+        if self.target is not None:
+            self.state.value = 1
 
     def __hash__(self) -> int:
         return id(self)
@@ -130,6 +137,6 @@ class Graft(Port):
             return dataclasses.replace(
                 self,
                 execute=copy.copy(self.execute),
-                wires=[*self.wires] if self.wires else self.wires,
+                wires=([*self.wires] if self.wires else self.wires),
             )
         return dataclasses.replace(self)

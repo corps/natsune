@@ -2,6 +2,7 @@ import copy
 import dataclasses
 from typing import TYPE_CHECKING
 
+from natsune.deque import atomic_store
 from natsune.ports import (
     CombPort,
     Erasure,
@@ -35,7 +36,7 @@ def execute_ext_merge_func(
     rhs = l.wires[0].target
 
     if isinstance(rhs, ValuePort):
-        l.wires[0] = Wire()
+        connector.connect(l.wires[0], Erasure())
         if l.swapped:
             try:
                 result = ValuePort(l.fn(rhs.value, r.value))
