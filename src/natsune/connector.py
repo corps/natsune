@@ -2,12 +2,12 @@ import abc
 import contextlib
 import copy
 import dataclasses
+import threading
 from collections import defaultdict
 from contextlib import AbstractContextManager
 from functools import cached_property
 from typing import TYPE_CHECKING, Callable, Generator, Iterator, Self, Sequence
 
-from natsune.deque import cas_ptr
 from natsune.ports import (
     CombPort,
     Erasure,
@@ -36,17 +36,20 @@ __all__ = [
     "new_wires_cache",
 ]
 
+global_wire_lock = threading.Lock()
+
 
 def connect_wire_to_port(connector: Connector, wire: Wire, port: Port) -> None:
-    # Spin is required when cas ptr fails but the wire.target is not ready to be read
-    while True:
-        if cas_ptr(wire.state, 0, 1):
-            assert wire.target is None
+    old = None
+    with global_wire_lock:
+        if wire.target is None:
             wire.target = port
-            break
-        elif (old := wire.target) is not None:
-            connector.connect_ports(old, port)
-            break
+            return
+        else:
+            old = wire.target
+
+    if old is not None:
+        connector.connect_ports(old, port)
 
 
 def connect_wire_to_wire(connector: Connector, l: Wire, r: Wire) -> None:

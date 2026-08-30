@@ -2,7 +2,6 @@ import copy
 import dataclasses
 from typing import TYPE_CHECKING
 
-from natsune.deque import atomic_store
 from natsune.ports import (
     CombPort,
     Erasure,

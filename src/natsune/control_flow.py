@@ -1,4 +1,3 @@
-import ctypes
 import dataclasses
 from functools import cached_property
 from typing import Any, Callable, Self, Sequence
@@ -13,6 +12,7 @@ from natsune.adapters import (
 from natsune.connector import (
     Connector,
     ExpansionBuilder,
+    global_wire_lock,
     new_wires_cache,
     serialize_port,
 )
@@ -27,7 +27,6 @@ from natsune.control_flow_generated import (
     MergeOutputInto,
     ParallelMergeInputInto,
 )
-from natsune.deque import cas_ptr
 from natsune.invocations import (
     LHS,
     RHS,
@@ -71,9 +70,7 @@ from natsune.registers import (
 
 @dataclasses.dataclass(slots=True)
 class AmbiguousPair(Expansion):
-    copied: ctypes.c_int64 = dataclasses.field(
-        default_factory=lambda: ctypes.c_int64(0)
-    )
+    copied: int = 0
 
     def invocation(self, invoker: Connector, adapter: Adapter) -> "AmbiguousInvocation":
         graft_1 = Graft(self, wires=[Wire(), Wire()])
@@ -85,11 +82,16 @@ class AmbiguousPair(Expansion):
         return AmbiguousInvocation(input_1, input_2, output_1, output_2)
 
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
-        if cas_ptr(self.copied, 0, 1):
-            exec.connect(port, wires[0])
-            return
+        should_copy = False
+        with global_wire_lock:
+            if self.copied == 0:
+                self.copied = 1
+                should_copy = True
 
-        exec.connect(port, wires[1])
+        if should_copy:
+            exec.connect(port, wires[0])
+        else:
+            exec.connect(port, wires[1])
 
     def __copy__(self) -> "AmbiguousPair":
         return AmbiguousPair()
