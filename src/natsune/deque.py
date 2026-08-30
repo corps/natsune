@@ -1,5 +1,5 @@
 import threading
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 
 class IdleCounter:
@@ -21,7 +21,14 @@ class IdleCounter:
             self._value = 0
 
 
-class WorkStealingDequeue[A]:
+class WorkStealingDeque[A]:
+    """
+    A thread-safe deque with work stealing.
+    Uses standard Python threading.Lock for synchronization instead of CAS operations.
+    Under CPython's GIL, this provides equivalent performance to lock-free approaches
+    while being simpler, more maintainable, and more portable.
+    """
+
     __slots__ = (
         "left",
         "right",

@@ -6,18 +6,18 @@ Tests both the C extension (when available) and the pure Python fallback.
 
 import threading
 import time
-from natsune.deque import LockFreeDeque
+from natsune.deque import WorkStealingDeque
 
 
 def test_push_and_pop_single_item():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
     dq.push("task1")
     assert dq.pop() == "task1"
     assert dq.pop() is None
 
 
 def test_push_and_pop_multiple_items():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
     items = ["task1", "task2", "task3"]
 
     for item in items:
@@ -29,19 +29,19 @@ def test_push_and_pop_multiple_items():
 
 
 def test_pop_from_empty_deque():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
     result = dq.pop()
     assert result is None
 
 
 def test_steal_from_empty_deque():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
     result = dq.steal()
     assert result is None
 
 
 def test_steal_single_item():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
     dq.push("task1")
     result = dq.steal()
     assert result == "task1"
@@ -50,7 +50,7 @@ def test_steal_single_item():
 
 
 def test_steal_multiple_items():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
     items = ["task1", "task2", "task3"]
 
     for item in items:
@@ -61,7 +61,7 @@ def test_steal_multiple_items():
 
 
 def test_mixed_push_pop_steal():
-    dq = LockFreeDeque(16, 1)
+    dq = WorkStealingDeque(16, 1)
 
     dq.push("a")
     dq.push("b")
@@ -74,7 +74,7 @@ def test_mixed_push_pop_steal():
 
 
 def test_concurrent_steal():
-    dq = LockFreeDeque(128, 1)
+    dq = WorkStealingDeque(128, 1)
     stolen = []
     errors = []
 
@@ -107,7 +107,7 @@ def test_concurrent_steal():
 
 
 def test_producer_consumer():
-    dq = LockFreeDeque(1024, 1)
+    dq = WorkStealingDeque(1024, 1)
     total_items = 1000
     consumed = []
     errors = []
@@ -159,7 +159,7 @@ def test_producer_consumer():
 
 
 def test_stress_test():
-    dq = LockFreeDeque(1024, 1)
+    dq = WorkStealingDeque(1024, 1)
     errors = []
 
     def worker(worker_id, operations):

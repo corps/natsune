@@ -28,9 +28,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/natsune"]
 
-[tool.hatch.build.hooks.custom]
-path = "build_hooks.py"
-
 [dependency-groups]
 dev = []
 

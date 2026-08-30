@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from natsune.connector import Connector
-from natsune.deque import IdleCounter, LockFreeDeque
+from natsune.deque import IdleCounter, WorkStealingDeque
 from natsune.interactions import execute_interaction
 from natsune.ports import Port
 
@@ -43,7 +43,7 @@ class ThreadPoolExecutor(Executor):
     worker_queue_size_hint: int = 1024
     max_reentrant: int = 16
 
-    queues: list[LockFreeDeque[tuple[Port, Port]]] = dataclasses.field(
+    queues: list[WorkStealingDeque[tuple[Port, Port]]] = dataclasses.field(
         default_factory=list
     )
     running: bool = False
@@ -64,7 +64,7 @@ class ThreadPoolExecutor(Executor):
         # The actual worker threads will reuse these queues
         for _ in range(self.workers):
             self.queues.append(
-                LockFreeDeque(self.worker_queue_size_hint, self.max_reentrant)
+                WorkStealingDeque(self.worker_queue_size_hint, self.max_reentrant)
             )
 
     def run(self, end_event: threading.Event) -> None:
@@ -82,7 +82,7 @@ class ThreadPoolExecutor(Executor):
 @dataclasses.dataclass(slots=True)
 class ThreadWorker(Connector):
     idle_counter: IdleCounter
-    queues: list[LockFreeDeque[tuple[Port, Port]]]
+    queues: list[WorkStealingDeque[tuple[Port, Port]]]
     worker_id: int
     end_event: threading.Event
 
