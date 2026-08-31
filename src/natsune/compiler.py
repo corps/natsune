@@ -1004,12 +1004,15 @@ class InetVariablesEvaluator(ast.NodeVisitor):
                     adapter.concurrent_items
                 ) == len(target.elts):
                     for target, adapter in zip(target.elts, adapter.concurrent_items):
-                        if isinstance(target, ast.Name):
-                            self.mark_assign_target(target, adapter)
+                        for target in ast.walk(target):
+                            if isinstance(target, ast.Name):
+                                self.mark_assign_target(target, adapter)
                 else:
                     for target in target.elts:
-                        if isinstance(target, ast.Name):
-                            self.mark_assign_target(target, VA)
+                        for target in ast.walk(target):
+                            if isinstance(target, ast.Name):
+                                self.mark_assign_target(target, VA)
+        self.visit(node.value)
 
     def infer_expression_adapter(self, node: ast.expr) -> Adapter:
         if isinstance(node, ast.Call):
