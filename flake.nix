@@ -37,9 +37,6 @@
             source .venv/bin/activate
 
             pre-commit install -t pre-commit || true
-
-            # Ensure C extension can be built
-            # python -m pip install -e . --no-build-isolation || true
           '';
         };
 
