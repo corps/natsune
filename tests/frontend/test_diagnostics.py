@@ -30,11 +30,16 @@ class _Container:
         return a
 
 
+def _located_stmt() -> ast.stmt:
+    """A statement with real location info, as every `ast.parse` node has."""
+    return ast.parse("x = 1").body[0]
+
+
 # --- SourceMap.resolve: the pinned old arithmetic ---------------------------
 
 
 def test_resolve_applies_base_lineno_offset():
-    source = SourceMap("prog.py", base_lineno=10, fallback=Position(1, 0))
+    source = SourceMap("prog.py", base_lineno=10)
     func_def = parse_function("""
         def f():
             return 1
@@ -47,16 +52,23 @@ def test_resolve_applies_base_lineno_offset():
     assert source.resolve(ret) == Position(ret.lineno + 10 - 1, 4)
 
 
-def test_resolve_falls_back_for_nodes_without_location():
-    # `ast.Load` carries no lineno/col_offset — the old code's hasattr path.
-    source = SourceMap("prog.py", base_lineno=10, fallback=Position(1, 0))
-    assert source.resolve(ast.Load()) == Position(10, 0)
+def test_resolve_returns_none_for_nodes_without_location():
+    # `ast.Load` carries no lineno/col_offset, and SourceMap deliberately has
+    # no fallback: resolving is the caller's problem.
+    source = SourceMap("prog.py", base_lineno=10)
+    assert source.resolve(ast.Load()) is None
 
 
 def test_resolve_passes_column_through_untouched():
     # Column offsets get no base adjustment (pinning old behavior).
-    source = SourceMap("prog.py", base_lineno=5, fallback=Position(1, 7))
-    assert source.resolve(ast.Load()).col_offset == 7
+    source = SourceMap("prog.py", base_lineno=5)
+    func_def = parse_function("""
+        def f():
+            return 1
+        """)
+    ret = func_def.body[0]
+    assert ret.col_offset == 4
+    assert source.resolve(ret) == Position(ret.lineno + 5 - 1, 4)
 
 
 # --- Base-lineno offsets for real, non-top-of-module definitions ------------
@@ -70,7 +82,9 @@ def test_base_lineno_for_function_below_top_of_module():
     assert func_def.lineno == 1  # extracted snippet is numbered from 1
 
     ret = func_def.body[0]
-    assert source.resolve(ret).lineno == source.base_lineno + 1
+    resolved = source.resolve(ret)
+    assert resolved is not None
+    assert resolved.lineno == source.base_lineno + 1
 
 
 def test_base_lineno_for_indented_function():
@@ -82,15 +96,18 @@ def test_base_lineno_for_indented_function():
     assert func_def.col_offset == 0
 
     ret = func_def.body[0]
-    assert source.resolve(ret).lineno == source.base_lineno + 1
+    resolved = source.resolve(ret)
+    assert resolved is not None
+    assert resolved.lineno == source.base_lineno + 1
 
 
-def test_nodes_without_location_use_function_def_fallback():
+def test_locationless_nodes_return_none_and_callers_own_fallback():
     source, func_def = source_map_for(_module_level)
-    # Fallback resolves as func_def.lineno (1) + base_lineno - 1 = base_lineno.
-    assert source.resolve(ast.Load()) == Position(
-        source.base_lineno, func_def.col_offset
-    )
+    assert source.resolve(ast.Load()) is None
+    # The callsite owns the fallback — here, the FunctionDef context that
+    # `source_map_for` happens to have on hand.
+    position = source.resolve(ast.Load()) or source.resolve(func_def)
+    assert position == Position(source.base_lineno, func_def.col_offset)
 
 
 # --- CompileDiagnostic ------------------------------------------------------
@@ -104,7 +121,7 @@ def test_str_formatting():
 
 
 def test_at_resolves_node_position():
-    source = SourceMap("prog.py", base_lineno=10, fallback=Position(1, 0))
+    source = SourceMap("prog.py", base_lineno=10)
     node = parse_function("""
         def f():
             return 1
@@ -114,10 +131,29 @@ def test_at_resolves_node_position():
     assert diagnostic == CompileDiagnostic("boom", "prog.py", 12, 4, Severity.ERROR)
 
 
+def test_at_defaults_to_error_severity():
+    source = SourceMap("prog.py", 1)
+    diagnostic = CompileDiagnostic.at("x", _located_stmt(), source)
+    assert diagnostic is not None
+    assert diagnostic.severity is Severity.ERROR
+
+
+def test_at_returns_none_for_locationless_nodes():
+    source = SourceMap("prog.py", 1)
+    assert CompileDiagnostic.at("x", ast.Load(), source) is None
+
+
+def test_at_position_uses_caller_resolved_position():
+    source = SourceMap("prog.py", base_lineno=10)
+    diagnostic = CompileDiagnostic.at_position("where", source, Position(3, 4))
+    assert diagnostic == CompileDiagnostic("where", "prog.py", 3, 4, Severity.ERROR)
+
+
 def test_raised_matches_old_syntax_error_shape():
     source, func_def = source_map_for(_module_level)
     target = func_def.body[0]
     diagnostic = CompileDiagnostic.at("boom", target, source)
+    assert diagnostic is not None
 
     # The old inline expression, verbatim from `InetFunctionCompiler.syntax_error`.
     old = SyntaxError(
@@ -143,37 +179,55 @@ def test_raised_matches_old_syntax_error_shape():
 
 
 def test_sink_accumulates_in_order():
-    source = SourceMap("prog.py", 1, Position(1, 0))
+    source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
+    module = ast.parse("x = 1\ny = 2")
 
-    first = sink.error("first", ast.Constant(value=1), source)
-    second = sink.warning("second", ast.Constant(value=2), source)
+    first = sink.error("first", module.body[0], source)
+    second = sink.warning("second", module.body[1], source)
 
+    assert first is not None and second is not None
     assert list(sink.diagnostics) == [first, second]
     assert list(sink.errors) == [first]
     assert sink.has_errors
 
 
-def test_at_defaults_to_error_severity():
-    source = SourceMap("prog.py", 1, Position(1, 0))
-    diagnostic = CompileDiagnostic.at("x", ast.Load(), source)
-    assert diagnostic.severity is Severity.ERROR
+def test_error_records_nothing_for_locationless_nodes():
+    source = SourceMap("prog.py", 1)
+    sink = DiagnosticSink()
+
+    assert sink.error("lost", ast.Load(), source) is None
+    assert len(sink.diagnostics) == 0
+
+    # ...whereas a caller-resolved position can never be lost:
+    kept = sink.add_at("kept", source, Position(1, 0))
+    assert list(sink.diagnostics) == [kept]
+
+
+def test_add_at_records_at_explicit_position():
+    source = SourceMap("prog.py", base_lineno=10)
+    sink = DiagnosticSink()
+
+    diagnostic = sink.add_at("explicit", source, Position(12, 4))
+    assert diagnostic == CompileDiagnostic("explicit", "prog.py", 12, 4, Severity.ERROR)
+    assert list(sink.diagnostics) == [diagnostic]
 
 
 def test_raise_if_errors_ignores_warnings():
-    source = SourceMap("prog.py", 1, Position(1, 0))
+    source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
-    sink.warning("only a warning", ast.Load(), source)
+    sink.warning("only a warning", _located_stmt(), source)
 
     sink.raise_if_errors()  # does not raise
 
 
 def test_raise_if_errors_raises_first_error():
-    source = SourceMap("prog.py", 1, Position(1, 0))
+    source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
-    sink.warning("a warning", ast.Load(), source)
-    first = sink.error("first error", ast.Load(), source)
-    sink.error("second error", ast.Load(), source)
+    sink.warning("a warning", _located_stmt(), source)
+    first = sink.error("first error", _located_stmt(), source)
+    sink.error("second error", _located_stmt(), source)
+    assert first is not None
 
     with pytest.raises(SyntaxError) as excinfo:
         sink.raise_if_errors()
@@ -183,12 +237,25 @@ def test_raise_if_errors_raises_first_error():
 
 
 def test_fail_raises_immediately_and_records_nothing():
-    source = SourceMap("prog.py", 1, Position(1, 0))
+    source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
 
     with pytest.raises(SyntaxError, match="unreachable"):
-        sink.fail("unreachable state", ast.Load(), source)
+        sink.fail("unreachable state", _located_stmt(), source)
     assert len(sink.diagnostics) == 0
+
+
+def test_fail_uses_positionless_legacy_shape_without_location():
+    # Bare `raise SyntaxError(msg)` — the old compiler's other shape (e.g. the
+    # unsupported-args raise) — when even the defense path has no position.
+    source = SourceMap("prog.py", 1)
+    sink = DiagnosticSink()
+
+    with pytest.raises(SyntaxError, match="unreachable") as excinfo:
+        sink.fail("unreachable state", ast.Load(), source)
+    assert excinfo.value.msg == "unreachable state"
+    assert excinfo.value.filename is None
+    assert excinfo.value.lineno is None
 
 
 def test_inspect_sanity_for_helpers():

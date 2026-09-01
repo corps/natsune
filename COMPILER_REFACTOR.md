@@ -86,6 +86,11 @@ public `inet` decorator API is preserved (cutover is a paused phase).
   errors. (Note: this *moves* several checks that today fire during lowering —
   inet-call arity/keywords, Par subscript bounds, list-lvalue rejection — earlier.
   That is a deliberate, logged divergence: fail before any net construction.)
+- **No up-front fallbacks.** Position resolution returns `None` when a node
+  carries no location, rather than silently substituting a context-free default
+  recorded before the real context was known. Whether an unlocatable node is
+  worth reporting — and against which surrounding node — is a decision for the
+  callsite (see the Phase 0 decision note).
 - **Determinism by injection.** Fresh-name generation is an injected factory so
   rewrites are snapshot-stable.
 - **The IR is the inspectable layer.** Debugging, testing, and future
@@ -259,6 +264,23 @@ Units of work:
   cutover parity).
 - Position resolution including the base-lineno offset arithmetic that currently
   lives inline (`lineno + self.lineno - 1`); implemented and tested here once.
+- Decision (settled during Phase 1): position fallbacks are **caller-owned**.
+  A fixed fallback `Position` stored on `SourceMap` at extraction time presumes
+  knowledge about future diagnostic sites that the extractor cannot have — the
+  right context (a parent AST node, the enclosing statement, the start of the
+  block) exists at each callsite, not up front. So `SourceMap` carries only
+  `filename` and `base_lineno`; `resolve(node)` and `CompileDiagnostic.at(...)`
+  return `None` for nodes without `lineno`/`col_offset` (all-or-nothing: every
+  `ast.parse` node has both, hand-built nodes usually neither). Callsites that
+  must not lose a diagnostic resolve their own alternative — typically
+  `source.resolve(node) or source.resolve(parent_node)` — and pass it to
+  `CompileDiagnostic.at_position` / `DiagnosticSink.add_at`, which take the
+  resolved position verbatim. The node-based sink sugar (`error`/`warning`)
+  returns `CompileDiagnostic | None` and records nothing when the position is
+  undeterminable: the obligation is visible in the signature. The
+  immediate-raise defense path `fail` degrades to the positionless legacy
+  bare-raise shape `SyntaxError(message)` — which the old compiler also had
+  (e.g. the unsupported-args raise) — when even it has no position.
 - A collector/sink threaded through the context; policy: analysis phases
   accumulate, phase boundaries decide to raise or continue.
 - Decision to settle: hard errors during *paused lowering phases* should be
@@ -266,7 +288,9 @@ Units of work:
   defense.
 
 Tests: position formatting for nodes with and without location info; base-lineno
-offsets for functions defined below the top of a module.
+offsets for functions defined below the top of a module; caller-owned fallback
+chains (`resolve(node) or resolve(parent)`, `add_at`) and the None-return
+contract of `resolve`/`at`/`error`.
 
 ### Phase 1 — Source extraction (`source.py`)
 
@@ -281,6 +305,10 @@ Units of work:
 
 Tests: synthetic nested/indented function definitions (the
 `inspect.getsourcelines` behavior is subtle); AST shape and lineno bookkeeping.
+Phase 1 is also where the Phase 0 fallback question was settled — extraction
+has no basis to guess a default position, so fallbacks moved to callsites (see
+the Phase 0 decision note); `extract_source` supplies the start of the
+extracted block (in file coordinates) as its own callsite-level fallback.
 
 ### Phase 2 — Signature (`signature.py`)
 
@@ -454,6 +482,9 @@ log becomes the cutover checklist in phase 9.
 | 4 | Tuple-assignment targets silently get adapter `VA` when the value's Par arity doesn't match | `visit_Assign` | Make the mismatch a diagnostic |
 | 5 | Several checks (inet-call arity/keywords, Par subscript bounds, list lvalues) fire during *lowering*, after nets are partially constructed | `evaluate_special_form_from_expression`, `evaluate_subscript`, `evaluate_to_expression` | Move all validation to IR construction (already the plan, §3.3) — a logged divergence by construction |
 | 6 | Chained assignment `a = b = expr` wires `b` from `a`'s register rather than re-evaluating — subtle and untested | `parse_statement_body` Assign branch | Model explicitly in `IrAssign`; decide semantics once |
+| 7 | Indented definitions (methods, nested functions) crash the old compiler: `inspect.getsourcelines` returns an undented block, so `ast.parse` raises IndentationError before compilation even starts | `InetFunctionCompiler.func_def` (found while characterizing Phase 1) | `extract_source` dedents the extracted block; columns stay snippet-relative (understate by the stripped margin for indented defs) |
+| 8 | Positional parameter defaults are silently accepted and ignored: the old check rejects only `kw_defaults`/`kwonlyargs`/`kwarg`/`vararg`, so `def f(a, b=5)` compiles to a 2-arity net while Python callers may invoke it with one argument | `InetFunctionCompiler.args` (found during Phase 2) | Reject defaults at signature analysis — a defaulted param cannot be supplied through the net interface |
+| 9 | Positional-only parameters (`def f(a, /, b)`) are neither rejected nor included in `args` — silently dropped, producing a wrong-arity net | `InetFunctionCompiler.args` (found during Phase 2) | Reject at signature analysis; supporting them later means including them in `args` |
 
 ---
 

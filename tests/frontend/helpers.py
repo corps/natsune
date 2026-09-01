@@ -2,14 +2,20 @@
 
 Every phase function runs on synthetic input with no executor and no live net
 (COMPILER_REFACTOR.md §7); these helpers keep that one-liner shape. The module
-grows as phases land (`make_source`, `make_symbols`, `build_ir_for`, ...).
+grows as phases land (`make_symbols`, `build_ir_for`, ...).
 """
 
 import ast
 import inspect
+import itertools
+import linecache
 import textwrap
+from typing import Any
 
-from natsune.frontend.diagnostics import Position, SourceMap
+from natsune.frontend.diagnostics import SourceMap
+from natsune.frontend.source import FunctionSource, extract_source
+
+_snippet_counter = itertools.count(1)
 
 
 def parse_function(snippet: str) -> ast.FunctionDef:
@@ -21,19 +27,59 @@ def parse_function(snippet: str) -> ast.FunctionDef:
 
 
 def source_map_for(
-    func, filename: str = "prog.py"
+    func: Any, filename: str = "prog.py"
 ) -> tuple[SourceMap, ast.FunctionDef]:
-    """Build a `SourceMap` for a real function, mirroring the old `func_def`.
+    """Build a `SourceMap` for a real function via the phase-1 extractor."""
+    source = extract_source(func, globals=func.__globals__, filename=filename)
+    return source.source_map, source.func_def
 
-    Reproduces `InetFunctionCompiler.func_def`: `inspect.getsourcelines` for
-    the dedented snippet and base lineno, `ast.parse` of the snippet, and the
-    snippet-root `FunctionDef` as the fallback position.
+
+def make_source(
+    snippet: str,
+    *,
+    namespace: dict[str, Any] | None = None,
+    name: str | None = None,
+) -> FunctionSource:
+    """Extract a `FunctionSource` from a snippet, no real file needed.
+
+    Executes the (dedented) snippet and registers the text with `linecache`
+    under a unique filename, so `inspect.getsourcelines` inside
+    `extract_source` works naturally (CPython 3.14's `getsourcefile` accepts
+    linecache-only filenames). The snippet's `__globals__` is the returned
+    `FunctionSource.globals`, seeded with `namespace` — pass annotation
+    targets there (e.g. `{"Par": Par}`).
+
+    With several function definitions in the snippet, pass `name=`;
+    otherwise the snippet must define exactly one. Leading newlines are
+    stripped so the definition sits at snippet line 1 (`base_lineno == 1`).
     """
-    lines, base_lineno = inspect.getsourcelines(func)
-    func_def = parse_function("".join(lines))
-    source = SourceMap(
-        filename=filename,
-        base_lineno=base_lineno,
-        fallback=Position(func_def.lineno, func_def.col_offset),
+    text = textwrap.dedent(snippet).lstrip("\n")
+    filename = f"snippet_{next(_snippet_counter)}.py"
+
+    ns: dict[str, Any] = dict(namespace) if namespace else {}
+    before = set(ns)
+    exec(compile(text, filename, "exec"), ns)
+    linecache.cache[filename] = (
+        len(text),
+        None,
+        text.splitlines(keepends=True),
+        filename,
     )
-    return source, func_def
+
+    if name is not None:
+        func = ns[name]
+        assert callable(func), f"{name!r} is not callable"
+    else:
+        defined = [
+            value
+            for key, value in ns.items()
+            if key not in before and inspect.isfunction(value)
+        ]
+        if len(defined) != 1:
+            raise ValueError(
+                "snippet must define exactly one function"
+                f" (got {len(defined)}); pass name= to disambiguate"
+            )
+        func = defined[0]
+
+    return extract_source(func, globals=ns, filename=filename)
