@@ -157,7 +157,7 @@ def test_variables_flow_invocation(c: Calculus) -> None:
         flow.control_output.return_value.readin(),
     )
     optimize(flow, flow.active_pairs)
-    with flow.invocation(c.executor) as invocation:
+    with flow.invocation(c.executor, internal=True) as invocation:
         send_value(invocation.wire.return_value.readout(), c.to_key(0))
         send_value(c.const(10), invocation.port.value.readin())
     assert list(c.readout(0)) == [10]

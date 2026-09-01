@@ -197,7 +197,7 @@ def test_variables_readout(c: Calculus) -> None:
         )
         send_value(vf.variables_readout(), vf.control_output.finish_variables.readin())
 
-    with vf.invocation(c.executor) as invocation:
+    with vf.invocation(c.executor, internal=True) as invocation:
         send_value(
             as_constant_register((None, 10, 20), c.executor),
             invocation.port.variables.readin(),
