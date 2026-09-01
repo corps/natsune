@@ -50,6 +50,7 @@ class SortingWorld:
 
     def execute_swap(self, identity: int, target_identity: int) -> None:
         with self.lock:
+            print(f"Swapping {identity} and {target_identity}")
             a = self.agent_positions[identity]
             b = self.agent_positions[target_identity]
             self.agent_positions[identity] = a
@@ -62,6 +63,7 @@ class SortingWorld:
 
     def ask_self(self, identity: int) -> int:
         with self.lock:
+            print("meee?")
             return self.words[self.agent_positions[identity]]
 
     def ask_point(self, identity: int, delta: int) -> tuple[int, int] | None:
@@ -75,6 +77,7 @@ class SortingWorld:
 @inet
 def bubble_sort(world: SortingWorld, identity: int, universe: Universe) -> None:
     while True:
+        print("looping")
         self_val = world.ask_self(0)
         right = world.ask_point(identity, 1)
 
@@ -97,18 +100,19 @@ def bubble_sort(world: SortingWorld, identity: int, universe: Universe) -> None:
         if universe.mark_idle(identity):
             break
 
-    print("done")
-
 
 @inet(executor=ThreadPoolExecutor())
 def main() -> None:
-    world = SortingWorld([random.randint(1, 1000) for _ in range(300)])
-    universe = Universe(len(world.words))
-    result: None = None
-    for identity in range(len(world.words)):
-        result = result or bubble_sort(world, identity, universe)
-
-    return result
+    # world = SortingWorld([random.randint(1, 1000) for _ in range(30)])
+    # print(f"World {id(world)}")
+    # universe = Universe(len(world.words))
+    result = 0
+    for identity in range(20):
+        print(identity)
+        result += identity
+    #     result = result or bubble_sort(world, identity, universe)
+    #
+    # return result
 
 
 main()

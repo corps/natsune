@@ -293,7 +293,7 @@ class InetFunctionCompiler:
     def invocation(
         self, connector: Connector
     ) -> tuple[Sequence[ToRegister], FromRegister]:
-        with self.compiled.invocation(connector) as invocation:
+        with self.compiled.invocation(connector, internal=False) as invocation:
             variable_inputs = invocation.port.variables.readin().split()
             variable_inputs[0].close()
             for input in variable_inputs[len(self.args) + 1 :]:
@@ -609,7 +609,7 @@ class InetBranchCompiler:
         )
         body_flow = new_branch.parse_statement_body(stmt.body)
 
-        with (body_flow.invocation(self.flow) as invocation,):
+        with (body_flow.invocation(self.flow, internal=True) as invocation,):
             send_value(
                 self.flow.variables_readout(body_flow.flow_map),
                 invocation.port.variables.readin(),
@@ -759,7 +759,11 @@ class InetBranchCompiler:
             y2, self.flow.variables.adapter, self.flow
         )
 
-        with (continuation.invocation(self.flow) as continuation_invocation,):
+        with (
+            continuation.invocation(
+                self.flow, internal=False
+            ) as continuation_invocation,
+        ):
             a = continuation_invocation.wire.return_value.readout()
             b = control.return_value.readout()
             send_value(

@@ -4,6 +4,7 @@ import os
 import random
 import threading
 import time
+import traceback
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, cast
@@ -38,7 +39,6 @@ class DeterministicSerialExecutor(Executor):
 
 @dataclasses.dataclass(slots=True)
 class ThreadPoolExecutor(Executor):
-    # None implies let the system decide.
     workers: int = cast(Any, None)
     worker_queue_size_hint: int = 1024
     max_reentrant: int = 16
@@ -68,13 +68,20 @@ class ThreadPoolExecutor(Executor):
             )
 
     def run(self, end_event: threading.Event) -> None:
+        def print_worker_exception(future: concurrent.futures.Future[None]) -> None:
+            try:
+                future.result()
+            except Exception:
+                traceback.print_exc()
+                end_event.set()
+
         self.running = True
         try:
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.workers)
             with pool:
                 for i in range(self.workers):
                     worker = ThreadWorker(self.idle_counter, self.queues, i, end_event)
-                    pool.submit(worker)
+                    pool.submit(worker).add_done_callback(print_worker_exception)
         finally:
             self.running = False
 
@@ -94,7 +101,7 @@ class ThreadWorker(Connector):
         next_pair = q.pop()
 
         if next_pair is None:
-            idx = self.worker_id + 1 % len(self.queues)
+            idx = (self.worker_id + 1) % len(self.queues)
             while idx != self.worker_id:
                 if self.end_event.is_set():
                     return True
@@ -102,7 +109,7 @@ class ThreadWorker(Connector):
                 next_pair = q.steal()
                 if next_pair:
                     break
-                idx = idx + 1 % len(self.queues)
+                idx = (idx + 1) % len(self.queues)
 
         if next_pair:
             if self.end_event.is_set():
@@ -121,4 +128,4 @@ class ThreadWorker(Connector):
                 if self.idle_counter.signal(self.worker_id):
                     return
                 # Prevent busy sleep
-                time.sleep(0.001)
+                # time.sleep(0.001)

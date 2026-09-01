@@ -38,7 +38,7 @@ def use_references() -> int:
     return a
 
 
-@inet
+@inet(executor=ThreadPoolExecutor())
 def sum_it_up(start: int, end: int) -> int:
     total = 0
     for i in range(start, end):
@@ -85,7 +85,7 @@ def simple_inverse_loop_example(scale: int) -> int:
     return total
 
 
-@inet
+@inet(executor=ThreadPoolExecutor())
 def shift_list_by_smallest(l: list[int]) -> list[int]:
     if len(l) == 0:
         return []

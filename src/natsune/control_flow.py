@@ -593,7 +593,7 @@ class VariablesFlow(ExpansionBuilder):
         return self
 
     def invocation(
-        self, invoker: Connector
+        self, invoker: Connector, internal: bool
     ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
         if isinstance(invoker, VariablesFlow):
             invoker.flow_map.update(self.flow_map)
@@ -723,7 +723,7 @@ class Loop(ExpansionWithAdapters):
                 input_variables = inputs.variables.readout()
                 input_iter = inputs.value.readout()
 
-            with self.body.invocation(builder) as body_invocation:
+            with self.body.invocation(builder, internal=True) as body_invocation:
                 send_value(
                     input_variables,
                     body_invocation.port.variables.readin(),
@@ -802,7 +802,7 @@ class Loop(ExpansionWithAdapters):
             unpack_port_and_wires(
                 self, port, wires, executor, FlowInputFrom, FlowControlFrom
             ) as this_invocation,
-            self.iteration.invocation(executor) as iterable_invocation,
+            self.iteration.invocation(executor, internal=True) as iterable_invocation,
             self.conditional.invocation(executor) as conditional_invocation,
         ):
             input_iter, synchronized_iter = (
