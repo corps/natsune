@@ -1,16 +1,3 @@
-"""Phase 6c — the deterministic IR renderer (COMPILER_REFACTOR.md §3.4).
-
-`render_function(IrFunction)` produces a stable, indented S-expression-ish
-view of the IR — the backbone of golden tests and the primary tool for the
-"read the IR of real programs" evaluation checkpoint. Expressions carry a
-`:adapter` annotation; `include_positions=True` appends `@line:col` to every
-node header that has a position.
-
-Layout convention: a node's closing parenthesis attaches to the last line of
-its last child (or to its own header when it has no children), so there are
-no standalone `)` lines.
-"""
-
 import ast
 from collections.abc import Callable
 from typing import Any
@@ -80,15 +67,12 @@ def render_adapter(adapter) -> str:
 
 
 def render_function(function: IrFunction, *, include_positions: bool = False) -> str:
-    renderer = _Renderer(include_positions)
+    renderer = IrRenderer(include_positions)
     lines = renderer.function(function)
     return "\n".join(lines) + "\n"
 
 
-class _Renderer:
-    """Each render method returns a list of complete lines; a block's closing
-    parenthesis is attached to the last line of its last child."""
-
+class IrRenderer:
     def __init__(self, include_positions: bool) -> None:
         self.include_positions = include_positions
 
