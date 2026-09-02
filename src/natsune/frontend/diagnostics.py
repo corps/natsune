@@ -1,6 +1,5 @@
 import ast
 import dataclasses
-from collections.abc import Sequence
 from typing import NoReturn
 
 
@@ -25,8 +24,6 @@ class SourceMap:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CompileDiagnostic:
-    """One program-level diagnostic with its resolved source position."""
-
     message: str
     filename: str
     lineno: int

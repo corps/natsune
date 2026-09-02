@@ -1,31 +1,3 @@
-"""Phase 2 — signature analysis.
-
-Absorbs the old compiler's `args`, `return_annot` and `args_adapter` cached
-properties into one explicit pass producing a frozen `Signature`.
-
-Behavior notes and divergences (see COMPILER_REFACTOR.md §10):
-
-- The old rejection raised one positionless `SyntaxError`; here each rejected
-  feature becomes a positioned diagnostic and analysis continues (best-effort
-  `Signature`) — the phase boundary decides to raise. The `kw_defaults` check
-  of the old code is subsumed by the kw-only check (every `kw_defaults` entry
-  pairs with a kw-only arg).
-- Positional defaults, which the old check silently accepted (and ignored —
-  a defaulted param can't be supplied through the net interface), are now
-  rejected (§10 row 8).
-- Positional-only parameters, which the old code silently *dropped* from
-  `args` (wrong arity), are now rejected (§10 row 9).
-- `get_type_hints` failures (e.g. unresolvable annotation names — raw
-  NameError in the old code) become positioned diagnostics; analysis
-  continues with the unresolvable annotations treated as absent.
-
-Signature annotations are resolved with `get_type_hints`, deliberately NOT
-phase-3 `eval_annotation`: the old signature path used `get_type_hints`, and
-the plan's build order has signature analysis precede linking.
-
-None of this imports `natsune.compiler`.
-"""
-
 import ast
 import dataclasses
 from typing import get_type_hints
@@ -37,8 +9,6 @@ from natsune.frontend.source import FunctionSource
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Signature:
-    """The function's interface: positional params plus resolved adapters."""
-
     args: tuple[tuple[str, TypeExpression | None], ...]
     return_type: TypeExpression | None
     args_adapter: ParValueAdapter
@@ -50,7 +20,6 @@ class Signature:
 
 
 def analyze_signature(source: FunctionSource, sink: DiagnosticSink) -> Signature:
-    """Analyze `source`'s signature, reporting rejections via `sink`."""
     func_def = source.func_def
     arguments = func_def.args
     source_map = source.source_map

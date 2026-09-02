@@ -83,9 +83,6 @@ def collect_symbols(
     )
 
 
-# --- statement dispatch ------------------------------------------------------
-
-
 def _visit_stmt(node: ast.stmt, state: SymbolsCollector) -> None:
     if isinstance(node, UNSUPPORTED_STMT):
         state.error("Unsupported statement type", node)
@@ -100,13 +97,8 @@ def _visit_stmt(node: ast.stmt, state: SymbolsCollector) -> None:
         case ast.For():
             _on_for(node, state)
         case _:
-            _visit_children(node, state)
-
-
-def _visit_children(node: ast.stmt, state: SymbolsCollector) -> None:
-    """Old `generic_visit`: recurse, collecting names, rejecting unsupported."""
-    for child in ast.iter_child_nodes(node):
-        _walk(child, state)
+            for child in ast.iter_child_nodes(node):
+                _walk(child, state)
 
 
 def _walk(node: ast.AST, state: SymbolsCollector) -> None:
@@ -123,17 +115,11 @@ def _walk(node: ast.AST, state: SymbolsCollector) -> None:
         _walk(child, state)
 
 
-# --- specialized handlers ----------------------------------------------------
-
-
 def _on_assign(node: ast.Assign, state: SymbolsCollector) -> None:
     value_adapter = infer_adapter(node.value, state.variables, state.links)
     just_declared: set[str] = set()
     for target in node.targets:
         _mark_target_expr(target, value_adapter, state, just_declared)
-    # Walk the value after marking (old order), flagging reads of names this
-    # statement itself just bound (`a = a + 1` with `a` otherwise unknown —
-    # Python: UnboundLocalError; old compiler: silent uninitialized local).
     for sub in ast.walk(node.value):
         if (
             isinstance(sub, ast.Name)
@@ -149,7 +135,7 @@ def _on_annassign(node: ast.AnnAssign, state: SymbolsCollector) -> None:
         state.error("Annotations must be simple in inet functions", node)
         return
     if not isinstance(node.target, ast.Name):
-        return  # simple implies Name; belt and suspenders, as in the old code
+        return
     result = eval_annotation(node.annotation, state.globals)
     if isinstance(result, EvaluationFailure):
         state.error(result.message, node.target)
@@ -181,9 +167,6 @@ def _on_for(node: ast.For, state: SymbolsCollector) -> None:
         _visit_stmt(stmt, state)
     for stmt in node.orelse:
         _visit_stmt(stmt, state)
-
-
-# --- targets -----------------------------------------------------------------
 
 
 def _mark_target_expr(
@@ -223,9 +206,6 @@ def _mark_tuple_target(
 
 
 def _mark_loop_target(target: ast.expr, state: SymbolsCollector) -> None:
-    # §10 row 3: loop targets keep adapter VA (typing from the iterable is
-    # deferred until lowering semantics are settled); exotic leaves are
-    # diagnosed instead of silently marking a root name.
     if isinstance(target, ast.Name):
         state.mark_target(target, VA)
     elif isinstance(target, ast.Tuple):
@@ -233,6 +213,3 @@ def _mark_loop_target(target: ast.expr, state: SymbolsCollector) -> None:
             _mark_loop_target(element, state)
     else:
         state.error("Unsupported for-loop target", target)
-
-
-# --- targets -----------------------------------------------------------------
