@@ -1,54 +1,3 @@
-"""Phase 4 — symbol collection.
-
-Rework of the old `InetVariablesEvaluator` (a `NodeVisitor` interleaved with
-compiler-object mutation) into flat walk functions over explicit state,
-producing a plain `SymbolTable`.
-
-Absorbed behavior (verified against the old compiler; see §10):
-
-- Parameters are seeded as locals from the phase-2 `Signature` adapters.
-- `Assign` marks targets with the value's inferred adapter; tuple targets
-  match element-wise against a same-size Par (§10 row 4: size mismatch is now
-  a diagnostic — the old code silently fell back to VA). Chained assignment
-  marks every target (the read-modify-write wiring question of §10 row 6 is
-  a lowering concern, not a symbol concern).
-- `AnnAssign` registers simple-name targets only, with the adapter from
-  phase-3 `eval_annotation` (its consistent failure format, positioned at the
-  target). The RHS is now walked (§10 row 11: the old collector skipped it,
-  so a global RHS crashed at lowering with a raw KeyError).
-- `AugAssign` introduces its Name target as a local with adapter VA — a
-  documented feature (`x += 1` on an undeclared name), though Python would
-  raise UnboundLocalError (§10 row 2). The value is now walked (same fix as
-  AnnAssign).
-- `For` targets are marked with VA (§10 row 3: typing loop targets from the
-  iterable is deferred until lowering semantics are settled); tuple targets
-  recurse; exotic targets (e.g. `for x[0] in ...`) are now diagnosed instead
-  of silently marking the root name.
-- Any other `Name` — Load or Store — not already a local is marked
-  `used_as_globals` (§10 row 2 decision: the order-dependent global fallback
-  is preserved). A read that precedes a normal assignment therefore trips the
-  "Assign target is also a global variable" conflict, exactly like the old
-  compiler (verified by probe).
-- New diagnostic (§10 row 2): a value that reads a name first bound by the
-  very same statement (`a = a + 1` with `a` otherwise unknown) is flagged —
-  the old compiler silently created an uninitialized local where Python
-  raises UnboundLocalError.
-
-Try blocks are skipped entirely (both `ast.Try` and `ast.TryStar` are
-rejected as unsupported): the try implementation is not trusted yet and gets
-revisited with the paused lowering phases (§10 row 12).
-
-Assignment-value adapter inference delegates to phase-5 `infer_adapter`; call
-targets are pre-resolved once via phase-3 `collect_call_links`, so collection
-stays deterministic and eval-free.
-
-Deviations from the plan's written contract: `collect_symbols` takes the
-phase-1 `FunctionSource` instead of bare `(func_def, globals)` — it bundles
-them with the `SourceMap` the diagnostics need.
-
-None of this imports `natsune.compiler`.
-"""
-
 import ast
 import dataclasses
 from typing import Any
@@ -64,56 +13,17 @@ from natsune.frontend.link import (
 )
 from natsune.frontend.signature import Signature
 from natsune.frontend.source import FunctionSource
-
-# Absorbed from the old compiler's module-level tuples (§3.3 re-validates
-# these during IR construction). `ast.TryStar` is new: the old collector
-# rejected `try` but silently walked `try/except*`.
-UNSUPPORTED_EXPR: tuple[type[ast.expr], ...] = (
-    ast.Await,
-    ast.Yield,
-    ast.YieldFrom,
-    ast.Starred,
-    ast.Lambda,
-    ast.NamedExpr,
-)
-
-UNSUPPORTED_STMT: tuple[type[ast.stmt], ...] = (
-    ast.FunctionDef,
-    ast.AsyncFunctionDef,
-    ast.ClassDef,
-    ast.AsyncFor,
-    ast.AsyncWith,
-    ast.Match,
-    ast.Assert,
-    ast.Import,
-    ast.ImportFrom,
-    ast.Global,
-    ast.Nonlocal,
-    ast.Raise,
-    ast.Try,
-    ast.TryStar,
-    ast.TypeAlias,
-    ast.Delete,
-)
+from natsune.frontend.unsupported import UNSUPPORTED_EXPR, UNSUPPORTED_STMT
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class SymbolTable:
-    """The function's variables and dynamic-fallback routing, collected.
-
-    `variables` is a plain dict for practicality; by convention it is treated
-    as read-only once returned (the paused lowering phases will freeze it
-    into net-level `Variables`).
-    """
-
+class SymbolsTable:
     variables: dict[str, Adapter]
     used_as_globals: frozenset[str]
 
 
 @dataclasses.dataclass
-class _Collector:
-    """Mutable per-function state, threaded explicitly through the walks."""
-
+class SymbolsCollector:
     source: FunctionSource
     sink: DiagnosticSink
     globals: dict[str, Any]
@@ -151,9 +61,9 @@ class _Collector:
 
 def collect_symbols(
     source: FunctionSource, signature: Signature, sink: DiagnosticSink
-) -> SymbolTable:
+) -> SymbolsTable:
     """Collect the function's variables and global reads into a SymbolTable."""
-    collector = _Collector(
+    collector = SymbolsCollector(
         source=source,
         sink=sink,
         globals=source.globals,
@@ -167,7 +77,7 @@ def collect_symbols(
     )
     for stmt in source.func_def.body:
         _visit_stmt(stmt, collector)
-    return SymbolTable(
+    return SymbolsTable(
         variables=dict(collector.variables),
         used_as_globals=frozenset(collector.used_as_globals),
     )
@@ -176,7 +86,7 @@ def collect_symbols(
 # --- statement dispatch ------------------------------------------------------
 
 
-def _visit_stmt(node: ast.stmt, state: _Collector) -> None:
+def _visit_stmt(node: ast.stmt, state: SymbolsCollector) -> None:
     if isinstance(node, UNSUPPORTED_STMT):
         state.error("Unsupported statement type", node)
         return
@@ -193,13 +103,13 @@ def _visit_stmt(node: ast.stmt, state: _Collector) -> None:
             _visit_children(node, state)
 
 
-def _visit_children(node: ast.stmt, state: _Collector) -> None:
+def _visit_children(node: ast.stmt, state: SymbolsCollector) -> None:
     """Old `generic_visit`: recurse, collecting names, rejecting unsupported."""
     for child in ast.iter_child_nodes(node):
         _walk(child, state)
 
 
-def _walk(node: ast.AST, state: _Collector) -> None:
+def _walk(node: ast.AST, state: SymbolsCollector) -> None:
     if isinstance(node, ast.Name):
         state.note_name(node)
         return
@@ -216,7 +126,7 @@ def _walk(node: ast.AST, state: _Collector) -> None:
 # --- specialized handlers ----------------------------------------------------
 
 
-def _on_assign(node: ast.Assign, state: _Collector) -> None:
+def _on_assign(node: ast.Assign, state: SymbolsCollector) -> None:
     value_adapter = infer_adapter(node.value, state.variables, state.links)
     just_declared: set[str] = set()
     for target in node.targets:
@@ -234,7 +144,7 @@ def _on_assign(node: ast.Assign, state: _Collector) -> None:
     _walk(node.value, state)
 
 
-def _on_annassign(node: ast.AnnAssign, state: _Collector) -> None:
+def _on_annassign(node: ast.AnnAssign, state: SymbolsCollector) -> None:
     if not node.simple:
         state.error("Annotations must be simple in inet functions", node)
         return
@@ -257,14 +167,14 @@ def _on_annassign(node: ast.AnnAssign, state: _Collector) -> None:
                 state.error("Read of variable before assignment", sub)
 
 
-def _on_augassign(node: ast.AugAssign, state: _Collector) -> None:
+def _on_augassign(node: ast.AugAssign, state: SymbolsCollector) -> None:
     if isinstance(node.target, ast.Name):
         # Introduces the name as a local (documented §10 row 2 asymmetry).
         state.mark_target(node.target, VA)
     _walk(node.value, state)
 
 
-def _on_for(node: ast.For, state: _Collector) -> None:
+def _on_for(node: ast.For, state: SymbolsCollector) -> None:
     _mark_loop_target(node.target, state)
     _walk(node.iter, state)
     for stmt in node.body:
@@ -279,7 +189,7 @@ def _on_for(node: ast.For, state: _Collector) -> None:
 def _mark_target_expr(
     target: ast.expr,
     adapter: Adapter,
-    state: _Collector,
+    state: SymbolsCollector,
     just_declared: set[str],
 ) -> None:
     if isinstance(target, ast.Name):
@@ -295,7 +205,7 @@ def _mark_target_expr(
 def _mark_tuple_target(
     target: ast.Tuple,
     adapter: Adapter,
-    state: _Collector,
+    state: SymbolsCollector,
     just_declared: set[str],
 ) -> None:
     # §10 row 4: arity/type mismatch is a diagnostic (old: silent VA).
@@ -312,7 +222,7 @@ def _mark_tuple_target(
             _mark_target_expr(element, VA, state, just_declared)
 
 
-def _mark_loop_target(target: ast.expr, state: _Collector) -> None:
+def _mark_loop_target(target: ast.expr, state: SymbolsCollector) -> None:
     # §10 row 3: loop targets keep adapter VA (typing from the iterable is
     # deferred until lowering semantics are settled); exotic leaves are
     # diagnosed instead of silently marking a root name.

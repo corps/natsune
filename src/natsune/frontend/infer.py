@@ -33,7 +33,6 @@ def infer_adapter(
     variables: Mapping[str, Adapter],
     links: Mapping[str, LinkResult],
 ) -> Adapter:
-    """Infer the adapter of an expression (old `infer_expression_adapter`)."""
     match node:
         case ast.Call():
             if isinstance(node.func, ast.Name):

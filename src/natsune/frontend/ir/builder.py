@@ -69,21 +69,19 @@ from natsune.frontend.ir.nodes import (
 from natsune.frontend.link import LinkedInet, LinkResult
 from natsune.frontend.signature import Signature
 from natsune.frontend.source import FunctionSource
-from natsune.frontend.symbols import (
-    UNSUPPORTED_EXPR,
-    UNSUPPORTED_STMT,
-    SymbolTable,
-)
+from natsune.frontend.symbols import SymbolsTable
+from natsune.frontend.unsupported import UNSUPPORTED_EXPR, UNSUPPORTED_STMT
 
 
 @dataclasses.dataclass
-class _Builder:
+class IrBuilder:
     source: FunctionSource
-    symbols: SymbolTable
+    symbols: SymbolsTable
     links: Mapping[str, LinkResult]
     sink: DiagnosticSink
     fresh_name: Callable[[], str]
 
+    # Builder can have a parent context, TODO
     def error(self, message: str, node: ast.AST) -> None:
         # Caller-owned fallback (phase 0 decision): the FunctionDef is the
         # parent context available at this callsite.
@@ -114,7 +112,7 @@ def _default_name_factory(used: set[str]) -> Callable[[], str]:
 def build_ir(
     source: FunctionSource,
     signature: Signature,
-    symbols: SymbolTable,
+    symbols: SymbolsTable,
     links: Mapping[str, LinkResult],
     sink: DiagnosticSink,
     *,
@@ -125,7 +123,7 @@ def build_ir(
         name_factory = _default_name_factory(
             set(symbols.variables) | set(symbols.used_as_globals)
         )
-    builder = _Builder(
+    builder = IrBuilder(
         source=source,
         symbols=symbols,
         links=links,
@@ -147,7 +145,7 @@ def build_ir(
     )
 
 
-def _build_body(body: list[ast.stmt], builder: _Builder) -> IrBody:
+def _build_body(body: list[ast.stmt], builder: IrBuilder) -> IrBody:
     statements = []
     for stmt in body:
         built = _build_stmt(stmt, builder)
@@ -159,7 +157,7 @@ def _build_body(body: list[ast.stmt], builder: _Builder) -> IrBody:
 # --- statements ---------------------------------------------------------------
 
 
-def _build_stmt(node: ast.stmt, builder: _Builder) -> IrStmt | None:
+def _build_stmt(node: ast.stmt, builder: IrBuilder) -> IrStmt | None:
     """Build one statement; None means dropped (pass, bare AnnAssign,
     unsupported — unsupported statements are diagnosed, never raised)."""
     position = builder.position_of(node)
@@ -245,7 +243,7 @@ def _build_stmt(node: ast.stmt, builder: _Builder) -> IrStmt | None:
 # --- targets ------------------------------------------------------------------
 
 
-def _build_target(node: ast.expr, builder: _Builder) -> IrTarget | None:
+def _build_target(node: ast.expr, builder: IrBuilder) -> IrTarget | None:
     position = builder.position_of(node)
     if isinstance(node, ast.Name):
         return IrTargetName(
@@ -275,7 +273,7 @@ def _build_target(node: ast.expr, builder: _Builder) -> IrTarget | None:
 
 
 def _validate_tuple_targets(
-    targets: list[ast.expr], value: IrExpr, builder: _Builder
+    targets: list[ast.expr], value: IrExpr, builder: IrBuilder
 ) -> None:
     """§10 row 4: tuple targets must match the value's Par size (same message
     as the collector; the sink deduplicates the pipeline's double check)."""
@@ -292,7 +290,7 @@ def _validate_tuple_targets(
 # --- expressions --------------------------------------------------------------
 
 
-def _build_expr(node: ast.expr, builder: _Builder) -> IrExpr:
+def _build_expr(node: ast.expr, builder: IrBuilder) -> IrExpr:
     if isinstance(node, UNSUPPORTED_EXPR):
         # The rewritten source of these does not re-parse in eval mode; the
         # diagnostic is what keeps them from ever lowering.
@@ -335,7 +333,7 @@ def _boolop_name(op: ast.operator | ast.boolop) -> str:
     return "or" if isinstance(op, ast.Or) else "and"
 
 
-def _try_typed(node: ast.expr, builder: _Builder) -> IrExpr | None:
+def _try_typed(node: ast.expr, builder: IrBuilder) -> IrExpr | None:
     """Type an expression as one of the IR kinds, or None (dynamic route).
 
     Diagnostics fired here (inet keywords/arity, Par subscripts) are the
@@ -423,7 +421,7 @@ def _try_typed(node: ast.expr, builder: _Builder) -> IrExpr | None:
             return None
 
 
-def _flatten_boolop(node: ast.BoolOp, builder: _Builder, op: str) -> list[IrExpr]:
+def _flatten_boolop(node: ast.BoolOp, builder: IrBuilder, op: str) -> list[IrExpr]:
     values: list[IrExpr] = []
     for operand in node.values:
         if isinstance(operand, ast.BoolOp) and _boolop_name(operand.op) == op:
@@ -452,7 +450,7 @@ def _capturable(typed: IrExpr) -> bool:
 class _DynamicRewriter(ast.NodeTransformer):
     """Mirrors the old `ReplaceWithSerializedVariables`, minus all wiring."""
 
-    def __init__(self, builder: _Builder, captures: dict[str, IrExpr]) -> None:
+    def __init__(self, builder: IrBuilder, captures: dict[str, IrExpr]) -> None:
         self.builder = builder
         self.captures = captures
 
@@ -470,7 +468,7 @@ class _DynamicRewriter(ast.NodeTransformer):
         return super().generic_visit(node)
 
 
-def _scan_dynamic(node: ast.expr, builder: _Builder) -> IrDynamic:
+def _scan_dynamic(node: ast.expr, builder: IrBuilder) -> IrDynamic:
     """Scan the ORIGINAL tree (like the old `rewriter.visit(expr)`): the
     rewritten source unparses back from it, and any diagnostics fired inside
     the scan carry true positions and deduplicate against the ones fired

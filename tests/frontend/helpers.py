@@ -16,7 +16,7 @@ from natsune.frontend.ir import IrFunction, build_ir
 from natsune.frontend.link import collect_call_links
 from natsune.frontend.signature import Signature, analyze_signature
 from natsune.frontend.source import FunctionSource, extract_source
-from natsune.frontend.symbols import SymbolTable, collect_symbols
+from natsune.frontend.symbols import SymbolsTable, collect_symbols
 
 _snippet_counter = itertools.count(1)
 
@@ -93,7 +93,7 @@ def make_source(
 
 def analyze_for(
     snippet: str, **kwargs
-) -> tuple[FunctionSource, Signature, SymbolTable]:
+) -> tuple[FunctionSource, Signature, SymbolsTable]:
     """Run phases 1–4: source, signature, and symbol table for a snippet."""
     source = make_source(snippet, **kwargs)
     signature = analyze_signature(source, DiagnosticSink())

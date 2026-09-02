@@ -11,12 +11,12 @@ from types import SimpleNamespace
 from natsune.adapters import VA, ParValueAdapter, ReferenceAdapter, adapter_from_type
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.signature import analyze_signature
-from natsune.frontend.symbols import SymbolTable, collect_symbols
+from natsune.frontend.symbols import SymbolsTable, collect_symbols
 from natsune.special_forms import Par, Ref
 from tests.frontend.helpers import make_source
 
 
-def _collect(snippet: str, **kwargs) -> tuple[SymbolTable, DiagnosticSink]:
+def _collect(snippet: str, **kwargs) -> tuple[SymbolsTable, DiagnosticSink]:
     source = make_source(snippet, **kwargs)
     signature = analyze_signature(source, DiagnosticSink())
     sink = DiagnosticSink()

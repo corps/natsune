@@ -34,12 +34,8 @@ from natsune.frontend.link import (
 )
 from natsune.frontend.signature import Signature, analyze_signature
 from natsune.frontend.source import FunctionSource, extract_source
-from natsune.frontend.symbols import (
-    UNSUPPORTED_EXPR,
-    UNSUPPORTED_STMT,
-    SymbolTable,
-    collect_symbols,
-)
+from natsune.frontend.symbols import SymbolsTable, collect_symbols
+from natsune.frontend.unsupported import UNSUPPORTED_EXPR, UNSUPPORTED_STMT
 
 __all__ = [
     "CompileDiagnostic",
@@ -56,7 +52,7 @@ __all__ = [
     "Position",
     "Signature",
     "SourceMap",
-    "SymbolTable",
+    "SymbolsTable",
     "UNSUPPORTED_EXPR",
     "UNSUPPORTED_STMT",
     "eval_annotation",
