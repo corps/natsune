@@ -1,0 +1,21 @@
+# diagnostics
+# (none)
+
+# ir
+(function other_basic
+  (param b va)
+  (returns par[va, va])
+  (body
+    (return
+      (tuple :par[va, va]
+        (dynamic :va
+          (source "b + 2")
+          (captures
+            (b
+              (var b :va))))
+        (dynamic :va
+          (source "b * 4")
+          (captures
+            (b
+              (var b :va))))))))
+

@@ -1,0 +1,22 @@
+# diagnostics
+# (none)
+
+# ir
+(function test_delayed_inverse
+  (returns va)
+  (body
+    (assign
+      (targets
+        (tuple
+          (name a :va)
+          (name b :inv[va])))
+      (value
+        (call-inet :arity 0 :sigs () :ret par[va, inv[va]])))
+    (assign
+      (targets
+        (name b :inv[va]))
+      (value
+        (const 30 :va)))
+    (return
+      (var a :va))))
+

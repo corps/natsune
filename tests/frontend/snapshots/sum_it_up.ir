@@ -1,0 +1,47 @@
+# diagnostics
+# (none)
+
+# ir
+(function sum_it_up
+  (param start va)
+  (param end va)
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name total :va))
+      (value
+        (const 0 :va)))
+    (for
+      (target
+        (name i :va))
+      (iter
+        (dynamic :va
+          (source "range(start, end)")
+          (captures
+            (start
+              (var start :va))
+            (end
+              (var end :va)))))
+      (body
+        (exprstmt
+          (dynamic :va
+            (source "print(total)")
+            (captures
+              (total
+                (var total :va)))))
+        (exprstmt
+          (dynamic :va
+            (source "print(i)")
+            (captures
+              (i
+                (var i :va)))))
+        (augassign +
+          (target
+            (name total :va))
+          (value
+            (var i :va))))
+      (orelse))
+    (return
+      (var total :va))))
+

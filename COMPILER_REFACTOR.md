@@ -78,8 +78,10 @@ public `inet` decorator API is preserved (cutover is a paused phase).
   data out. **Nothing in phases 0–6 creates a register, wire, or flow.**
 - **Flat functions over methods.** Handlers are module-level functions; shared
   per-function state lives in frozen data classes passed explicitly.
-- **Dispatch tables over if-chains.** Per-node-type handler tables replace the
-  isinstance cascades.
+- **`match` over dispatch tables.** Per-node-type dispatch uses structural
+  pattern matching (`match node: case ast.Assign(): ...`) rather than handler
+  dicts or isinstance cascades — settled during Phase 4; handlers keep their
+  concrete node types instead of `Any`.
 - **Diagnostics before effects.** Every program error that *can* be detected is
   detected by phase 6 and lands in a diagnostic list. The IR is "validated by
   construction": anything that survives phase 6 should lower without program
@@ -360,6 +362,20 @@ Tests: snippet in → `SymbolTable` out: simple/chained/tuple assignment, AugAss
 introducing names, AnnAssign with evaluated annotation, for-targets, global
 reads. Diagnostics asserted from the sink.
 
+Decisions (settled during Phase 4; details in §10 rows 2–4 and new rows 10–12):
+- `collect_symbols(source, signature, sink)` takes the phase-1 `FunctionSource`
+  rather than bare `(func_def, globals)` — it bundles them with the `SourceMap`
+  the diagnostics need.
+- Suspect 2: global-fallback rule preserved (probe-verified: read-then-assign
+  already errors via the conflict diagnostic); self-referential first binding
+  is now diagnosed; AugAssign-introduced names stay.
+- Suspect 3: loop targets keep VA; exotic targets diagnosed.
+- Suspect 4: tuple mismatch is a diagnostic.
+- Try blocks (`Try` and `TryStar`) are rejected outright for now — owner call:
+  try parsing is not trusted; revisit with the paused lowering phases.
+- Probing the old compiler exposed three crash paths (rows 10–11: assignment
+  RHS globals; row 12: TryStar), all fixed by the new collector.
+
 ### Phase 5 — Adapter inference (`infer.py`)
 
 Absorbs `infer_expression_adapter`, `evaluate_call_adapter`,
@@ -373,6 +389,19 @@ Units of work:
 
 Tests: in/out-of-range subscripts, non-constant slices, call adapters for linked
 vs unlinked callees.
+
+Decisions (settled during Phase 5):
+- `infer_adapter(node, variables, links)` takes the variables *mapping* rather
+  than the whole `SymbolTable` (only `.variables` is ever read — keeps it
+  usable mid-collection in phase 4 and from IR construction alike), and a
+  precomputed `links` mapping (pure: no compile-time `eval` during inference;
+  phase 3's new `collect_call_links` pre-resolves a body's call targets once).
+- Invalid Par subscripts yield VA silently by contract; the diagnostic belongs
+  to IR construction. `par_subscript_index` collapses both failure modes to
+  `int | None`; the old compiler's two distinct messages are reintroduced by
+  phase 6's builder when it wires the sink.
+- Phase 4's placeholder inference in `symbols.py` is superseded: the collector
+  pre-resolves call links and delegates to `infer_adapter`.
 
 ### Phase 6 — IR construction (`ir/nodes.py`, `ir/builder.py`, `ir/render.py`)
 
@@ -395,6 +424,37 @@ Tests (the heart of the new test suite):
   lvalues, unsupported nodes) asserted from the sink — and asserting that *no*
   exception was raised.
 - Golden render tests for a battery of programs (the "read the IR" workflow).
+
+Decisions (settled during Phase 6):
+- `IrTryStar` is deferred with the try machinery (owner decision, §10 row 12):
+  the builder rejects `try`/`except*` statements; the node returns if/when try
+  parsing is trusted and lowering is designed.
+- Assignment targets get a third shape beyond the sketch's two:
+  `IrTargetDynamic(source_text, captures)` — the old lowering routed non-Name
+  and non-Tuple lvalues (`x[0] = v`, `obj.a = v`) through the exec fallback,
+  and the IR must carry what that fallback consumes (same shape as `IrDynamic`).
+- `IrNode.position` (phase-0 `Position`) is on every node but excluded from
+  equality — node identity is structural, so tests compare shape regardless of
+  snippet placement.
+- The dynamic scan transforms the ORIGINAL AST (as the old rewriter did), not a
+  re-parse: diagnostics fired inside the scan keep true positions and dedupe
+  against the ones fired while typing the same node.
+- Placeholder names default to the deterministic `__natsune_N__` sequence,
+  skipping the function's variables and globals (§2, determinism by injection);
+  a custom factory can be injected into `build_ir`.
+- Capture set = the old special-form set exactly (local reads, linked inet
+  calls, tuples, valid Par indexes). Constants and boolean expressions stay in
+  the rewritten source; `IrBoolOp` exists for expressions built at top level.
+- The full pipeline runs overlapping validations (collector and builder both
+  check unsupported nodes, list lvalues, tuple mismatch — §3.3), so
+  `DiagnosticSink.add` drops exact duplicates (same message, position,
+  severity): one finding, reported once.
+- Constant folding: `ast.UnaryOp` over a literal (`-1`, `not True`, `~2` —
+  with CPython's operand-type rules; found via the `delayed_inverse`
+  snapshot, where `b: Inverse[int] = -1` otherwise degraded to an
+  `IrDynamic` with no captures) folds to `IrConst`. Unfoldable operands stay
+  dynamic. Constants are never captured inside dynamic scans, so folded
+  literals still appear verbatim in rewritten source text.
 
 ---
 
@@ -451,6 +511,14 @@ evaluation.
    `tests/test_compiler.py` and any real programs; read them; settle the §10
    suspects; only then plan phases 7–9.
 
+   Status: DONE. All 18 example programs from `tests/test_compiler.py` are
+   copied into `tests/frontend/programs.py` and rendered under
+   `tests/frontend/snapshots/<name>.ir` by `tests/frontend/test_snapshots.py`
+   (golden snapshot tests; `make snapshots-update` regathers, `make
+   snapshots-check` compares). All 18 programs compile through the pipeline
+   with zero diagnostics. Reading the snapshots is the input to settling the
+   remaining §10 rows and planning phases 7–9.
+
 Steps 2–6 are pure-data and low risk; step 7 is where the semantic decisions
 concentrate — one commit per module, each fully tested.
 
@@ -477,14 +545,18 @@ log becomes the cutover checklist in phase 9.
 | # | Suspect | Where today | Candidate decision |
 |---|---|---|---|
 | 1 | `AugAssign` desugars to read-modify-write, which may not preserve mutation-through-reference semantics for `Ref`/`Inverse`-typed variables (cf. the `take_reference` test where `a += 10` mutates in place) | `parse_statement_body` AugAssign branch | Keep `IrAugAssign` as its own IR node; give it explicit Ref-aware lowering semantics later |
-| 2 | Any name not already a local is treated as a global — including names assigned *later* in the function (read-before-assignment silently reads a global) | `InetVariablesEvaluator.visit_Name` | Decide: diagnostic on use-before-assignment vs preserve Python's global fallback |
-| 3 | For-loop targets are force-marked with adapter `VA`; `ast.walk` over targets silently ignores non-Name nodes | `visit_For` | Type loop targets from the iterable where inferable; diagnose non-Name target nodes |
-| 4 | Tuple-assignment targets silently get adapter `VA` when the value's Par arity doesn't match | `visit_Assign` | Make the mismatch a diagnostic |
+| 2 | Any name not already a local is treated as a global — including names assigned *later* in the function (read-before-assignment silently reads a global) | `InetVariablesEvaluator.visit_Name` | **Decided (Phase 4, probe-verified):** preserve the order-dependent global fallback — a read preceding a normal assignment already trips the global-target conflict diagnostic. The truly silent hole is self-referential first binding (`a = a + 1` with `a` unknown: old = silent uninitialized local; Python = UnboundLocalError), now flagged with "Read of variable before assignment". AugAssign-introduced names stay silent by design (documented feature) |
+| 3 | For-loop targets are force-marked with adapter `VA`; `ast.walk` over targets silently ignores non-Name nodes | `visit_For` | **Decided (Phase 4):** targets keep VA for now (typing from the iterable awaits settled lowering semantics); tuple targets recurse; exotic leaves (`for x[0] in ...`) are diagnosed instead of silently marking the root name as a local |
+| 4 | Tuple-assignment targets silently get adapter `VA` when the value's Par arity doesn't match | `visit_Assign` | **Decided (Phase 4):** mismatch is a diagnostic; matching Par values type element-wise (nested tuples recurse into nested Par items) |
 | 5 | Several checks (inet-call arity/keywords, Par subscript bounds, list lvalues) fire during *lowering*, after nets are partially constructed | `evaluate_special_form_from_expression`, `evaluate_subscript`, `evaluate_to_expression` | Move all validation to IR construction (already the plan, §3.3) — a logged divergence by construction |
 | 6 | Chained assignment `a = b = expr` wires `b` from `a`'s register rather than re-evaluating — subtle and untested | `parse_statement_body` Assign branch | Model explicitly in `IrAssign`; decide semantics once |
 | 7 | Indented definitions (methods, nested functions) crash the old compiler: `inspect.getsourcelines` returns an undented block, so `ast.parse` raises IndentationError before compilation even starts | `InetFunctionCompiler.func_def` (found while characterizing Phase 1) | `extract_source` dedents the extracted block; columns stay snippet-relative (understate by the stripped margin for indented defs) |
 | 8 | Positional parameter defaults are silently accepted and ignored: the old check rejects only `kw_defaults`/`kwonlyargs`/`kwarg`/`vararg`, so `def f(a, b=5)` compiles to a 2-arity net while Python callers may invoke it with one argument | `InetFunctionCompiler.args` (found during Phase 2) | Reject defaults at signature analysis — a defaulted param cannot be supplied through the net interface |
 | 9 | Positional-only parameters (`def f(a, /, b)`) are neither rejected nor included in `args` — silently dropped, producing a wrong-arity net | `InetFunctionCompiler.args` (found during Phase 2) | Reject at signature analysis; supporting them later means including them in `args` |
+| 10 | Assigning from a global crashes with a raw `KeyError`: `visit_Assign` infers the value's adapter via `variables[id]` indexing (`a = b_global` with `b_global` a module global) | `InetVariablesEvaluator.visit_Assign` → `infer_expression_adapter` (probe-verified, Phase 4) | Unknown names yield VA and the RHS name is collected into `used_as_globals` (dynamic path) |
+| 11 | `AnnAssign`/`AugAssign` RHS are never walked by the collector, so globals referenced there are never marked — `a: int = b_global` passes collection and crashes at *lowering* with a raw KeyError | `visit_AnnAssign`, `visit_AugAssign` (probe-verified, Phase 4) | Both RHS expressions are walked by the new collector |
+| 12 | `try` is rejected as unsupported, but `try/except*` (`ast.TryStar`) is silently walked by the collector, and handler bound names are never declared | unsupported_stmt tuple / `generic_visit` (probe-verified, Phase 4) | **Owner decision:** skip all try blocks for now ("don't trust my own implementation for parsing try blocks") — the new collector rejects both `Try` and `TryStar`; revisit with phases 6+ and the paused lowering |
+| 13 | Negative Par subscript literals (`p[-1]`) are rejected as "must be a constant integer", because the unary minus makes them `UnaryOp`, not `Constant` — while `p[True]` is accepted (bool is an int subclass) and indexes element 1 | `evaluate_subscript` (characterized Phase 5) | Absorb exactly: `par_subscript_index` returns `int \| None` (both failure modes collapse to None); the two old messages are reintroduced by phase 6's builder when it owns the diagnostics |
 
 ---
 

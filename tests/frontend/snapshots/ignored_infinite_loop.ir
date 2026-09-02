@@ -1,0 +1,27 @@
+# diagnostics
+# (none)
+
+# ir
+(function ignored_infinite_loop
+  (returns par[va, va])
+  (body
+    (assign
+      (targets
+        (name b :va))
+      (value
+        (const 0 :va)))
+    (while
+      (test
+        (const True :va))
+      (body
+        (augassign +
+          (target
+            (name b :va))
+          (value
+            (const 1 :va))))
+      (orelse))
+    (return
+      (tuple :par[va, va]
+        (const 10 :va)
+        (var b :va)))))
+

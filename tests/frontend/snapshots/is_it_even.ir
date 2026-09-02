@@ -1,0 +1,22 @@
+# diagnostics
+# (none)
+
+# ir
+(function is_it_even
+  (param input va)
+  (returns va)
+  (body
+    (if
+      (test
+        (dynamic :va
+          (source "input % 2 == 0")
+          (captures
+            (input
+              (var input :va)))))
+      (then
+        (return
+          (const True :va)))
+      (else))
+    (return
+      (const False :va))))
+

@@ -1,0 +1,43 @@
+# diagnostics
+# (none)
+
+# ir
+(function basic_sum_with_while
+  (param start va)
+  (param end va)
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name total :va))
+      (value
+        (const 0 :va)))
+    (assign
+      (targets
+        (name i :va))
+      (value
+        (var start :va)))
+    (while
+      (test
+        (dynamic :va
+          (source "i < end")
+          (captures
+            (i
+              (var i :va))
+            (end
+              (var end :va)))))
+      (body
+        (augassign +
+          (target
+            (name total :va))
+          (value
+            (var i :va)))
+        (augassign +
+          (target
+            (name i :va))
+          (value
+            (const 1 :va))))
+      (orelse))
+    (return
+      (var total :va))))
+

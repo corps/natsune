@@ -1,0 +1,18 @@
+# diagnostics
+# (none)
+
+# ir
+(function use_references
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name a :ref[va]))
+      (value
+        (const 20 :va)))
+    (exprstmt
+      (call-inet :arity 1 :sigs (ref[va]) :ret va
+        (var a :ref[va])))
+    (return
+      (var a :ref[va]))))
+

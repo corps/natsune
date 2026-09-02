@@ -149,7 +149,15 @@ class DiagnosticSink:
         self._diagnostics: list[CompileDiagnostic] = []
 
     def add(self, diagnostic: CompileDiagnostic) -> None:
-        self._diagnostics.append(diagnostic)
+        """Record a diagnostic, dropping exact duplicates.
+
+        The full pipeline runs overlapping validations (the collector and the
+        IR builder both check, e.g., list lvalues by design — §3.3); an
+        identical message at an identical position with identical severity is
+        one finding, not two.
+        """
+        if diagnostic not in self._diagnostics:
+            self._diagnostics.append(diagnostic)
 
     def add_at(
         self,

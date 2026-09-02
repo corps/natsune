@@ -1,0 +1,26 @@
+# diagnostics
+# (none)
+
+# ir
+(function delayed_inverse
+  (returns par[va, inv[va]])
+  (body
+    (assign
+      (targets
+        (name b :inv[va]))
+      (value
+        (const -1 :va)))
+    (assign
+      (targets
+        (name a :va))
+      (value
+        (dynamic :va
+          (source "b + 10")
+          (captures
+            (b
+              (var b :inv[va]))))))
+    (return
+      (tuple :par[va, inv[va]]
+        (var a :va)
+        (var b :inv[va])))))
+

@@ -1,0 +1,87 @@
+# diagnostics
+# (none)
+
+# ir
+(function shift_list_by_smallest
+  (param l va)
+  (returns va)
+  (body
+    (if
+      (test
+        (dynamic :va
+          (source "len(l) == 0")
+          (captures
+            (l
+              (var l :va)))))
+      (then
+        (return
+          (dynamic :va
+            (source "[]"))))
+      (else))
+    (assign
+      (targets
+        (name smallest :inv[va]))
+      (value
+        (const -1 :va)))
+    (assign
+      (targets
+        (name smallest_acc :va))
+      (value
+        (dynamic :va
+          (source "l[0]")
+          (captures
+            (l
+              (var l :va))))))
+    (assign
+      (targets
+        (name result :ref[va]))
+      (value
+        (dynamic :va
+          (source "[]"))))
+    (for
+      (target
+        (name v :va))
+      (iter
+        (var l :va))
+      (body
+        (if
+          (test
+            (dynamic :va
+              (source "v < smallest_acc")
+              (captures
+                (v
+                  (var v :va))
+                (smallest_acc
+                  (var smallest_acc :va)))))
+          (then
+            (assign
+              (targets
+                (name smallest_acc :va))
+              (value
+                (var v :va))))
+          (else))
+        (exprstmt
+          (dynamic :va
+            (source "print(smallest)")
+            (captures
+              (smallest
+                (var smallest :inv[va])))))
+        (exprstmt
+          (dynamic :va
+            (source "result.append(v - smallest)")
+            (captures
+              (result
+                (var result :ref[va]))
+              (v
+                (var v :va))
+              (smallest
+                (var smallest :inv[va]))))))
+      (orelse))
+    (assign
+      (targets
+        (name smallest :inv[va]))
+      (value
+        (var smallest_acc :va)))
+    (return
+      (var result :ref[va]))))
+

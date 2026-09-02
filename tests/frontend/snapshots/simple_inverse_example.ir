@@ -1,0 +1,42 @@
+# diagnostics
+# (none)
+
+# ir
+(function simple_inverse_example
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name a :ref[va]))
+      (value
+        (dynamic :va
+          (source "[]"))))
+    (assign
+      (targets
+        (name b :inv[va]))
+      (value
+        (const 0 :va)))
+    (exprstmt
+      (dynamic :va
+        (source "a.append(b)")
+        (captures
+          (a
+            (var a :ref[va]))
+          (b
+            (var b :inv[va])))))
+    (exprstmt
+      (dynamic :va
+        (source "a.append(b)")
+        (captures
+          (a
+            (var a :ref[va]))
+          (b
+            (var b :inv[va])))))
+    (assign
+      (targets
+        (name b :inv[va]))
+      (value
+        (const 5 :va)))
+    (return
+      (var a :ref[va]))))
+

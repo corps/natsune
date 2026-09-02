@@ -1,8 +1,7 @@
 """Fixture builders for the new-system (frontend) tests.
 
 Every phase function runs on synthetic input with no executor and no live net
-(COMPILER_REFACTOR.md §7); these helpers keep that one-liner shape. The module
-grows as phases land (`make_symbols`, `build_ir_for`, ...).
+(COMPILER_REFACTOR.md §7); these helpers keep that one-liner shape.
 """
 
 import ast
@@ -12,8 +11,12 @@ import linecache
 import textwrap
 from typing import Any
 
-from natsune.frontend.diagnostics import SourceMap
+from natsune.frontend.diagnostics import DiagnosticSink, Position, SourceMap
+from natsune.frontend.ir import IrFunction, build_ir
+from natsune.frontend.link import collect_call_links
+from natsune.frontend.signature import Signature, analyze_signature
 from natsune.frontend.source import FunctionSource, extract_source
+from natsune.frontend.symbols import SymbolTable, collect_symbols
 
 _snippet_counter = itertools.count(1)
 
@@ -39,13 +42,15 @@ def make_source(
     *,
     namespace: dict[str, Any] | None = None,
     name: str | None = None,
+    filename: str | None = None,
 ) -> FunctionSource:
     """Extract a `FunctionSource` from a snippet, no real file needed.
 
     Executes the (dedented) snippet and registers the text with `linecache`
-    under a unique filename, so `inspect.getsourcelines` inside
-    `extract_source` works naturally (CPython 3.14's `getsourcefile` accepts
-    linecache-only filenames). The snippet's `__globals__` is the returned
+    under a unique filename (unless `filename=` pins one, e.g. for snapshot
+    stability), so `inspect.getsourcelines` inside `extract_source` works
+    naturally (CPython 3.14's `getsourcefile` accepts linecache-only
+    filenames). The snippet's `__globals__` is the returned
     `FunctionSource.globals`, seeded with `namespace` — pass annotation
     targets there (e.g. `{"Par": Par}`).
 
@@ -54,7 +59,8 @@ def make_source(
     stripped so the definition sits at snippet line 1 (`base_lineno == 1`).
     """
     text = textwrap.dedent(snippet).lstrip("\n")
-    filename = f"snippet_{next(_snippet_counter)}.py"
+    if filename is None:
+        filename = f"snippet_{next(_snippet_counter)}.py"
 
     ns: dict[str, Any] = dict(namespace) if namespace else {}
     before = set(ns)
@@ -83,3 +89,28 @@ def make_source(
         func = defined[0]
 
     return extract_source(func, globals=ns, filename=filename)
+
+
+def analyze_for(
+    snippet: str, **kwargs
+) -> tuple[FunctionSource, Signature, SymbolTable]:
+    """Run phases 1–4: source, signature, and symbol table for a snippet."""
+    source = make_source(snippet, **kwargs)
+    signature = analyze_signature(source, DiagnosticSink())
+    symbols = collect_symbols(source, signature, DiagnosticSink())
+    return source, signature, symbols
+
+
+def build_ir_for(snippet: str, **kwargs) -> tuple[IrFunction, DiagnosticSink]:
+    """Run the full new-system pipeline (§9): source → signature → symbols →
+    links → IR. Returns the IR and the builder's sink (whose dedup absorbs
+    the collector's overlapping findings)."""
+    source, signature, symbols = analyze_for(snippet, **kwargs)
+    links = collect_call_links(source.func_def.body, source.globals)
+    sink = DiagnosticSink()
+    ir = build_ir(source, signature, symbols, links, sink)
+    return ir, sink
+
+
+def make_position(lineno: int, col_offset: int) -> Position:
+    return Position(lineno=lineno, col_offset=col_offset)

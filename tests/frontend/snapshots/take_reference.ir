@@ -1,0 +1,14 @@
+# diagnostics
+# (none)
+
+# ir
+(function take_reference
+  (param a ref[va])
+  (returns va)
+  (body
+    (augassign +
+      (target
+        (name a :ref[va]))
+      (value
+        (const 10 :va)))))
+

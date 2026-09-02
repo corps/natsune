@@ -1,0 +1,42 @@
+# diagnostics
+# (none)
+
+# ir
+(function simple_inverse_loop_example
+  (param scale va)
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name total :va))
+      (value
+        (const 0 :va)))
+    (assign
+      (targets
+        (name b :inv[va]))
+      (value
+        (const -1 :va)))
+    (for
+      (target
+        (name _ :va))
+      (iter
+        (dynamic :va
+          (source "range(scale)")
+          (captures
+            (scale
+              (var scale :va)))))
+      (body
+        (augassign +
+          (target
+            (name total :va))
+          (value
+            (var b :inv[va]))))
+      (orelse))
+    (assign
+      (targets
+        (name b :inv[va]))
+      (value
+        (const 3 :va)))
+    (return
+      (var total :va))))
+

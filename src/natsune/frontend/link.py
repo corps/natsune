@@ -28,6 +28,7 @@ None of this imports `natsune.compiler`.
 
 import ast
 import dataclasses
+from collections.abc import Iterable
 from typing import Any
 
 from natsune.adapters import Adapter, adapter_from_type
@@ -84,6 +85,23 @@ class LinkNotFound:
 
 
 LinkResult = LinkedInet | LinkedValue | LinkNotFound
+
+
+def collect_call_links(
+    body: Iterable[ast.stmt], globals: dict[str, Any]
+) -> dict[str, LinkResult]:
+    """Pre-resolve every call-target name in a statement list, once.
+
+    Phase-5 helper: gives `infer_adapter` a pure lookup so no compile-time
+    `eval` happens during inference. Unresolvable names become
+    `LinkNotFound`; the diagnostic decision stays with the caller.
+    """
+    links: dict[str, LinkResult] = {}
+    module = ast.Module(body=list(body), type_ignores=[])
+    for node in ast.walk(module):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            links.setdefault(node.func.id, link_name(node.func.id, globals))
+    return links
 
 
 def link_name(name: str, globals: dict[str, Any]) -> LinkResult:

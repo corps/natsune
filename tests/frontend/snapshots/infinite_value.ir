@@ -1,0 +1,25 @@
+# diagnostics
+# (none)
+
+# ir
+(function infinite_value
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name a :va))
+      (value
+        (const 0 :va)))
+    (while
+      (test
+        (const True :va))
+      (body
+        (augassign +
+          (target
+            (name a :va))
+          (value
+            (const 1 :va))))
+      (orelse))
+    (return
+      (var a :va))))
+

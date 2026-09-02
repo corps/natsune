@@ -1,0 +1,36 @@
+# diagnostics
+# (none)
+
+# ir
+(function basic
+  (param b va)
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name a :va))
+      (value
+        (const 10 :va)))
+    (assign
+      (targets
+        (name a :va))
+      (value
+        (dynamic :va
+          (source "a + b")
+          (captures
+            (a
+              (var a :va))
+            (b
+              (var b :va))))))
+    (exprstmt
+      (dynamic :va
+        (source "print(a)")
+        (captures
+          (a
+            (var a :va)))))
+    (exprstmt
+      (dynamic :va
+        (source "print(123)")))
+    (return
+      (var a :va))))
+

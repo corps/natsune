@@ -1,0 +1,67 @@
+# diagnostics
+# (none)
+
+# ir
+(function and_or_with_finites_and_infinites
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name a :va))
+      (value
+        (call-inet :arity 0 :sigs () :ret va)))
+    (assign
+      (targets
+        (name paths :ref[va]))
+      (value
+        (dynamic :va
+          (source "[]"))))
+    (if
+      (test
+        (boolop or :va
+          (dynamic :va
+            (source "a < 10")
+            (captures
+              (a
+                (var a :va))))
+          (const True :va)))
+      (then
+        (exprstmt
+          (dynamic :va
+            (source "paths.append('Infinite Or')")
+            (captures
+              (paths
+                (var paths :ref[va]))))))
+      (else))
+    (if
+      (test
+        (boolop and :va
+          (dynamic :va
+            (source "a < 10")
+            (captures
+              (a
+                (var a :va))))
+          (const False :va)))
+      (then
+        (exprstmt
+          (dynamic :va
+            (source "paths.append('Infinite And')")
+            (captures
+              (paths
+                (var paths :ref[va]))))))
+      (else))
+    (exprstmt
+      (dynamic :va
+        (source "paths.append(10 and 0)")
+        (captures
+          (paths
+            (var paths :ref[va])))))
+    (exprstmt
+      (dynamic :va
+        (source "paths.append(10 or 0)")
+        (captures
+          (paths
+            (var paths :ref[va])))))
+    (return
+      (var paths :ref[va]))))
+

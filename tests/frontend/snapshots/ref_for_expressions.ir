@@ -1,0 +1,34 @@
+# diagnostics
+# (none)
+
+# ir
+(function ref_for_expressions
+  (returns va)
+  (body
+    (assign
+      (targets
+        (name a :ref[va]))
+      (value
+        (dynamic :va
+          (source "[]"))))
+    (exprstmt
+      (dynamic :va
+        (source "a.append(1)")
+        (captures
+          (a
+            (var a :ref[va])))))
+    (exprstmt
+      (dynamic :va
+        (source "a.append(2)")
+        (captures
+          (a
+            (var a :ref[va])))))
+    (exprstmt
+      (dynamic :va
+        (source "print(a)")
+        (captures
+          (a
+            (var a :ref[va])))))
+    (return
+      (var a :ref[va]))))
+

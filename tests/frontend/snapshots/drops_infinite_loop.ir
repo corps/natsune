@@ -1,0 +1,17 @@
+# diagnostics
+# (none)
+
+# ir
+(function drops_infinite_loop
+  (returns va)
+  (body
+    (assign
+      (targets
+        (tuple
+          (name a :va)
+          (name b :va)))
+      (value
+        (call-inet :arity 0 :sigs () :ret par[va, va])))
+    (return
+      (var a :va))))
+
