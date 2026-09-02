@@ -28,7 +28,7 @@ def test_zero_args():
             return 1
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert signature.args == ()
     assert signature.arity == 0
     assert signature.args_adapter == ParValueAdapter([])
@@ -42,7 +42,7 @@ def test_one_annotated_arg():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert signature.args == (("a", int),)
     assert signature.args_adapter == ParValueAdapter([adapter_from_type(int)])
     assert signature.return_adapter == adapter_from_type(int)
@@ -57,7 +57,7 @@ def test_n_args_with_par_return():
         namespace={"Par": Par},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert signature.args == (("a", int), ("b", str))
     assert signature.arity == 2
     assert signature.args_adapter == ParValueAdapter(
@@ -73,7 +73,7 @@ def test_missing_annotations_become_none_with_va_adapters():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert signature.args == (("a", None), ("b", None))
     assert signature.args_adapter == ParValueAdapter([VA, VA])
     assert signature.return_type is None
@@ -167,14 +167,23 @@ def test_rejections_accumulate_in_feature_order():
             return a
         """)
 
-    assert [d.message for d in sink.diagnostics] == [
+    assert {d.message for d in sink.diagnostics} == {
         "*args is not supported in inet functions",
         "**kwargs is not supported in inet functions",
         "Default values are not supported in inet functions",
-    ]
-    # The boundary hook raises the first one, old-compiler style.
-    with pytest.raises(SyntaxError, match="\\*args is not supported"):
-        sink.raise_if_errors()
+    }
+    # The boundary hook raises all diagnostics as an ExceptionGroup.
+    with pytest.raises(ExceptionGroup) as excinfo:
+        sink.raise_if_errors("signature errors")
+    assert len(excinfo.value.exceptions) == 3
+    exceptions = excinfo.value.exceptions
+    assert all(isinstance(e, SyntaxError) for e in exceptions)
+    messages = {e.msg for e in exceptions}  # type: ignore
+    assert messages == {
+        "*args is not supported in inet functions",
+        "**kwargs is not supported in inet functions",
+        "Default values are not supported in inet functions",
+    }
     assert signature.arity == 1  # `a` — best effort despite diagnostics
 
 

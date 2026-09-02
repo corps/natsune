@@ -10,7 +10,6 @@ from natsune.frontend.diagnostics import (
     CompileDiagnostic,
     DiagnosticSink,
     Position,
-    Severity,
     SourceMap,
 )
 from natsune.frontend.infer import (
@@ -55,7 +54,6 @@ __all__ = [
     "LinkResult",
     "LinkedValue",
     "Position",
-    "Severity",
     "Signature",
     "SourceMap",
     "SymbolTable",

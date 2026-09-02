@@ -48,7 +48,7 @@ def test_params_are_seeded_locals():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables == {
         "a": adapter_from_type(int),
         "b": adapter_from_type(str),
@@ -66,7 +66,7 @@ def test_global_read_marks_used_as_globals():
         namespace={"b_global": 7},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert "b_global" in table.used_as_globals
     assert "b_global" not in table.variables
 
@@ -77,7 +77,7 @@ def test_assign_from_param_infers_adapter():
             a = b
             return a
         """)
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] == adapter_from_type(int)
 
 
@@ -92,7 +92,7 @@ def test_assign_from_global_marked_not_crashed():
         namespace={"b_global": 7},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] is VA
     assert "b_global" in table.used_as_globals
 
@@ -107,7 +107,7 @@ def test_simple_assignment_introduces_va_local():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] is VA
 
 
@@ -118,7 +118,7 @@ def test_chained_assignment_marks_all_targets():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] is VA
     assert table.variables["b"] is VA
 
@@ -130,7 +130,7 @@ def test_tuple_assignment_matches_par_elements():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] == adapter_from_type(int)
     assert table.variables["b"] == adapter_from_type(str)
 
@@ -162,7 +162,7 @@ def test_tuple_assignment_from_inet_call_uses_return_adapter():
         namespace={"make": make},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] is VA
     assert table.variables["b"] is VA
 
@@ -177,7 +177,7 @@ def test_augassign_introduces_local():
             return x
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["x"] is VA
 
 
@@ -188,7 +188,7 @@ def test_augassign_on_param_keeps_adapter():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] == adapter_from_type(int)
 
 
@@ -203,7 +203,7 @@ def test_augassign_value_names_are_marked():
         namespace={"b_global": 7},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert "b_global" in table.used_as_globals
 
 
@@ -217,7 +217,7 @@ def test_annassign_registers_with_evaluated_adapter():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] == adapter_from_type(int)
 
 
@@ -231,7 +231,7 @@ def test_annassign_with_ref_annotation():
         namespace={"Ref": Ref},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert isinstance(table.variables["a"], ReferenceAdapter)
 
 
@@ -261,7 +261,7 @@ def test_annassign_rhs_names_are_marked():
         namespace={"b_global": 7},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert "b_global" in table.used_as_globals
 
 
@@ -290,7 +290,7 @@ def test_for_target_introduces_va_local_and_iter_global():
         namespace={"xs": [1, 2]},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["i"] is VA
     assert "xs" in table.used_as_globals
 
@@ -306,7 +306,7 @@ def test_for_tuple_target_marks_all_leaves():
         namespace={"pairs": [(1, 2)]},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] is VA
     assert table.variables["b"] is VA
 
@@ -369,7 +369,7 @@ def test_self_reference_after_real_binding_is_fine():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert table.variables["a"] is VA
 
 

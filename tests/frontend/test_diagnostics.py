@@ -15,7 +15,6 @@ from natsune.frontend.diagnostics import (
     CompileDiagnostic,
     DiagnosticSink,
     Position,
-    Severity,
     SourceMap,
 )
 from tests.frontend.helpers import parse_function, source_map_for
@@ -115,9 +114,7 @@ def test_locationless_nodes_return_none_and_callers_own_fallback():
 
 def test_str_formatting():
     error = CompileDiagnostic("boom", "prog.py", 12, 4)
-    assert str(error) == "prog.py:12:4: error: boom"
-    warning = CompileDiagnostic("hmm", "prog.py", 12, 4, Severity.WARNING)
-    assert str(warning) == "prog.py:12:4: warning: hmm"
+    assert str(error) == "prog.py:12:4: boom"
 
 
 def test_at_resolves_node_position():
@@ -128,14 +125,13 @@ def test_at_resolves_node_position():
         """).body[0]
 
     diagnostic = CompileDiagnostic.at("boom", node, source)
-    assert diagnostic == CompileDiagnostic("boom", "prog.py", 12, 4, Severity.ERROR)
+    assert diagnostic == CompileDiagnostic("boom", "prog.py", 12, 4)
 
 
-def test_at_defaults_to_error_severity():
+def test_at_defaults_to_error():
     source = SourceMap("prog.py", 1)
     diagnostic = CompileDiagnostic.at("x", _located_stmt(), source)
     assert diagnostic is not None
-    assert diagnostic.severity is Severity.ERROR
 
 
 def test_at_returns_none_for_locationless_nodes():
@@ -146,7 +142,7 @@ def test_at_returns_none_for_locationless_nodes():
 def test_at_position_uses_caller_resolved_position():
     source = SourceMap("prog.py", base_lineno=10)
     diagnostic = CompileDiagnostic.at_position("where", source, Position(3, 4))
-    assert diagnostic == CompileDiagnostic("where", "prog.py", 3, 4, Severity.ERROR)
+    assert diagnostic == CompileDiagnostic("where", "prog.py", 3, 4)
 
 
 def test_raised_matches_old_syntax_error_shape():
@@ -184,12 +180,10 @@ def test_sink_accumulates_in_order():
     module = ast.parse("x = 1\ny = 2")
 
     first = sink.error("first", module.body[0], source)
-    second = sink.warning("second", module.body[1], source)
+    second = sink.error("second", module.body[1], source)
 
     assert first is not None and second is not None
     assert list(sink.diagnostics) == [first, second]
-    assert list(sink.errors) == [first]
-    assert sink.has_errors
 
 
 def test_error_records_nothing_for_locationless_nodes():
@@ -209,31 +203,32 @@ def test_add_at_records_at_explicit_position():
     sink = DiagnosticSink()
 
     diagnostic = sink.add_at("explicit", source, Position(12, 4))
-    assert diagnostic == CompileDiagnostic("explicit", "prog.py", 12, 4, Severity.ERROR)
+    assert diagnostic == CompileDiagnostic("explicit", "prog.py", 12, 4)
     assert list(sink.diagnostics) == [diagnostic]
 
 
-def test_raise_if_errors_ignores_warnings():
+def test_raise_if_errors_with_no_errors():
     source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
-    sink.warning("only a warning", _located_stmt(), source)
 
-    sink.raise_if_errors()  # does not raise
+    sink.raise_if_errors("test")  # does not raise
 
 
-def test_raise_if_errors_raises_first_error():
+def test_raise_if_errors_raises_exception_group():
     source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
-    sink.warning("a warning", _located_stmt(), source)
     first = sink.error("first error", _located_stmt(), source)
     sink.error("second error", _located_stmt(), source)
     assert first is not None
 
-    with pytest.raises(SyntaxError) as excinfo:
-        sink.raise_if_errors()
-    assert excinfo.value.msg == "first error"
-    assert excinfo.value.filename == source.filename
-    assert excinfo.value.lineno == first.lineno
+    with pytest.raises(ExceptionGroup) as excinfo:
+        sink.raise_if_errors("test")
+    assert len(excinfo.value.exceptions) == 2
+    exceptions = excinfo.value.exceptions
+    assert isinstance(exceptions[0], SyntaxError)
+    assert isinstance(exceptions[1], SyntaxError)
+    assert exceptions[0].msg == "first error"  # type: ignore[union-attr]
+    assert exceptions[1].msg == "second error"  # type: ignore[union-attr]
 
 
 def test_fail_raises_immediately_and_records_nothing():

@@ -85,7 +85,7 @@ def test_assign_const_and_chained_targets():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assign = stmts[0]
     assert isinstance(assign, IrAssign)
     assert assign.targets == (
@@ -106,7 +106,7 @@ def test_assign_from_param_and_from_global():
         namespace={"b_global": 3},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     from_param, from_global = stmts[0], stmts[1]
     assert isinstance(from_param, IrAssign)
     assert from_param.value == IrVar(name="b", adapter=adapter_from_type(int))
@@ -121,7 +121,7 @@ def test_tuple_assign_targets():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assign = stmts[0]
     assert isinstance(assign, IrAssign)
     [target] = assign.targets
@@ -139,7 +139,7 @@ def test_augassign_kept_as_own_node():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     aug = stmts[0]
     assert isinstance(aug, IrAugAssign)
     assert aug.target == IrTargetName(name="a", adapter=adapter_from_type(int))
@@ -159,7 +159,7 @@ def test_if_and_elif_nesting():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     [first_if, ret] = stmts
     assert isinstance(first_if, IrIf)
     assert first_if.test == IrVar(name="c", adapter=adapter_from_type(int))
@@ -192,7 +192,7 @@ def test_while_break_continue_orelse():
             return 0
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     while_stmt = stmts[0]
     assert isinstance(while_stmt, IrWhile)
     assert isinstance(while_stmt.body.statements[0], IrBreak)
@@ -214,7 +214,7 @@ def test_for_target_and_global_iter():
         namespace={"xs": [1]},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     for_stmt = stmts[1]
     assert isinstance(for_stmt, IrFor)
     assert for_stmt.target == IrTargetName(name="i", adapter=VA)
@@ -233,7 +233,7 @@ def test_for_tuple_target():
         namespace={"pairs": [(1, 2)]},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     for_stmt = stmts[0]
     assert for_stmt.target.elements == (  # type: ignore[union-attr]
         IrTargetName(name="a", adapter=VA),
@@ -247,7 +247,7 @@ def test_return_with_and_without_value():
             return 1
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     [ret] = stmts
     assert ret == IrReturn(value=IrConst(value=1))
 
@@ -269,7 +269,7 @@ def test_exprstmt_and_pass_dropped():
             return 0
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assert len(stmts) == 2
     assert isinstance(stmts[0], IrExprStmt)
     assert isinstance(stmts[1], IrReturn)
@@ -289,7 +289,7 @@ def test_inet_call_node_with_copied_metadata():
         namespace={"make": make},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assign = ir.body.statements[0]
     assert isinstance(assign, IrAssign)
     # The call itself returns the Par — no wrapping tuple node.
@@ -322,7 +322,7 @@ def test_par_index_from_valid_subscript():
         namespace={"Par": Par},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     ret = ir.body.statements[0]
     assert isinstance(ret, IrReturn)
     assert ret.value == IrParIndex(
@@ -340,7 +340,7 @@ def test_boolop_flattens_same_op_chains():
             return d
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     [flat, mixed, _] = stmts
     assert isinstance(flat, IrAssign) and isinstance(flat.value, IrBoolOp)
     # Parenthesized same-op chains flatten to one n-ary node.
@@ -386,7 +386,7 @@ def test_exprstmt_dynamic_captures_locals_keeps_globals():
         namespace={"b_global": 7},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     exprstmt = stmts[0]
     assert isinstance(exprstmt, IrExprStmt)
     dynamic = exprstmt.value
@@ -408,7 +408,7 @@ def test_dynamic_replaces_nested_inet_call_with_placeholder():
         namespace={"make": make},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     exprstmt = stmts[0]
     dynamic = exprstmt.value  # type: ignore[union-attr]
     assert isinstance(dynamic, IrDynamic)
@@ -432,7 +432,7 @@ def test_dynamic_capture_order_and_dedup():
         namespace={"make": make},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     exprstmt = stmts[0]
     dynamic = exprstmt.value  # type: ignore[union-attr]
     assert isinstance(dynamic, IrDynamic)
@@ -451,7 +451,7 @@ def test_dynamic_local_read_captured_once():
             return 0
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     exprstmt = stmts[0]
     dynamic = exprstmt.value  # type: ignore[union-attr]
     assert isinstance(dynamic, IrDynamic)
@@ -470,7 +470,7 @@ def test_dynamic_lvalue_target():
         namespace={"Par": Par},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assign = stmts[0]
     assert isinstance(assign, IrAssign)
     [target] = assign.targets
@@ -495,7 +495,7 @@ def test_default_name_factory_avoids_used_names():
         namespace={"make": _inet_function()},
     )
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     dynamic = stmts[0].value  # type: ignore[union-attr]
     assert isinstance(dynamic, IrDynamic)
     assert dynamic.source_text == "print(__natsune_1__ + __natsune_0__)"
@@ -659,7 +659,7 @@ def test_unary_constant_folds_to_const():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     [neg, not_, neg_var, invert, exprstmt, _] = ir.body.statements
 
     assert isinstance(neg, IrAssign)
@@ -695,7 +695,7 @@ def test_arbitrary_expression_becomes_dynamic_binop():
             return a
         """)
 
-    assert sink.diagnostics == ()
+    assert sink.diagnostics == set()
     assign = stmts[0]
     assert isinstance(assign, IrAssign)
     value = assign.value
