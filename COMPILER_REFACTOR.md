@@ -5,6 +5,51 @@ separate passes, using plain data classes and flat functions instead of interlin
 compiler objects, with intermediate results that can be constructed and inspected in
 tests without an executor or live net.
 
+## Status (handoff summary — read me first)
+
+**Phases 0–6 are built, tested, and paused before lowering.** The old
+`src/natsune/compiler.py` is byte-identical to its pre-refactor state and
+remains the live implementation; everything new lives under
+`src/natsune/frontend/`, tested by `tests/frontend/` (219 tests total across
+both suites, all green; run with `uv run pytest`).
+
+What exists:
+
+- The pipeline: `extract_source` → `analyze_signature` → `collect_symbols` →
+  `collect_call_links` → `build_ir` → `render_function`. Plain data in and
+  out; no net objects anywhere; no imports of `natsune.compiler` (enforced by
+  an architecture-guard test).
+- Phase 0 diagnostics: positioned, accumulate-then-decide via `DiagnosticSink`
+  (exact-duplicate suppression for the pipeline's overlapping validations,
+  plus an immediate-raise defense path). Fallback positions are owned by
+  callsites, not the source map — see the Phase 0 decision note in §5.
+- Golden IR snapshots for the 18 example programs copied from
+  `tests/test_compiler.py` as real functions (`tests/frontend/programs.py`),
+  stored under `tests/frontend/snapshots/`, gathered/checked via
+  `make snapshots-update` / `make snapshots-check`. All 18 compile with zero
+  diagnostics.
+
+Reading order for a new maintainer: this status block, then §2 (principles,
+including the settled `match`-over-dispatch-tables and no-up-front-fallbacks
+decisions), the Phase 0–6 sections of §5 (each ends with its settled
+Decisions block), §10 (the divergence log — semantic decisions plus the
+old-compiler bugs found by probing: raw-KeyError crashes on assignment from
+globals, silent positional-default/positional-only holes, the indented-
+definition crash, the TryStar gap), and finally the snapshots themselves.
+
+Conventions that differ from the original plan text (each recorded in its
+phase section): statement dispatch uses `match`, not handler tables;
+`SourceMap` carries no fallback position; `collect_symbols`/`build_ir` take
+`FunctionSource` rather than bare `(func_def, globals)`; try blocks are
+rejected outright (§10 row 12); phase-5 inference takes plain mappings and a
+precomputed links dict.
+
+What is NOT done: phases 7–9 (§6) — expression/statement lowering, packaging,
+and cutover — and the §10 rows whose final form needs a lowering design
+(rows 1 and 6 at minimum; row 2's AugAssign asymmetry is related). The
+immediate next step is reading the snapshots closely, settling those rows,
+and only then planning phases 7–9.
+
 **Revised scope (this revision of the plan):**
 
 - We build **phases 0–6 only**, ending at an **IR** (intermediate representation) as
@@ -213,7 +258,7 @@ is written. It is also the backbone of golden tests.
 
 ---
 
-## 4. Layout (new files only; `compiler.py` untouched)
+## 4. Layout (built; `compiler.py` untouched)
 
 ```
 src/natsune/frontend/
@@ -221,28 +266,32 @@ src/natsune/frontend/
   diagnostics.py   # Phase 0
   source.py        # Phase 1
   signature.py     # Phase 2
-  link.py          # Phase 3
-  symbols.py       # Phase 4
-  infer.py         # Phase 5
+  link.py          # Phase 3 (+ collect_call_links)
+  symbols.py       # Phase 4 (incl. the absorbed UNSUPPORTED_EXPR/STMT tuples)
+  infer.py         # Phase 5 (infer_adapter, par_subscript_index)
   ir/
-    __init__.py    # re-exports node types
+    __init__.py    # re-exports node types + build_ir/render_function
     nodes.py       # Phase 6a: the dataclasses from §3.2
     builder.py     # Phase 6b: AST -> IR (desugar, validate, scan_dynamic)
     render.py      # Phase 6c: renderer
 
-tests/frontend/    # new-system tests only
-  test_diagnostics.py
-  test_source.py
-  test_signature.py
-  test_link.py
-  test_symbols.py
-  test_infer.py
-  test_ir_builder.py
-  test_ir_render.py
+tests/frontend/    # new-system tests only (173 tests, all green)
+  helpers.py           # make_source / parse_function / analyze_for / build_ir_for
+  programs.py          # the 18 example programs as real functions (+ PROGRAMS)
+  snapshots/*.ir       # stored golden IRs, one per program (18 files)
+  test_diagnostics.py  # 20 tests
+  test_source.py       # 20 tests
+  test_signature.py    # 12 tests
+  test_link.py         # 15 tests
+  test_symbols.py      # 27 tests
+  test_infer.py        # 19 tests
+  test_ir_builder.py   # 35 tests
+  test_ir_render.py    # 6 tests
+  test_snapshots.py    # 19 tests (18 golden IRs + orphan check)
 ```
 
-One module per phase is the starting point; merging small ones later is cheap,
-splitting a monolith is not. Naming is bikesheddable (`frontend` vs `pyast` vs
+One module per phase held up; nothing needed merging or splitting. Naming is
+bikesheddable (`frontend` vs `pyast` vs
 `lower`); the constraint is only that it must not be `natsune/compiler` until the
 old file goes away.
 
@@ -499,40 +548,46 @@ evaluation.
 
 ## 8. Build order (within the paused scope)
 
-1. Create `src/natsune/frontend/` skeleton + `tests/frontend/`; old
+1. ✅ Create `src/natsune/frontend/` skeleton + `tests/frontend/`; old
    `compiler.py` untouched (hence the `frontend` name — see §4).
-2. `diagnostics.py` (Phase 0) with position tests.
-3. `source.py`, `signature.py` (Phases 1–2).
-4. `link.py` (Phase 3).
-5. `symbols.py` (Phase 4) — making the §10 semantic decisions as we go.
-6. `infer.py` (Phase 5).
-7. `ir/nodes.py` → `ir/builder.py` → `ir/render.py` (Phase 6), with golden tests.
+2. ✅ `diagnostics.py` (Phase 0) with position tests.
+3. ✅ `source.py`, `signature.py` (Phases 1–2).
+4. ✅ `link.py` (Phase 3).
+5. ✅ `symbols.py` (Phase 4) — making the §10 semantic decisions as we go.
+6. ✅ `infer.py` (Phase 5).
+7. ✅ `ir/nodes.py` → `ir/builder.py` → `ir/render.py` (Phase 6), with golden
+   tests.
 8. **Pause / evaluation checkpoint:** render IRs for the functions in
    `tests/test_compiler.py` and any real programs; read them; settle the §10
    suspects; only then plan phases 7–9.
 
-   Status: DONE. All 18 example programs from `tests/test_compiler.py` are
-   copied into `tests/frontend/programs.py` and rendered under
-   `tests/frontend/snapshots/<name>.ir` by `tests/frontend/test_snapshots.py`
+   Status: DONE. All 18 example programs from `tests/test_compiler.py` live in
+   `tests/frontend/programs.py` as real, undecorated functions (cross-program
+   calls carry fake `__inet__` compilers, mirroring the paused decorator) and
+   are extracted through the genuine `extract_source` path. They render under
+   `tests/frontend/snapshots/<name>.ir` via `tests/frontend/test_snapshots.py`
    (golden snapshot tests; `make snapshots-update` regathers, `make
    snapshots-check` compares). All 18 programs compile through the pipeline
    with zero diagnostics. Reading the snapshots is the input to settling the
    remaining §10 rows and planning phases 7–9.
 
-Steps 2–6 are pure-data and low risk; step 7 is where the semantic decisions
-concentrate — one commit per module, each fully tested.
+Steps 2–6 were pure-data and low risk as predicted; step 7 is where the
+semantic decisions concentrated — one module per step, each fully tested.
+The pipeline is complete through the IR; phases 7–9 below remain the
+unfinished work.
 
 ---
 
-## 9. Definition of done for this scope
+## 9. Definition of done for this scope — MET
 
-- `natsune.frontend.build_ir` turns an `@inet`-compatible function into an
+- ✅ `natsune.frontend.build_ir` turns an `@inet`-compatible function into an
   `IrFunction` without creating any net objects and without importing
-  `natsune.compiler`.
-- A failing program produces diagnostics, never a mid-flight exception.
-- `render_function` output is deterministic and readable enough to review real
-  programs.
-- All new tests pass; all old tests pass; `compiler.py` is byte-identical.
+  `natsune.compiler` (the import ban is enforced by a test).
+- ✅ A failing program produces diagnostics, never a mid-flight exception.
+- ✅ `render_function` output is deterministic and readable enough to review
+  real programs (golden-tested over all 18 example programs).
+- ✅ All new tests pass (173); all old tests pass (46); `compiler.py` is
+  byte-identical (checked via `git status` at every step of the work).
 
 ---
 
@@ -544,11 +599,11 @@ log becomes the cutover checklist in phase 9.
 
 | # | Suspect | Where today | Candidate decision |
 |---|---|---|---|
-| 1 | `AugAssign` desugars to read-modify-write, which may not preserve mutation-through-reference semantics for `Ref`/`Inverse`-typed variables (cf. the `take_reference` test where `a += 10` mutates in place) | `parse_statement_body` AugAssign branch | Keep `IrAugAssign` as its own IR node; give it explicit Ref-aware lowering semantics later |
+| 1 | `AugAssign` desugars to read-modify-write, which may not preserve mutation-through-reference semantics for `Ref`/`Inverse`-typed variables (cf. the `take_reference` test where `a += 10` mutates in place) | `parse_statement_body` AugAssign branch | **Half-done (Phase 6):** `IrAugAssign` is kept as its own IR node, not desugared; the explicit Ref-aware lowering semantics are a phase-8 decision |
 | 2 | Any name not already a local is treated as a global — including names assigned *later* in the function (read-before-assignment silently reads a global) | `InetVariablesEvaluator.visit_Name` | **Decided (Phase 4, probe-verified):** preserve the order-dependent global fallback — a read preceding a normal assignment already trips the global-target conflict diagnostic. The truly silent hole is self-referential first binding (`a = a + 1` with `a` unknown: old = silent uninitialized local; Python = UnboundLocalError), now flagged with "Read of variable before assignment". AugAssign-introduced names stay silent by design (documented feature) |
 | 3 | For-loop targets are force-marked with adapter `VA`; `ast.walk` over targets silently ignores non-Name nodes | `visit_For` | **Decided (Phase 4):** targets keep VA for now (typing from the iterable awaits settled lowering semantics); tuple targets recurse; exotic leaves (`for x[0] in ...`) are diagnosed instead of silently marking the root name as a local |
 | 4 | Tuple-assignment targets silently get adapter `VA` when the value's Par arity doesn't match | `visit_Assign` | **Decided (Phase 4):** mismatch is a diagnostic; matching Par values type element-wise (nested tuples recurse into nested Par items) |
-| 5 | Several checks (inet-call arity/keywords, Par subscript bounds, list lvalues) fire during *lowering*, after nets are partially constructed | `evaluate_special_form_from_expression`, `evaluate_subscript`, `evaluate_to_expression` | Move all validation to IR construction (already the plan, §3.3) — a logged divergence by construction |
+| 5 | Several checks (inet-call arity/keywords, Par subscript bounds, list lvalues) fire during *lowering*, after nets are partially constructed | `evaluate_special_form_from_expression`, `evaluate_subscript`, `evaluate_to_expression` | **Done (Phase 6):** inet-call keywords/arity and Par subscript bounds are validated in the builder (diagnostics via the sink; an invalid expression falls back to `IrDynamic`); list lvalues and tuple mismatch are additionally validated at collection (§3.3) |
 | 6 | Chained assignment `a = b = expr` wires `b` from `a`'s register rather than re-evaluating — subtle and untested | `parse_statement_body` Assign branch | Model explicitly in `IrAssign`; decide semantics once |
 | 7 | Indented definitions (methods, nested functions) crash the old compiler: `inspect.getsourcelines` returns an undented block, so `ast.parse` raises IndentationError before compilation even starts | `InetFunctionCompiler.func_def` (found while characterizing Phase 1) | `extract_source` dedents the extracted block; columns stay snippet-relative (understate by the stripped margin for indented defs) |
 | 8 | Positional parameter defaults are silently accepted and ignored: the old check rejects only `kw_defaults`/`kwonlyargs`/`kwarg`/`vararg`, so `def f(a, b=5)` compiles to a 2-arity net while Python callers may invoke it with one argument | `InetFunctionCompiler.args` (found during Phase 2) | Reject defaults at signature analysis — a defaulted param cannot be supplied through the net interface |
@@ -556,7 +611,7 @@ log becomes the cutover checklist in phase 9.
 | 10 | Assigning from a global crashes with a raw `KeyError`: `visit_Assign` infers the value's adapter via `variables[id]` indexing (`a = b_global` with `b_global` a module global) | `InetVariablesEvaluator.visit_Assign` → `infer_expression_adapter` (probe-verified, Phase 4) | Unknown names yield VA and the RHS name is collected into `used_as_globals` (dynamic path) |
 | 11 | `AnnAssign`/`AugAssign` RHS are never walked by the collector, so globals referenced there are never marked — `a: int = b_global` passes collection and crashes at *lowering* with a raw KeyError | `visit_AnnAssign`, `visit_AugAssign` (probe-verified, Phase 4) | Both RHS expressions are walked by the new collector |
 | 12 | `try` is rejected as unsupported, but `try/except*` (`ast.TryStar`) is silently walked by the collector, and handler bound names are never declared | unsupported_stmt tuple / `generic_visit` (probe-verified, Phase 4) | **Owner decision:** skip all try blocks for now ("don't trust my own implementation for parsing try blocks") — the new collector rejects both `Try` and `TryStar`; revisit with phases 6+ and the paused lowering |
-| 13 | Negative Par subscript literals (`p[-1]`) are rejected as "must be a constant integer", because the unary minus makes them `UnaryOp`, not `Constant` — while `p[True]` is accepted (bool is an int subclass) and indexes element 1 | `evaluate_subscript` (characterized Phase 5) | Absorb exactly: `par_subscript_index` returns `int \| None` (both failure modes collapse to None); the two old messages are reintroduced by phase 6's builder when it owns the diagnostics |
+| 13 | Negative Par subscript literals (`p[-1]`) are rejected as "must be a constant integer", because the unary minus makes them `UnaryOp`, not `Constant` — while `p[True]` is accepted (bool is an int subclass) and indexes element 1 | `evaluate_subscript` (characterized Phase 5) | Absorbed exactly: `par_subscript_index` discriminates the two failure modes via `ParSubscriptError` (old messages verbatim), and the Phase 6 builder lands them in the sink while falling back to `IrDynamic` |
 
 ---
 
