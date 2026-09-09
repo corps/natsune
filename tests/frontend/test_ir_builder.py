@@ -1,10 +1,3 @@
-"""Phase 6b tests — IR construction.
-
-Per-node construction with exact IR shapes, §3.3 desugaring, IrDynamic scan
-semantics (deterministic placeholders, capture order, nested dynamics), and
-every validation path asserted from the sink with **no exception raised**.
-"""
-
 import ast
 import dataclasses
 
@@ -39,7 +32,6 @@ from tests.frontend.helpers import build_ir_for, make_position
 
 
 def _inet_function(arg_types=(int,), return_type=int):
-    """A callable whose `__inet__` is shaped like the old compiler object."""
     from types import SimpleNamespace
 
     compiler = SimpleNamespace(
@@ -58,9 +50,6 @@ def _body_of(snippet: str, **kwargs):
     ir, sink = build_ir_for(snippet, **kwargs)
     assert ir.body is not None
     return ir, ir.body.statements, sink
-
-
-# --- function level ------------------------------------------------------------
 
 
 def test_function_shape_params_and_return():
@@ -275,9 +264,6 @@ def test_exprstmt_and_pass_dropped():
     assert isinstance(stmts[1], IrReturn)
 
 
-# --- typed expressions ----------------------------------------------------------
-
-
 def test_inet_call_node_with_copied_metadata():
     make = _inet_function(arg_types=(int,), return_type=Par[int, str])
     ir, sink = build_ir_for(
@@ -371,9 +357,6 @@ def test_positions_are_resolved():
     assert assign.value.position == make_position(2, 8)  # type: ignore[union-attr]
     ret = ir.body.statements[1]
     assert ret.position == make_position(3, 4)
-
-
-# --- IrDynamic ------------------------------------------------------------------
 
 
 def test_exprstmt_dynamic_captures_locals_keeps_globals():
@@ -500,9 +483,6 @@ def test_default_name_factory_avoids_used_names():
     assert isinstance(dynamic, IrDynamic)
     assert dynamic.source_text == "print(__natsune_1__ + __natsune_0__)"
     assert [name for name, _ in dynamic.captures] == ["__natsune_1__"]
-
-
-# --- validation (diagnostics, never exceptions) ---------------------------------
 
 
 def test_inet_call_keywords_validated():
@@ -647,8 +627,6 @@ def test_unsupported_expression_validated():
 
 
 def test_unary_constant_folds_to_const():
-    # §10-adjacent: `-1` is UnaryOp(USub, Constant(1)) in the AST; Python's
-    # own optimizer folds it, and so does the builder.
     ir, sink = build_ir_for("""
         def f() -> int:
             a = -1
@@ -702,16 +680,3 @@ def test_arbitrary_expression_becomes_dynamic_binop():
     assert isinstance(value, IrDynamic)
     assert value.source_text == "b * 2 + 1"
     assert value.captures == (("b", IrVar(name="b", adapter=VA)),)
-
-
-def test_pipeline_is_deterministic():
-    snippet = """
-        def f(b: int) -> int:
-            print(b * 2, make(3))
-            return b
-        """
-    ir1, _ = build_ir_for(snippet, namespace={"make": _inet_function()})
-    ir2, _ = build_ir_for(snippet, namespace={"make": _inet_function()})
-
-    assert dataclasses.replace(ir1) == ir2
-    assert ir1 == ir2

@@ -1,10 +1,3 @@
-"""Phase 3 tests — linking.
-
-Fake globals dicts only — no real compilation, no live net. The plan's named
-error paths (absent name, eval raises, object without `__inet__`) all return
-plain data; nothing here raises.
-"""
-
 import ast
 import os
 from types import SimpleNamespace
@@ -40,9 +33,6 @@ def _inet_function(arg_types=(int, str), return_type=int):
 
 def _expression(text: str) -> ast.expr:
     return ast.parse(text, mode="eval").body
-
-
-# --- link_name ---------------------------------------------------------------
 
 
 def test_links_plain_value():
@@ -114,9 +104,6 @@ def test_names_fall_back_to_builtins_like_the_old_eval():
     assert result.value is len
 
 
-# --- eval_annotation / eval_compile_time -------------------------------------
-
-
 def test_eval_annotation_success():
     result = eval_annotation(_expression("int"), {})
     assert result == EvaluatedValue(value=int, source_text="int")
@@ -164,12 +151,7 @@ def test_eval_compile_time_success():
     assert result == EvaluatedValue(value=int, source_text="int")
 
 
-# --- architecture guard ------------------------------------------------------
-
-
 def test_frontend_never_imports_the_old_compiler():
-    # COMPILER_REFACTOR.md §5: "none of them import from `natsune.compiler`."
-    # Checks actual import statements (docstrings mention the name on purpose).
     import natsune.frontend
 
     frontend_dir = os.path.dirname(natsune.frontend.__file__)

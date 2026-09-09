@@ -1,11 +1,3 @@
-"""Phase 0 tests — diagnostics.
-
-These pin the old `InetFunctionCompiler.syntax_error` behavior (position
-arithmetic and `SyntaxError` shape) exactly as it is today, per
-COMPILER_REFACTOR.md §11 ("base-lineno offset arithmetic appears correct but
-untested; pin current behavior in Phase 0 tests, then decide if it's right").
-"""
-
 import ast
 import inspect
 
@@ -34,9 +26,6 @@ def _located_stmt() -> ast.stmt:
     return ast.parse("x = 1").body[0]
 
 
-# --- SourceMap.resolve: the pinned old arithmetic ---------------------------
-
-
 def test_resolve_applies_base_lineno_offset():
     source = SourceMap("prog.py", base_lineno=10)
     func_def = parse_function("""
@@ -45,21 +34,16 @@ def test_resolve_applies_base_lineno_offset():
         """)
     ret = func_def.body[0]
 
-    # The snippet's leading blank line keeps 1-based numbering: the return
-    # sits at lineno 3, col 4.
     assert ret.lineno == 3
     assert source.resolve(ret) == Position(ret.lineno + 10 - 1, 4)
 
 
 def test_resolve_returns_none_for_nodes_without_location():
-    # `ast.Load` carries no lineno/col_offset, and SourceMap deliberately has
-    # no fallback: resolving is the caller's problem.
     source = SourceMap("prog.py", base_lineno=10)
     assert source.resolve(ast.Load()) is None
 
 
 def test_resolve_passes_column_through_untouched():
-    # Column offsets get no base adjustment (pinning old behavior).
     source = SourceMap("prog.py", base_lineno=5)
     func_def = parse_function("""
         def f():
@@ -70,15 +54,12 @@ def test_resolve_passes_column_through_untouched():
     assert source.resolve(ret) == Position(ret.lineno + 5 - 1, 4)
 
 
-# --- Base-lineno offsets for real, non-top-of-module definitions ------------
-
-
 def test_base_lineno_for_function_below_top_of_module():
     source, func_def = source_map_for(_module_level)
 
     assert source.base_lineno == _module_level.__code__.co_firstlineno
     assert source.base_lineno > 1
-    assert func_def.lineno == 1  # extracted snippet is numbered from 1
+    assert func_def.lineno == 1
 
     ret = func_def.body[0]
     resolved = source.resolve(ret)
@@ -89,8 +70,6 @@ def test_base_lineno_for_function_below_top_of_module():
 def test_base_lineno_for_indented_function():
     source, func_def = source_map_for(_Container.method)
 
-    # `inspect.getsourcelines` dedents: the snippet's def sits at column 0,
-    # but base_lineno still points at the real file line.
     assert source.base_lineno == _Container.method.__code__.co_firstlineno
     assert func_def.col_offset == 0
 
@@ -103,13 +82,8 @@ def test_base_lineno_for_indented_function():
 def test_locationless_nodes_return_none_and_callers_own_fallback():
     source, func_def = source_map_for(_module_level)
     assert source.resolve(ast.Load()) is None
-    # The callsite owns the fallback — here, the FunctionDef context that
-    # `source_map_for` happens to have on hand.
     position = source.resolve(ast.Load()) or source.resolve(func_def)
     assert position == Position(source.base_lineno, func_def.col_offset)
-
-
-# --- CompileDiagnostic ------------------------------------------------------
 
 
 def test_str_formatting():
@@ -169,9 +143,6 @@ def test_raised_matches_old_syntax_error_shape():
     assert exc.lineno == old.lineno
     assert exc.offset == old.offset
     assert exc.text is None and old.text is None
-
-
-# --- DiagnosticSink ---------------------------------------------------------
 
 
 def test_sink_accumulates_in_order():
@@ -241,8 +212,6 @@ def test_fail_raises_immediately_and_records_nothing():
 
 
 def test_fail_uses_positionless_legacy_shape_without_location():
-    # Bare `raise SyntaxError(msg)` — the old compiler's other shape (e.g. the
-    # unsupported-args raise) — when even the defense path has no position.
     source = SourceMap("prog.py", 1)
     sink = DiagnosticSink()
 
@@ -254,7 +223,6 @@ def test_fail_uses_positionless_legacy_shape_without_location():
 
 
 def test_inspect_sanity_for_helpers():
-    # Guards the fixtures themselves: co_firstlineno and getsourcelines agree.
     lines, base = inspect.getsourcelines(_module_level)
     assert base == _module_level.__code__.co_firstlineno
     assert lines[0].startswith("def _module_level")

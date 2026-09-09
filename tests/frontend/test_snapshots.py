@@ -12,8 +12,7 @@ Workflows:
 
 Adding a program: write a module-level function in
 `tests/frontend/programs.py`, add it to `PROGRAMS`, run the update command,
-review the new snapshot by eye (this is the "read the IR" checkpoint), and
-commit it.
+review the new snapshot
 """
 
 import difflib
@@ -38,11 +37,6 @@ def snapshot_path(name: str) -> str:
 
 
 def compile_program(func) -> str:
-    """Full pipeline (§9) → snapshot text: diagnostics section + rendered IR.
-
-    The filename is pinned to `<name>.py` (rather than the module's real,
-    machine-dependent path) so any diagnostic positions stay portable.
-    """
     source = extract_source(
         func, globals=func.__globals__, filename=f"{func.__name__}.py"
     )

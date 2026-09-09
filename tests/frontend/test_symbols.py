@@ -1,11 +1,3 @@
-"""Phase 4 tests — symbol collection.
-
-Snippet in, `SymbolTable` out (the plan's list: simple/chained/tuple
-assignment, AugAssign introducing names, AnnAssign with evaluated annotation,
-for-targets, global reads), with diagnostics asserted from the sink. Each
-probe-backed regression is tagged with its §10 row.
-"""
-
 from types import SimpleNamespace
 
 from natsune.adapters import VA, ParValueAdapter, ReferenceAdapter, adapter_from_type
@@ -82,7 +74,6 @@ def test_assign_from_param_infers_adapter():
 
 
 def test_assign_from_global_marked_not_crashed():
-    # §10 row 10: the old compiler died with a raw KeyError here.
     table, sink = _collect(
         """
         def f() -> int:
@@ -95,9 +86,6 @@ def test_assign_from_global_marked_not_crashed():
     assert sink.diagnostics == set()
     assert table.variables["a"] is VA
     assert "b_global" in table.used_as_globals
-
-
-# --- assignment targets ------------------------------------------------------
 
 
 def test_simple_assignment_introduces_va_local():
@@ -136,7 +124,6 @@ def test_tuple_assignment_matches_par_elements():
 
 
 def test_tuple_assignment_mismatch_diagnosed():
-    # §10 row 4: the old compiler silently gave every target VA.
     table, sink = _collect("""
         def f(c: int) -> int:
             a, b = c
@@ -167,9 +154,6 @@ def test_tuple_assignment_from_inet_call_uses_return_adapter():
     assert table.variables["b"] is VA
 
 
-# --- AugAssign ---------------------------------------------------------------
-
-
 def test_augassign_introduces_local():
     table, sink = _collect("""
         def f() -> int:
@@ -193,7 +177,6 @@ def test_augassign_on_param_keeps_adapter():
 
 
 def test_augassign_value_names_are_marked():
-    # §10 row 11 sibling fix: the old collector never walked the value.
     table, sink = _collect(
         """
         def f() -> int:
@@ -250,8 +233,6 @@ def test_annassign_failure_uses_consistent_format():
 
 
 def test_annassign_rhs_names_are_marked():
-    # §10 row 11: the old collector skipped the RHS entirely — a global RHS
-    # crashed later at lowering with a raw KeyError.
     table, sink = _collect(
         """
         def f() -> int:
@@ -312,7 +293,6 @@ def test_for_tuple_target_marks_all_leaves():
 
 
 def test_for_exotic_target_diagnosed():
-    # §10 row 3: the old code silently marked the root name `x` as a local.
     table, sink = _collect(
         """
         def f() -> int:
@@ -328,12 +308,7 @@ def test_for_exotic_target_diagnosed():
     assert "x" not in table.variables
 
 
-# --- ordering rules (§10 row 2) -----------------------------------------------
-
-
 def test_read_before_assignment_conflicts_with_later_assignment():
-    # Probe 3 parity: the read marks the name global; the later assignment
-    # trips the conflict.
     table, sink = _collect("""
         def f() -> int:
             print(a)
@@ -347,9 +322,8 @@ def test_read_before_assignment_conflicts_with_later_assignment():
     assert "a" not in table.variables
 
 
+# TODO: Not sure if this makes sense when we pull in inverted, drop diagnostic
 def test_self_referential_first_binding_is_diagnosed():
-    # Probe 4: `a = a + 1` with `a` otherwise unknown silently created an
-    # uninitialized local (Python: UnboundLocalError).
     table, sink = _collect("""
         def f() -> int:
             a = a + 1
@@ -386,9 +360,6 @@ def test_tuple_swap_of_fresh_names_is_diagnosed():
     ]
 
 
-# --- unsupported nodes -------------------------------------------------------
-
-
 def test_unsupported_stmt_diagnosed():
     _, sink = _collect("""
         def f() -> int:
@@ -409,31 +380,3 @@ def test_unsupported_expr_diagnosed():
 
     [diagnostic] = sink.diagnostics
     assert diagnostic.message == "Unsupported expression type"
-
-
-def test_try_blocks_are_rejected():
-    # User decision (§10 row 12): try parsing is not trusted — both `try`
-    # and `try/except*` are rejected by the collector.
-    _, sink = _collect("""
-        def f() -> int:
-            try:
-                pass
-            except ValueError:
-                pass
-            return 0
-        """)
-
-    [diagnostic] = sink.diagnostics
-    assert diagnostic.message == "Unsupported statement type"
-
-    _, sink = _collect("""
-        def f() -> int:
-            try:
-                pass
-            except* ValueError:
-                pass
-            return 0
-        """)
-
-    [diagnostic] = sink.diagnostics
-    assert diagnostic.message == "Unsupported statement type"

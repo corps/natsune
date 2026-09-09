@@ -1,21 +1,3 @@
-"""Example programs for IR snapshots — copied from tests/test_compiler.py.
-
-These are REAL functions (no `@inet` decoration: nothing compiles at import),
-extracted through the genuine phase-1 path (`extract_source` →
-`inspect.getsourcelines`), not text snippets. Add a program by writing a
-module-level function and adding it to `PROGRAMS`, then run:
-
-    make snapshots-update
-
-which (re)writes `tests/frontend/snapshots/<name>.ir`. Snapshot tests fail
-with a unified diff whenever a rendered IR drifts from its stored snapshot.
-
-Programs that call other programs get fake `__inet__` compilers attached (the
-bottom of this file), mirroring what the paused `inet` decorator will one day
-attach for real — so their snapshots exercise `IrCallInet` nodes with copied
-metadata instead of falling back to `IrDynamic`.
-"""
-
 from types import SimpleNamespace
 
 from natsune.adapters import ParValueAdapter, adapter_from_type

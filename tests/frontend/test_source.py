@@ -1,16 +1,3 @@
-"""Phase 1 tests — source extraction.
-
-These characterize and pin `inspect.getsourcelines` behavior on CPython 3.14
-(the plan's §11 gotcha: "currently untested anywhere; characterize behavior in
-Phase 1 tests before relying on it"):
-
-- `base_lineno` always equals `co_firstlineno`, which for *decorated* defs is
-  the first decorator line, not the `def`.
-- The extracted block is not dedented by `inspect`; `extract_source` dedents
-  it, so indented definitions (methods, nested functions) work — they crashed
-  the old compiler (see §10, row 7). Column offsets stay snippet-relative.
-"""
-
 import ast
 import importlib.util
 import linecache
@@ -155,9 +142,6 @@ def test_caller_owns_fallback_for_locationless_nodes():
     assert _file_line(_module_level, position.lineno).startswith("def _module_level")
 
 
-# --- globals identity --------------------------------------------------------
-
-
 def test_globals_stored_by_reference():
     sentinel: dict = {}
     source = extract_source(_module_level, globals=sentinel, filename="prog.py")
@@ -171,9 +155,6 @@ def test_make_source_globals_is_function_globals():
         """)
     assert getattr(source.func, "__globals__") is source.globals
     assert "f" in source.globals
-
-
-# --- validation of non-function definitions ---------------------------------
 
 
 def test_rejects_class_definition():
@@ -191,9 +172,6 @@ def test_rejects_lambda_assignment():
 
     with pytest.raises(SyntaxError, match="Assign"):
         extract_source(lam, globals={}, filename="prog.py")
-
-
-# --- synthetic module with known layout -------------------------------------
 
 
 def test_synthetic_module_layout(tmp_path):
@@ -250,9 +228,6 @@ def test_synthetic_module_layout(tmp_path):
     ret_pos = add.source_map.resolve(add.func_def.body[0])
     assert ret_pos is not None
     assert ret_pos.lineno == line_of("    return a + b")
-
-
-# --- make_source (snippet fixture used by all later phases) -----------------
 
 
 def test_make_source_basic():

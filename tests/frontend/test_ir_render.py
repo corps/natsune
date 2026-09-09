@@ -1,15 +1,3 @@
-"""Phase 6c tests — the deterministic IR renderer.
-
-Golden tests: snippet → `render_function` → exact output (§7: anchored on the
-renderer and the deterministic injected name factory). This is the backbone
-of the "read the IR of real programs" evaluation checkpoint.
-
-Note: adapters render as `va` / `par[...]` / `ref[...]` — the adapter
-substrate carries no type identity (`adapter_from_type(int)` and
-`adapter_from_type(str)` are both plain value adapters), so type annotations
-do not survive into the IR.
-"""
-
 from types import SimpleNamespace
 
 from natsune.adapters import ParValueAdapter, adapter_from_type

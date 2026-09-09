@@ -1,12 +1,3 @@
-"""Phase 2 tests — signature analysis.
-
-Snippet in, `Signature` out — via the phase-1 `make_source` fixture, no
-executor. Covers the plan's named cases (0/1/n args, missing annotations,
-rejection of kw-only/vararg/default) plus the two old-code holes found while
-absorbing (positional defaults ignored, positional-only params dropped —
-§10 rows 8–9).
-"""
-
 import pytest
 
 from natsune.adapters import VA, ParValueAdapter, adapter_from_type
@@ -90,9 +81,6 @@ def test_mixed_annotated_and_missing():
     assert signature.args_adapter == ParValueAdapter([adapter_from_type(int), VA])
 
 
-# --- structural rejection ----------------------------------------------------
-
-
 def test_rejects_vararg_with_position():
     signature, sink = _analyze("""
         def f(*rest):
@@ -132,8 +120,6 @@ def test_rejects_kwonly_args():
 
 
 def test_rejects_positional_defaults_old_code_ignored():
-    # §10 row 8: `def f(a, b=5)` used to compile silently while the default
-    # could never be supplied through the net interface.
     signature, sink = _analyze("""
         def f(a, b=5):
             return a
@@ -146,8 +132,6 @@ def test_rejects_positional_defaults_old_code_ignored():
 
 
 def test_rejects_positional_only_params_old_code_dropped():
-    # §10 row 9: `def f(a, /, b)` used to silently drop `a` from the arg list
-    # (wrong arity).
     signature, sink = _analyze("""
         def f(a, /, b):
             return a
@@ -185,9 +169,6 @@ def test_rejections_accumulate_in_feature_order():
         "Default values are not supported in inet functions",
     }
     assert signature.arity == 1  # `a` — best effort despite diagnostics
-
-
-# --- annotation resolution failures ------------------------------------------
 
 
 def test_unresolvable_annotation_is_diagnostic_not_exception():

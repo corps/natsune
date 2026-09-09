@@ -1,11 +1,3 @@
-"""Phase 5 tests — adapter inference.
-
-Pure functions over plain mappings: no collector, no compilation. The plan's
-named cases (in/out-of-range subscripts, non-constant slices, call adapters
-for linked vs unlinked callees) plus the absorbed quirks (negative literals,
-bool indices) and the `collect_call_links` pre-pass.
-"""
-
 import ast
 from types import SimpleNamespace
 
