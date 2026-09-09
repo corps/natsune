@@ -15,9 +15,10 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 239 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 22 backend
-  (declaration layer, recorder split, agent invocation; `tests/backend/`).
+- Tests: 249 passing total — 171 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 32 backend
+  (declaration layer, recorder split, agent invocation, lowering oracle;
+  `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
   `make snapshots-update` (env var `NATSUNE_UPDATE_SNAPSHOTS=1` on
   `tests/frontend/test_snapshots.py`; review generated `.ir` by eye).
@@ -125,14 +126,21 @@ class Backend(Protocol):
     def resolve_call(self, ref: Any) -> AgentRef: ...      # IrCallInet.ref
     def constant(self, value: Any, adapter: Adapter) -> Port: ...
     def materialize_dynamic(self, node: ast.expr, source_text: str,
-                            captures: Mapping[str, Port],
-                            adapter: Adapter) -> Graft: ...
+                            captures: Mapping[str, FromRegister],
+                            adapter: Adapter, connector: Connector) -> FromRegister: ...
     # Receives BOTH the original ast node and its unparsed text; backends
     # use whichever is easier (Python evals the text, an emitter can
-    # pattern-match the node). Mirrors IrDynamic/IrTargetDynamic.ast_node.
+    # pattern-match the node). node is always a real ast.expr — synthesized
+    # augassign dynamics carry a synthesized BinOp (the old compiler.py:833
+    # construction), and text derives from the node via ast.unparse so the
+    # two can never disagree. Mirrors IrDynamic/IrTargetDynamic.ast_node.
     # captures is the ALREADY-LOWERED form: IrDynamic.captures is
     # tuple[tuple[str, IrExpr], ...] at the IR, but lowering resolves each
-    # IrExpr to a port before calling — the backend never sees IrExpr.
+    # IrExpr to a FromRegister before calling — the backend never sees
+    # IrExpr. FromRegister (not Port) because the eval context needs
+    # register identity (serialize_values/borrow_registers); connector is
+    # the ambient flow (captures may be empty); returns FromRegister
+    # (dynamics inline eagerly, not deferred grafts).
     def finish(self, flow: VariablesFlow) -> Artifact: ...
     # Declares the function's own body as an AgentDef (NetTemplate extracted
     # from the flow's active_pairs). What the artifact *is* — runnable vs.
@@ -232,7 +240,10 @@ from day one.
   diffed against the old compiler's flows graph-for-graph. There is also
   prior art for emitting code from this stack:
   `karakuri.codegen_buffer.generate` is already used in `invocations.py`
-  (`make codegen` regenerates types).
+  (`make codegen` regenerates types). **First recorded divergence:** the IR
+  constant-folds foldable unary ops (`return -1` → `IrConst`) where legacy
+  emitted a dynamic eval net — the IR is the spec; asserted deliberately in
+  `tests/backend/test_lowering_oracle.py`.
 - **Opaque callee refs.** `IrCallInet.ref` currently holds old-style
   `__inet__` compiler objects; the frontend treats them as opaque and copies
   metadata (arity, adapters). In the backend, `resolve_call`/`declare_agent`
@@ -265,6 +276,13 @@ from day one.
 2. Write the new Ir-lowering against the protocol; diff its `VariablesFlow`s
    against the old compiler's using the serializer as the oracle (all 18
    snapshot programs exist for this).
+   **First slice landed:** `backend/lowering.py#lower_function` lowers the
+   straight-line subset (Const/Var/Dynamic expressions; single-target
+   Assign with the legacy target-to-target chain, AugAssign rebind per
+   §8.6, Return stop-at-first-return, ExprStmt, implicit-None tail) with
+   exact `serialize_active_pairs` equality against legacy for 10 oracle
+   programs. Dynamics materialize flow-internally (see §8.4 finding);
+   composites (If/For/While) are next and consume `agent_invocation`.
 3. Only then `CppBackend`: Connector-as-emitter + agent registry → C++ source.
 4. Cutover (delete `compiler.py`, switch the `inet` decorator) stays a
    separate, last step.
@@ -285,7 +303,17 @@ from day one.
    for C++; where the adapter-driven value discipline constrains them.
 4. **Dynamic fallback gating** — is `materialize_dynamic` Python-only by
    contract, with a diagnostic for C++? (Likely yes; matches `IrDynamic`
-   being the escape hatch.)
+   being the escape hatch.) **Resolved (first lowering slice):** the
+   signature is `captures: Mapping[str, FromRegister]` — bare Ports lacked
+   the register identity `serialize_values`/`borrow_registers` consume —
+   plus an explicit `connector` (captures may be empty) and a
+   `FromRegister` return (dynamics inline eagerly, not deferred grafts);
+   `node` is a strict `ast.expr` — augassign lowering synthesizes the same
+   BinOp the old compiler built and derives `source_text` from it via
+   `ast.unparse`, so node and text can never disagree. The eval
+   fallback lives in `PythonBackend.materialize_dynamic` verbatim
+   (old construct_context); lowering routes through the protocol and is
+   target-agnostic for dynamics.
 5. **`IrStructureError` at build** — currently raised out of `build_ir`; should
    it become a `DiagnosticSink` diagnostic instead (analysis-style) now that it
    fires during parsing? (Cutover-consistency question, not urgent.)
