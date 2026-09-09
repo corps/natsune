@@ -14,25 +14,24 @@ class IrNode:
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrTarget(IrNode): ...
-
-
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrTargetName(IrTarget):
+class IrTargetName(IrNode):
     name: str
     adapter: Adapter
     is_global: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrTargetTuple(IrTarget):
+class IrTargetTuple(IrNode):
     elements: tuple[IrTarget, ...]
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrTargetDynamic(IrTarget):
+class IrTargetDynamic(IrNode):
     source_text: str
     captures: tuple[tuple[str, IrExpr], ...] = ()
+
+
+IrTarget = IrTargetName | IrTargetTuple | IrTargetDynamic
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
