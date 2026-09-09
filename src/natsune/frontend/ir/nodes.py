@@ -86,6 +86,10 @@ class IrDynamic(IrNode):
     source_text: str
     captures: tuple[tuple[str, IrExpr], ...] = ()
     adapter: Adapter = VA
+    # The original ast node this dynamic was built from, so consumers can
+    # inspect it without re-parsing source_text (mirrors IrTargetDynamic).
+    # Not part of equality/repr.
+    ast_node: ast.expr = dataclasses.field(compare=False, repr=False)
 
 
 type IrExpr = (

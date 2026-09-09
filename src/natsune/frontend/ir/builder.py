@@ -269,7 +269,9 @@ def _build_expr(node: ast.expr, builder: IrBuilder) -> IrExpr:
         # diagnostic is what keeps them from ever lowering.
         builder.error("Unsupported expression type", node)
         return IrDynamic(
-            source_text=ast.unparse(node), position=builder.position_of(node)
+            source_text=ast.unparse(node),
+            position=builder.position_of(node),
+            ast_node=node,
         )
     typed = _try_typed(node, builder)
     if typed is not None:
@@ -452,4 +454,5 @@ def _scan_dynamic(node: ast.expr, builder: IrBuilder) -> IrDynamic:
         source_text=ast.unparse(rewritten),
         captures=tuple(captures.items()),
         position=builder.position_of(node),
+        ast_node=node,
     )

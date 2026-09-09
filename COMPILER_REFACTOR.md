@@ -15,16 +15,19 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 217 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code).
+- Tests: 227 passing total — 171 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 10 backend
+  (declaration layer, `tests/backend/test_declaration.py`).
 - Snapshot workflow: `make snapshots-check` /
   `make snapshots-update` (env var `NATSUNE_UPDATE_SNAPSHOTS=1` on
   `tests/frontend/test_snapshots.py`; review generated `.ir` by eye).
 - Recent IR additions since the phase-6 pause (all snapshot-tested):
   - Sum types are PEP 695 aliases (`type IrExpr = …`, `IrStmt`, `IrTarget`,
     `IrBodyExit`, `VariableUsage`).
-  - `IrTargetDynamic.ast_node` — the original `ast.expr` kept on the node
-    (`compare=False, repr=False`) so consumers never re-parse `source_text`.
+  - `IrTargetDynamic.ast_node` / `IrDynamic.ast_node` — the original
+    `ast.expr` kept on the node (`compare=False, repr=False`) so consumers
+    never re-parse `source_text`; `materialize_dynamic` passes both to the
+    backend, which uses whichever is easier.
   - `IrBody` carries derived **fields** (not properties), computed bottom-up at
     build time by `analyze_ir_body(statements)` in `frontend/ir/nodes.py`,
     called from `_build_body` in `frontend/ir/builder.py`:
@@ -40,8 +43,9 @@ proposed `Backend` protocol, and the open questions to settle.
 
 Open semantic leftovers inherited from the old plan's §10 that are now
 *lowering* decisions: AugAssign Ref/InPlace semantics (keep `IrAugAssign`
-und desugared — decide at lowering), try/except\* machinery (still rejected
-outright), and chained-assignment aliasing semantics.
+un-desugared; decided for now: lowering rebinds in all cases, matching the
+old compiler — see §8.6), try/except\* machinery (still rejected outright),
+and chained-assignment aliasing semantics.
 
 ## 2. The runtime stack the backend must live in
 
@@ -90,7 +94,9 @@ interaction-net symbol table:
 @dataclasses.dataclass(frozen=True)
 class AgentDef:
     name: str
-    input_adapters: tuple[Adapter, ...]
+    input_adapter: Adapter   # ParValueAdapter when multiple: the adapter
+    #                          lattice already has the product type — one
+    #                          spelling per interface
     output_adapter: Adapter
     impl: PythonCallable | NetTemplate | Primitive   # tagged union
 ```
@@ -106,13 +112,31 @@ Python evaluates, C++ refuses or requires the callee be natsune-compiled.
 ```python
 # natsune/backend/
 class Backend(Protocol):
-    def connector(self) -> Connector: ...
+    # Compile-time only for now: VariablesFlow-level templating + agent
+    # declarations. Runtime — the live per-invocation substrate a net is
+    # instantiated into — is deferred until this lands (see §8.1).
+
     def declare_agent(self, name: str, defn: AgentDef) -> AgentRef: ...
+    # Target-neutral declaration; only impl RESOLUTION differs per target.
+    # PythonBackend: NetTemplate → instantiate_template closure (today's
+    # copy-per-invocation), PythonCallable → call it. CppBackend: NetTemplate
+    # → emitted function, Primitive → intrinsic, PythonCallable → refuse.
+
     def resolve_call(self, ref: Any) -> AgentRef: ...      # IrCallInet.ref
     def constant(self, value: Any, adapter: Adapter) -> Port: ...
-    def materialize_dynamic(self, source_text: str,
-                            captures: ..., adapter: Adapter) -> Graft: ...
-    def finish(self, flow: VariablesFlow) -> Artifact: ... # runnable vs. C++ text
+    def materialize_dynamic(self, node: ast.expr, source_text: str,
+                            captures: Mapping[str, Port],
+                            adapter: Adapter) -> Graft: ...
+    # Receives BOTH the original ast node and its unparsed text; backends
+    # use whichever is easier (Python evals the text, an emitter can
+    # pattern-match the node). Mirrors IrDynamic/IrTargetDynamic.ast_node.
+    # captures is the ALREADY-LOWERED form: IrDynamic.captures is
+    # tuple[tuple[str, IrExpr], ...] at the IR, but lowering resolves each
+    # IrExpr to a port before calling — the backend never sees IrExpr.
+    def finish(self, flow: VariablesFlow) -> Artifact: ...
+    # Declares the function's own body as an AgentDef (NetTemplate extracted
+    # from the flow's active_pairs). What the artifact *is* — runnable vs.
+    # text — is §8.1, deferred with the runtime protocol.
 
 def lower(function: IrFunction, backend: Backend) -> ...: ...
 ```
@@ -128,6 +152,49 @@ Naming decisions (settled in discussion — don't re-litigate without cause):
   overloading "compile", which means the whole pipeline here.
 - `Target` as a concept means the *destination flavor* (`PythonBackend`,
   `CppBackend` instances) — fine as a doc word, not as a type name.
+
+### 5.1 VariablesFlow over the recorder split
+
+`ExpansionBuilder` conflates two roles: the target-neutral **recorder**
+(adapters, interface registers, `active_pairs`, `close`/`optimize` —
+`connector.py:227`) and a Python-only **closure** (`__call__(exec, port,
+wires)`, copying pairs into a live executor — the `Expansion` a `Graft`
+holds). `VariablesFlow` itself uses only Connector-level operations
+(`FlowRegister(adapter, self)`, `send_value(..., self)`, interface wiring);
+it subclasses `ExpansionBuilder` purely to *be* a graftable template.
+
+1. **Extract the recorder.** `NetTemplateBuilder(Connector)` owns adapters,
+   interface registers, `active_pairs`, `close`+`optimize`,
+   `serialize_active_pairs`. `ExpansionBuilder(NetTemplateBuilder)` keeps
+   only `__call__`. Behavior-preserving; oracle-checked.
+2. **Liberate the closure.** `__call__`'s body becomes
+   `instantiate_template(template, exec, port, wires)`;
+   `ExpansionBuilder.__call__` delegates. "Use this template here" is now a
+   library function the Python backend owns, not an intrinsic method of
+   templates. Re-base `VariablesFlow(NetTemplateBuilder)` — behaviorally
+   identical.
+3. **Grafts carry references.** `expansion_invocation` becomes
+   `agent_invocation(ref, ...)`: `Graft` records `(AgentRef, port, wires)`
+   instead of an `Expansion` closure. The registry resolves: `impl =
+   NetTemplate | PythonCallable | Primitive` (§4's union), with
+   `NetTemplate` extracted from a finished builder's `active_pairs` (already
+   data via `serialize_active_pairs`).
+4. **`lower()` through the backend.** `lower` builds `VariablesFlow`s as
+   templates (each recording into itself), declares them via
+   `declare_agent`, `finish(flow)` exports the body template as an
+   AgentDef. That is the whole protocol for now — runtime (live substrate,
+   per-call instantiation) is deferred until templating + lowering land
+   (§8.1).
+
+Steps 1–2 are behavior-preserving refactors and can land before any backend
+code (migration step 0). Nuance kept on purpose: `VariablesFlow` remains *a*
+connector — its registers record into it, and bodies must stay re-invocable
+templates (a flat net can't loop). Templates staying self-contained is what
+keeps the golden-net oracle meaningful (a `VariablesFlow` diffs the same
+regardless of eventual substrate) and is what lets the runtime side — the
+live per-invocation substrate — be deferred wholesale without touching the
+middle stack. `declare_agent` is one API on both targets — registration is
+declaration, resolution is per-target (see the sketch comments).
 
 ## 6. Practical notes
 
@@ -159,8 +226,20 @@ Naming decisions (settled in discussion — don't re-litigate without cause):
 
 ## 7. Migration path
 
+0. **Recorder split** (§5.1): extract `NetTemplateBuilder` from
+   `ExpansionBuilder`, move the copy-closure into `instantiate_template`,
+   re-base `VariablesFlow` — behavior-preserving, oracle-checked, no
+   backend code required.
 1. `natsune/backend/` skeleton + `PythonBackend` as a thin shell over the
    existing executor/eval machinery (behavior-preserving by construction).
+   **Partially landed:** the declaration layer exists — `backend/types.py`
+   (AgentRef, PythonCallable, Primitive, NetTemplate, AgentDef, LoweredUnit),
+   `backend/protocol.py` (compile-time subset per §5),
+   `backend/python_backend.py` (declare/resolve/constant/finish;
+   materialize_dynamic deferred to §8.4), `backend/agents.py` (the survey:
+   primitives as static AgentDefs; composites classified per-call-site —
+   the flow_map coupling is the load-bearing note). Runtime still open
+   (§8.1); grafts-by-ref rewiring is §5.1 step 3.
 2. Write the new Ir-lowering against the protocol; diff its `VariablesFlow`s
    against the old compiler's using the serializer as the oracle (all 18
    snapshot programs exist for this).
@@ -173,7 +252,9 @@ Naming decisions (settled in discussion — don't re-litigate without cause):
 1. **Python target output kind** — lower to in-memory net objects through the
    existing `invocation` machinery, or generate Python source text? This
    decides what `Backend.finish` returns and whether backends need a common
-   wrapper (e.g. `LoweredUnit`) or target-specific artifacts.
+   wrapper (e.g. `LoweredUnit`) or target-specific artifacts. `connector()`
+   was removed from the protocol until this is settled; the first milestone
+   is templates + declarations only (compile-time protocol, §5).
 2. **Agent taxonomy** — what exactly goes in `AgentDef.impl`'s union; how the
    `control_flow.py` agent library (`IfThenElse`, `Loop`, `Tracer`, …) is
    declared; whether ext fns (`iter`, `unroll`, `join`, `eval_expression`)
@@ -186,5 +267,16 @@ Naming decisions (settled in discussion — don't re-litigate without cause):
 5. **`IrStructureError` at build** — currently raised out of `build_ir`; should
    it become a `DiagnosticSink` diagnostic instead (analysis-style) now that it
    fires during parsing? (Cutover-consistency question, not urgent.)
-6. **AugAssign Ref/InPlace semantics** and **try/except\*** — inherited §10
-   leftovers, both blocking on lowering design.
+6. **AugAssign Ref/InPlace semantics** — provisionally decided: lowering uses
+   the rebind interpretation (`target = target op value`) in all cases. No
+   `__iadd__` type dispatch (type logic stays limited to annotations) and no
+   runtime dual-path (keeps lowering simple). For Ref-typed targets the
+   rebind still egresses linearly through the reference adapter, so aliasing
+   observers see the shared cell update — "mutation" in the reference sense
+   only, never `__iadd__` dispatch. This is the existing compiler's behavior
+   (AugAssign lowers to read-modify-write through the target register), so
+   the golden-net oracle should agree. Python-style in-place methods remain
+   reachable by calling `__iadd__`/`__isub__`/… directly as ordinary calls.
+   Revisit only if a true in-place update primitive proves necessary.
+   **try/except\*** remains rejected outright and is still blocked on lowering
+   design (both are inherited §10 leftovers).
