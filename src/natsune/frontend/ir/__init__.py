@@ -30,6 +30,7 @@ from natsune.frontend.ir.nodes import (
     IrVar,
     IrWhile,
     VariableUsage,
+    analyze_ir_body,
     iter_child_expressions,
 )
 from natsune.frontend.ir.render import render_adapter, render_function
@@ -63,6 +64,7 @@ __all__ = [
     "IrVar",
     "IrWhile",
     "VariableUsage",
+    "analyze_ir_body",
     "iter_child_expressions",
     "build_ir",
     "render_adapter",

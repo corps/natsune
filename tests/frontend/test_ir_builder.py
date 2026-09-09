@@ -174,8 +174,10 @@ def test_while_break_continue_orelse():
     _, stmts, sink = _body_of("""
         def f(c: int) -> int:
             while c:
-                break
-                continue
+                if c:
+                    break
+                else:
+                    continue
             else:
                 d = 1
             return 0
@@ -184,8 +186,12 @@ def test_while_break_continue_orelse():
     assert sink.diagnostics == set()
     while_stmt = stmts[0]
     assert isinstance(while_stmt, IrWhile)
-    assert isinstance(while_stmt.body.statements[0], IrBreak)
-    assert isinstance(while_stmt.body.statements[1], IrContinue)
+    # break/continue live on opposite branches of an if: a bare continue
+    # after the body's break would be an invalid post-exit statement.
+    branch = while_stmt.body.statements[0]
+    assert isinstance(branch, IrIf)
+    assert isinstance(branch.then_body.statements[0], IrBreak)
+    assert isinstance(branch.else_body.statements[0], IrContinue)
     assert isinstance(while_stmt.orelse.statements[0], IrAssign)
 
 

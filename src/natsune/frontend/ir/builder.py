@@ -65,6 +65,7 @@ from natsune.frontend.ir.nodes import (
     IrTuple,
     IrVar,
     IrWhile,
+    analyze_ir_body,
 )
 from natsune.frontend.link import LinkedInet, LinkResult
 from natsune.frontend.signature import Signature
@@ -146,12 +147,19 @@ def build_ir(
 
 
 def _build_body(body: list[ast.stmt], builder: IrBuilder) -> IrBody:
-    statements = []
+    statements: list[IrStmt] = []
     for stmt in body:
         built = _build_stmt(stmt, builder)
         if built is not None:
             statements.append(built)
-    return IrBody(statements=tuple(statements))
+    built = tuple(statements)
+    usage, disjunctives, exit = analyze_ir_body(built)
+    return IrBody(
+        statements=built,
+        variable_usage=usage,
+        disjunctives=disjunctives,
+        exit=exit,
+    )
 
 
 # --- statements ---------------------------------------------------------------

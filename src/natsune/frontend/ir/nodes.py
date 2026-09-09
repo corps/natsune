@@ -95,39 +95,22 @@ type IrExpr = (
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class IrBody(IrNode):
+    """A statement list with derived fields computed at build time by
+    analyze_ir_body: variable_usage merges nested bodies' own usages
+    ("write" wins over "read"); disjunctives are the IrIf/IrWhile/IrFor
+    statements before exit that return flow to this list; exit is the first
+    statement that never returns flow (None when all statements fall
+    through). Invalid exit structures raise IrStructureError at build time.
+    """
+
     statements: tuple[IrStmt, ...] = ()
-
-    @property
-    def variable_usage(self) -> Mapping[str, VariableUsage]:
-        """Non-global variable usages in this body and all nested bodies.
-
-        Nested bodies are collected into their own isolated usage mapping,
-        which is then merged back into this one ("write" wins over "read").
-        """
-        usage: dict[str, VariableUsage] = {}
-        _collect_body_usage(self, usage)
-        return usage
-
-    @property
-    def disjunctives(self) -> Sequence[IrIf | IrWhile | IrFor]:
-        """The disjunctive statements before this body's exit.
-
-        The IrIf/IrWhile/IrFor statements encountered before the exit for
-        which at least one own body has a None exit: each disjuncts but can
-        return flow to the original statement list.
-        """
-        return _analyze_body_flow(self)[0]
-
-    @property
-    def exit(self) -> IrBodyExit | None:
-        """The first statement of this list that does not return flow to it.
-
-        An IrReturn/IrContinue/IrBreak, or an IrIf/IrWhile/IrFor whose own
-        bodies all exit. None when every statement falls through and flow
-        simply returns to the enclosing context. Statements after the exit
-        run concurrently; _analyze_body_flow enforces the validity rules.
-        """
-        return _analyze_body_flow(self)[1]
+    variable_usage: Mapping[str, VariableUsage] = dataclasses.field(
+        default_factory=dict, compare=False
+    )
+    disjunctives: Sequence[IrIf | IrWhile | IrFor] = dataclasses.field(
+        default=(), compare=False, repr=False
+    )
+    exit: IrBodyExit | None = dataclasses.field(default=None, compare=False, repr=False)
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -321,14 +304,7 @@ def _collect_stmt_usage(stmt: IrStmt, usage: dict[str, VariableUsage]) -> None:
     for expr in iter_child_expressions(stmt):
         _collect_expr_usage(expr, usage)
     for body in _iter_child_bodies(stmt):
-        child_usage: dict[str, VariableUsage] = {}
-        _collect_body_usage(body, child_usage)
-        _merge_variable_usage(usage, child_usage)
-
-
-def _collect_body_usage(body: IrBody, usage: dict[str, VariableUsage]) -> None:
-    for stmt in body.statements:
-        _collect_stmt_usage(stmt, usage)
+        _merge_variable_usage(usage, body.variable_usage)
 
 
 def _child_body_exits(stmt: IrIf | IrWhile | IrFor) -> tuple[IrBodyExit | None, ...]:
@@ -357,20 +333,21 @@ def _validate_post_exit(stmt: IrStmt) -> None:
 
 
 def _analyze_body_flow(
-    body: IrBody,
+    statements: tuple[IrStmt, ...],
 ) -> tuple[Sequence[IrIf | IrWhile | IrFor], IrBodyExit | None]:
     """Scan a statement list for its disjunctives and exit.
 
     A disjunctive (IrIf/IrWhile/IrFor) with at least one own body whose exit
     is None returns flow to the statement list and is collected; the first
     statement that never returns flow is the exit. Statements after the exit
-    are validated by _validate_post_exit. Accessing a child body's exit
-    validates that child's structure recursively, depth-first.
+    are validated by _validate_post_exit. Child body exits are read from the
+    stored field, so the analysis runs bottom-up: children must already
+    carry their computed fields.
     """
     disjunctives: list[IrIf | IrWhile | IrFor] = []
     body_exit: IrBodyExit | None = None
     exit_index = -1
-    for index, stmt in enumerate(body.statements):
+    for index, stmt in enumerate(statements):
         if isinstance(stmt, (IrReturn, IrContinue, IrBreak)):
             body_exit, exit_index = stmt, index
             break
@@ -381,6 +358,25 @@ def _analyze_body_flow(
                 body_exit, exit_index = stmt, index  # every path exits
                 break
     if body_exit is not None:
-        for stmt in body.statements[exit_index + 1 :]:
+        for stmt in statements[exit_index + 1 :]:
             _validate_post_exit(stmt)
     return tuple(disjunctives), body_exit
+
+
+def analyze_ir_body(
+    statements: tuple[IrStmt, ...],
+) -> tuple[
+    Mapping[str, VariableUsage], Sequence[IrIf | IrWhile | IrFor], IrBodyExit | None
+]:
+    """Compute an IrBody's derived fields (see the IrBody docstring).
+
+    Called on a body's statements as the builder constructs it: child bodies
+    inside the statements must already carry their own computed fields,
+    keeping the whole computation bottom-up. Invalid exit structures raise
+    IrStructureError here, at build time.
+    """
+    usage: dict[str, VariableUsage] = {}
+    for stmt in statements:
+        _collect_stmt_usage(stmt, usage)
+    disjunctives, body_exit = _analyze_body_flow(statements)
+    return usage, disjunctives, body_exit
