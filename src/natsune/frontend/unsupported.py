@@ -1,9 +1,9 @@
 """Unsupported AST node types for the natsune compiler frontend.
 
 These are the expression and statement types that are not yet supported
-by the new compiler frontend (COMPILER_REFACTOR.md). They are absorbed
+by the new compiler frontend. They are absorbed
 from the old compiler's module-level tuples and re-validated during IR
-construction (§3.3).
+construction.
 
 `ast.TryStar` is new: the old collector rejected `try` but silently walked
 `try/except*`.

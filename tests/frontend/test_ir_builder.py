@@ -563,7 +563,6 @@ def test_par_subscript_non_constant_validated():
 
 
 def test_par_subscript_negative_literal_validated():
-    # §10 row 13: the unary minus makes it non-constant, exactly as before.
     _, sink = build_ir_for(
         """
         def f(p: Par[int, str]) -> int:

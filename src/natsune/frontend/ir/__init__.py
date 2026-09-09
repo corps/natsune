@@ -1,4 +1,4 @@
-"""The IR: nodes, builder, and renderer (COMPILER_REFACTOR.md §3–§4)."""
+"""The IR: nodes, builder, and renderer."""
 
 from natsune.frontend.ir.builder import build_ir
 from natsune.frontend.ir.nodes import (

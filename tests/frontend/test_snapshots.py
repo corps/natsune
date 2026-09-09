@@ -1,4 +1,4 @@
-"""Snapshot tests over the example programs (COMPILER_REFACTOR.md §8, step 8).
+"""Snapshot tests over the example programs.
 
 Each program in `tests/frontend/programs.py` — a real, undecorated function —
 is extracted through the genuine phase-1 path (`extract_source` /

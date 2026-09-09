@@ -1,37 +1,3 @@
-"""Phase 6b — IR construction (COMPILER_REFACTOR.md §3.3).
-
-`build_ir(source, signature, symbols, links, sink)` turns the phase outputs
-into an `IrFunction`: statement dispatch by `match`, a typed-node-first
-expression builder with an `IrDynamic` fallback, the §3.3 desugaring rules,
-and validation as diagnostics — never exceptions, never net objects.
-
-The dynamic fallback is `scan_dynamic`: it re-parses the expression's source,
-replaces every *net-wirable* sub-expression — the old special-form set: local
-reads, linked inet calls, tuples, valid Par indexes — with placeholder names,
-and records each placeholder's sub-expression as IR, in deterministic order.
-Globals stay in the source text (they resolve through the exec context at
-lowering), exactly like the old `ReplaceWithSerializedVariables` scan minus
-all wiring. Placeholder names come from an injected factory (§2: determinism
-by injection); the default is the deterministic `__natsune_N__` sequence,
-which never collides with the function's variables or globals.
-
-Validation notes:
-- The builder re-validates what the collector also checks (unsupported
-  nodes, list lvalues, tuple mismatch) with identical messages — running the
-  full pipeline therefore reports each finding once, because
-  `DiagnosticSink.add` drops exact duplicates.
-- Inet-call keyword/arity problems and invalid Par subscripts are validated
-  here for the first time (the old compiler did both during lowering, after
-  nets were partially built — §10 row 5). A validated-but-fatal expression
-  falls back to `IrDynamic`, which the exec path handles correctly in Python
-  terms; the diagnostic is what keeps it from ever lowering.
-
-Try blocks are rejected (see phase 4 / §10 row 12): `IrTryStar` is deferred
-until the try machinery is trusted.
-
-None of this imports `natsune.compiler`.
-"""
-
 import ast
 import dataclasses
 from collections.abc import Callable, Mapping
@@ -84,8 +50,6 @@ class IrBuilder:
 
     # Builder can have a parent context, TODO
     def error(self, message: str, node: ast.AST) -> None:
-        # Caller-owned fallback (phase 0 decision): the FunctionDef is the
-        # parent context available at this callsite.
         source_map = self.source.source_map
         position = source_map.resolve(node) or source_map.resolve(self.source.func_def)
         assert position is not None  # parsed nodes always carry locations

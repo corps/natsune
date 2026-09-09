@@ -1,9 +1,9 @@
-"""The new compiler frontend (COMPILER_REFACTOR.md, phases 0–6).
+"""The new compiler frontend.
 
 Plain data in, plain data out. Nothing here imports `natsune.compiler`, and
 nothing creates registers, wires, or flows. The old `natsune.compiler` module
-stays untouched and remains the live implementation until the paused cutover
-(phases 7–9).
+stays untouched and remains the live implementation until the backend/cutover
+phase (see COMPILER_REFACTOR.md).
 """
 
 from natsune.frontend.diagnostics import (
