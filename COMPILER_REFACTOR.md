@@ -15,9 +15,9 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 232 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 15 backend
-  (declaration layer + recorder split, `tests/backend/`).
+- Tests: 239 passing total — 171 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 22 backend
+  (declaration layer, recorder split, agent invocation; `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
   `make snapshots-update` (env var `NATSUNE_UPDATE_SNAPSHOTS=1` on
   `tests/frontend/test_snapshots.py`; review generated `.ir` by eye).
@@ -204,6 +204,19 @@ declaration, resolution is per-target (see the sketch comments).
 AgentRefs. `backend/types.py#net_template_of` is the canonical
 `NetTemplate` producer (used by `PythonBackend.finish`). Oracle: full
 legacy suite green.
+
+**Step 3: mechanism landed, legacy sweep pending.** `AgentRef` moved to
+`ports.py` (it is net-level currency); `Graft` carries an optional
+`agent: AgentRef | None`, and `serialize_port` renders tagged grafts as
+`graft:<name>` (untagged legacy grafts render exactly as before).
+`backend/runtime.py#resolve_impl` resolves declarations to Expansions
+(PythonCallable only — NetTemplate/Primitive refuse until §8.1) and
+`agent_invocation` is the declarative counterpart of
+`expansion_invocation`: identical wiring, adapters from the declaration,
+graft tagged with the ref. The legacy agents still call
+`expansion_invocation` directly; sweeping them onto declared refs happens
+with the composite lowering prototype, which consumes `agent_invocation`
+from day one.
 
 ## 6. Practical notes
 

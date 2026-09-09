@@ -11,15 +11,7 @@ from typing import Any
 
 from natsune.adapters import Adapter
 from natsune.connector import NetTemplateBuilder
-from natsune.ports import Port
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class AgentRef:
-    """Opaque handle to a declared agent; the currency that flows inside
-    nets. The registry (Backend.declare_agent) owns the AgentDef."""
-
-    name: str
+from natsune.ports import AgentRef, Port
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

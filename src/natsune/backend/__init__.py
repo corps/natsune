@@ -6,6 +6,7 @@ from natsune.backend.agents import (
 )
 from natsune.backend.protocol import Backend
 from natsune.backend.python_backend import PythonBackend
+from natsune.backend.runtime import agent_invocation, resolve_impl
 from natsune.backend.types import (
     AgentDef,
     AgentRef,
@@ -14,6 +15,7 @@ from natsune.backend.types import (
     NetTemplate,
     Primitive,
     PythonCallable,
+    net_template_of,
 )
 
 __all__ = [
@@ -29,5 +31,8 @@ __all__ = [
     "PythonBackend",
     "PythonCallable",
     "agent_def_for",
+    "agent_invocation",
+    "net_template_of",
     "primitive_agents",
+    "resolve_impl",
 ]
