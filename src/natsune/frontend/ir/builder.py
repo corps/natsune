@@ -268,6 +268,7 @@ def _build_target(node: ast.expr, builder: IrBuilder) -> IrTarget | None:
     return IrTargetDynamic(
         source_text=dynamic.source_text,
         captures=dynamic.captures,
+        ast_node=node,
         position=position,
     )
 
