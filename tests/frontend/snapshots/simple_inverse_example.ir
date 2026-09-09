@@ -5,6 +5,7 @@
 (function simple_inverse_example
   (returns va)
   (body
+    (usage a :write b :write)
     (assign
       (targets
         (name a :ref[va]))
@@ -37,6 +38,6 @@
         (name b :inv[va]))
       (value
         (const 5 :va)))
-    (return
+    (return !
       (var a :ref[va]))))
 

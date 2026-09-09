@@ -5,6 +5,7 @@
 (function use_references
   (returns va)
   (body
+    (usage a :write)
     (assign
       (targets
         (name a :ref[va]))
@@ -13,6 +14,6 @@
     (exprstmt
       (call-inet :arity 1 :sigs (ref[va]) :ret va
         (var a :ref[va])))
-    (return
+    (return !
       (var a :ref[va]))))
 

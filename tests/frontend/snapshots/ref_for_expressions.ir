@@ -5,6 +5,7 @@
 (function ref_for_expressions
   (returns va)
   (body
+    (usage a :write)
     (assign
       (targets
         (name a :ref[va]))
@@ -29,6 +30,6 @@
         (captures
           (a
             (var a :ref[va])))))
-    (return
+    (return !
       (var a :ref[va]))))
 

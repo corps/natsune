@@ -6,7 +6,8 @@
   (param b va)
   (returns par[va, va])
   (body
-    (return
+    (usage b :read)
+    (return !
       (tuple :par[va, va]
         (dynamic :va
           (source "b + 2")

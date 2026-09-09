@@ -5,21 +5,23 @@
 (function infinite_value
   (returns va)
   (body
+    (usage a :write)
     (assign
       (targets
         (name a :va))
       (value
         (const 0 :va)))
-    (while
+    (while *
       (test
         (const True :va))
       (body
+        (usage a :write)
         (augassign +
           (target
             (name a :va))
           (value
             (const 1 :va))))
       (orelse))
-    (return
+    (return !
       (var a :va))))
 

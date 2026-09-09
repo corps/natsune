@@ -5,6 +5,7 @@
 (function drops_infinite_loop
   (returns va)
   (body
+    (usage a :write b :write)
     (assign
       (targets
         (tuple
@@ -12,6 +13,6 @@
           (name b :va)))
       (value
         (call-inet :arity 0 :sigs () :ret par[va, va])))
-    (return
+    (return !
       (var a :va))))
 

@@ -5,6 +5,7 @@
 (function and_or_with_finites_and_infinites
   (returns va)
   (body
+    (usage a :write paths :write)
     (assign
       (targets
         (name a :va))
@@ -16,7 +17,7 @@
       (value
         (dynamic :va
           (source "[]"))))
-    (if
+    (if *
       (test
         (boolop or :va
           (dynamic :va
@@ -26,6 +27,7 @@
                 (var a :va))))
           (const True :va)))
       (then
+        (usage paths :read)
         (exprstmt
           (dynamic :va
             (source "paths.append('Infinite Or')")
@@ -33,7 +35,7 @@
               (paths
                 (var paths :ref[va]))))))
       (else))
-    (if
+    (if *
       (test
         (boolop and :va
           (dynamic :va
@@ -43,6 +45,7 @@
                 (var a :va))))
           (const False :va)))
       (then
+        (usage paths :read)
         (exprstmt
           (dynamic :va
             (source "paths.append('Infinite And')")
@@ -62,6 +65,6 @@
         (captures
           (paths
             (var paths :ref[va])))))
-    (return
+    (return !
       (var paths :ref[va]))))
 

@@ -7,12 +7,13 @@
   (param end va)
   (returns va)
   (body
+    (usage total :write i :write start :read end :read)
     (assign
       (targets
         (name total :va))
       (value
         (const 0 :va)))
-    (for
+    (for *
       (target
         (name i :va))
       (iter
@@ -24,6 +25,7 @@
             (end
               (var end :va)))))
       (body
+        (usage total :write i :read)
         (exprstmt
           (dynamic :va
             (source "print(total)")
@@ -42,6 +44,6 @@
           (value
             (var i :va))))
       (orelse))
-    (return
+    (return !
       (var total :va))))
 

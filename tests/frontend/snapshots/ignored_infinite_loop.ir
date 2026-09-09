@@ -5,22 +5,24 @@
 (function ignored_infinite_loop
   (returns par[va, va])
   (body
+    (usage b :write)
     (assign
       (targets
         (name b :va))
       (value
         (const 0 :va)))
-    (while
+    (while *
       (test
         (const True :va))
       (body
+        (usage b :write)
         (augassign +
           (target
             (name b :va))
           (value
             (const 1 :va))))
       (orelse))
-    (return
+    (return !
       (tuple :par[va, va]
         (const 10 :va)
         (var b :va)))))

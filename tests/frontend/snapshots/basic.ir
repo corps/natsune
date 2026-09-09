@@ -6,6 +6,7 @@
   (param b va)
   (returns va)
   (body
+    (usage a :write b :read)
     (assign
       (targets
         (name a :va))
@@ -31,6 +32,6 @@
     (exprstmt
       (dynamic :va
         (source "print(123)")))
-    (return
+    (return !
       (var a :va))))
 

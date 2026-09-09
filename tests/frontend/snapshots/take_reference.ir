@@ -6,6 +6,7 @@
   (param a ref[va])
   (returns va)
   (body
+    (usage a :write)
     (augassign +
       (target
         (name a :ref[va]))

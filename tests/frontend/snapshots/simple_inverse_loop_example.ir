@@ -6,6 +6,7 @@
   (param scale va)
   (returns va)
   (body
+    (usage total :write b :write _ :write scale :read)
     (assign
       (targets
         (name total :va))
@@ -16,7 +17,7 @@
         (name b :inv[va]))
       (value
         (const -1 :va)))
-    (for
+    (for *
       (target
         (name _ :va))
       (iter
@@ -26,6 +27,7 @@
             (scale
               (var scale :va)))))
       (body
+        (usage total :write b :read)
         (augassign +
           (target
             (name total :va))
@@ -37,6 +39,6 @@
         (name b :inv[va]))
       (value
         (const 3 :va)))
-    (return
+    (return !
       (var total :va))))
 

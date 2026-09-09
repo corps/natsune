@@ -7,6 +7,7 @@
   (param end va)
   (returns va)
   (body
+    (usage total :write i :write start :read end :read)
     (assign
       (targets
         (name total :va))
@@ -17,7 +18,7 @@
         (name i :va))
       (value
         (var start :va)))
-    (while
+    (while *
       (test
         (dynamic :va
           (source "i < end")
@@ -27,6 +28,7 @@
             (end
               (var end :va)))))
       (body
+        (usage total :write i :write)
         (augassign +
           (target
             (name total :va))
@@ -38,6 +40,6 @@
           (value
             (const 1 :va))))
       (orelse))
-    (return
+    (return !
       (var total :va))))
 

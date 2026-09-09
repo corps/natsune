@@ -5,6 +5,7 @@
 (function invoke_an_inet
   (returns va)
   (body
+    (usage a :write b :write)
     (assign
       (targets
         (tuple
@@ -13,6 +14,6 @@
       (value
         (call-inet :arity 1 :sigs (va) :ret par[va, va]
           (const 10 :va))))
-    (return
+    (return !
       (var a :va))))
 

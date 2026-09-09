@@ -108,16 +108,32 @@ class IrRenderer:
     # -- bodies ----------------------------------------------------------------
 
     def body(self, node: IrBody, depth: int) -> list[str]:
-        return self.block(
-            node,
-            depth,
-            "(body",
-            [self.stmt(stmt, depth + 1) for stmt in node.statements],
+        return self.body_block(node, depth, "(body")
+
+    def body_block(self, node: IrBody, depth: int, header: str) -> list[str]:
+        children: list[list[str]] = []
+        if usage := node.variable_usage:
+            entries = " ".join(f"{name} :{how}" for name, how in usage.items())
+            children.append(["  " * (depth + 1) + f"(usage {entries})"])
+        children.extend(
+            self.stmt(stmt, depth + 1, flow=self.flow_marker(node, stmt))
+            for stmt in node.statements
         )
+        return self.block(node, depth, header, children)
+
+    def flow_marker(self, body: IrBody, stmt: IrStmt) -> str:
+        """' !' when stmt is the body's exit, ' *' when it is a disjunctive."""
+        if stmt is body.exit:
+            return " !"
+        if any(stmt is disjunctive for disjunctive in body.disjunctives):
+            return " *"
+        return ""
 
     # -- statements --------------------------------------------------------------
 
-    def stmt(self, node: IrStmt, depth: int) -> list[str]:
+    def stmt(self, node: IrStmt, depth: int, flow: str = "") -> list[str]:
+        """flow marks statements determined by the parent IrBody: ' *' for
+        its disjunctives, ' !' for its exit (see IrBody.disjunctives/exit)."""
         match node:
             case IrAssign():
                 targets = self.block(
@@ -129,7 +145,7 @@ class IrRenderer:
                 return self.block(
                     node,
                     depth,
-                    "(assign",
+                    f"(assign{flow}",
                     [targets, self.labeled("value", node.value, depth + 1)],
                 )
             case IrAugAssign():
@@ -137,7 +153,7 @@ class IrRenderer:
                 return self.block(
                     node,
                     depth,
-                    f"(augassign {token}",
+                    f"(augassign{flow} {token}",
                     [
                         self.labeled(
                             "target", node.target, depth + 1, render=self.target
@@ -149,7 +165,7 @@ class IrRenderer:
                 return self.block(
                     node,
                     depth,
-                    "(if",
+                    f"(if{flow}",
                     [
                         self.labeled("test", node.test, depth + 1),
                         self.branch("then", node.then_body, depth + 1),
@@ -160,7 +176,7 @@ class IrRenderer:
                 return self.block(
                     node,
                     depth,
-                    "(for",
+                    f"(for{flow}",
                     [
                         self.labeled(
                             "target", node.target, depth + 1, render=self.target
@@ -174,7 +190,7 @@ class IrRenderer:
                 return self.block(
                     node,
                     depth,
-                    "(while",
+                    f"(while{flow}",
                     [
                         self.labeled("test", node.test, depth + 1),
                         self.branch("body", node.body, depth + 1),
@@ -183,28 +199,23 @@ class IrRenderer:
                 )
             case IrReturn():
                 if node.value is None:
-                    return self.block(node, depth, "(return")
+                    return self.block(node, depth, f"(return{flow}")
                 return self.block(
-                    node, depth, "(return", [self.expr(node.value, depth + 1)]
+                    node, depth, f"(return{flow}", [self.expr(node.value, depth + 1)]
                 )
             case IrBreak():
-                return self.block(node, depth, "(break")
+                return self.block(node, depth, f"(break{flow}")
             case IrContinue():
-                return self.block(node, depth, "(continue")
+                return self.block(node, depth, f"(continue{flow}")
             case IrExprStmt():
                 return self.block(
-                    node, depth, "(exprstmt", [self.expr(node.value, depth + 1)]
+                    node, depth, f"(exprstmt{flow}", [self.expr(node.value, depth + 1)]
                 )
             case _:
                 return self.block(node, depth, f"(?{type(node).__name__})")
 
     def branch(self, label: str, body: IrBody, depth: int) -> list[str]:
-        return self.block(
-            body,
-            depth,
-            f"({label}",
-            [self.stmt(stmt, depth + 1) for stmt in body.statements],
-        )
+        return self.body_block(body, depth, f"({label}")
 
     def labeled(
         self,

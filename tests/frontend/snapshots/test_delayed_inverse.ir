@@ -5,6 +5,7 @@
 (function test_delayed_inverse
   (returns va)
   (body
+    (usage a :write b :write)
     (assign
       (targets
         (tuple
@@ -17,6 +18,6 @@
         (name b :inv[va]))
       (value
         (const 30 :va)))
-    (return
+    (return !
       (var a :va))))
 

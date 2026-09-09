@@ -6,7 +6,8 @@
   (param input va)
   (returns va)
   (body
-    (if
+    (usage input :read)
+    (if *
       (test
         (dynamic :va
           (source "input % 2 == 0")
@@ -14,9 +15,9 @@
             (input
               (var input :va)))))
       (then
-        (return
+        (return !
           (const True :va)))
       (else))
-    (return
+    (return !
       (const False :va))))
 

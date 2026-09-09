@@ -5,6 +5,7 @@
 (function delayed_inverse
   (returns par[va, inv[va]])
   (body
+    (usage b :write a :write)
     (assign
       (targets
         (name b :inv[va]))
@@ -19,7 +20,7 @@
           (captures
             (b
               (var b :inv[va]))))))
-    (return
+    (return !
       (tuple :par[va, inv[va]]
         (var a :va)
         (var b :inv[va])))))
