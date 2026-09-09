@@ -18,6 +18,7 @@ from natsune.backend.types import (
     LoweredUnit,
     NetTemplate,
     PythonCallable,
+    net_template_of,
 )
 from natsune.control_flow import VariablesFlow
 from natsune.ports import ConstantValuePort, Graft, Port
@@ -81,11 +82,7 @@ class PythonBackend:
 
     def finish(self, flow: VariablesFlow, *, name: str = "main") -> Artifact:
         body_name = f"{name}__body"
-        template = NetTemplate(
-            flow.input_adapter,
-            flow.output_adapter,
-            tuple(flow.active_pairs),
-        )
+        template = net_template_of(flow)
         self.declare_agent(
             body_name,
             AgentDef(body_name, flow.input_adapter, flow.output_adapter, template),

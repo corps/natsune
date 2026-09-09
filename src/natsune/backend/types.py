@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from natsune.adapters import Adapter
+from natsune.connector import NetTemplateBuilder
 from natsune.ports import Port
 
 
@@ -43,13 +44,23 @@ class Primitive:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class NetTemplate:
-    """A data-shaped net template. The recorder split (§5.1) will produce
-    these from NetTemplateBuilder.active_pairs; until then any finished
-    ExpansionBuilder's active_pairs can be snapshotted into one."""
+    """A data-shaped net template, produced from a NetTemplateBuilder via
+    net_template_of (§5.1). Knows nothing about executors."""
 
     input_adapter: Adapter
     output_adapter: Adapter
     pairs: tuple[tuple[Port, Port], ...]
+
+
+def net_template_of(builder: NetTemplateBuilder) -> NetTemplate:
+    """Extract the recorded template as data. The canonical producer once
+    the recorder split (§5.1) landed."""
+
+    return NetTemplate(
+        builder.input_adapter,
+        builder.output_adapter,
+        tuple(builder.active_pairs),
+    )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

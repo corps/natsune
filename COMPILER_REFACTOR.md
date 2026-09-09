@@ -15,9 +15,9 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 227 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 10 backend
-  (declaration layer, `tests/backend/test_declaration.py`).
+- Tests: 232 passing total — 171 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 15 backend
+  (declaration layer + recorder split, `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
   `make snapshots-update` (env var `NATSUNE_UPDATE_SNAPSHOTS=1` on
   `tests/frontend/test_snapshots.py`; review generated `.ir` by eye).
@@ -196,6 +196,15 @@ live per-invocation substrate — be deferred wholesale without touching the
 middle stack. `declare_agent` is one API on both targets — registration is
 declaration, resolution is per-target (see the sketch comments).
 
+**Status: steps 1–2 landed.** `connector.py` now has `NetTemplateBuilder`
+(recorder) and `instantiate_template` (the liberated closure);
+`ExpansionBuilder(NetTemplateBuilder)` delegates `__call__` to it.
+`VariablesFlow` is re-based on `NetTemplateBuilder` with a delegating
+`__call__` — Expansion-compatible until step 3 makes grafts carry
+AgentRefs. `backend/types.py#net_template_of` is the canonical
+`NetTemplate` producer (used by `PythonBackend.finish`). Oracle: full
+legacy suite green.
+
 ## 6. Practical notes
 
 - **`FlowRegisterUsage` ↔ `IrBody.variable_usage`.** `registers.py` already
@@ -229,7 +238,7 @@ declaration, resolution is per-target (see the sketch comments).
 0. **Recorder split** (§5.1): extract `NetTemplateBuilder` from
    `ExpansionBuilder`, move the copy-closure into `instantiate_template`,
    re-base `VariablesFlow` — behavior-preserving, oracle-checked, no
-   backend code required.
+   backend code required. **Landed.**
 1. `natsune/backend/` skeleton + `PythonBackend` as a thin shell over the
    existing executor/eval machinery (behavior-preserving by construction).
    **Partially landed:** the declaration layer exists — `backend/types.py`

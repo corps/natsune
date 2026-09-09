@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 __all__ = [
     "Connector",
     "ExpansionBuilder",
+    "NetTemplateBuilder",
+    "instantiate_template",
     "serialize_active_pairs",
     "serialize_port",
     "new_wires_cache",
@@ -224,7 +226,13 @@ def freeze(obj):
 
 
 @dataclasses.dataclass
-class ExpansionBuilder(Connector):
+class NetTemplateBuilder(Connector):
+    """The target-neutral recorder half of ExpansionBuilder (§5.1): adapters,
+    interface registers, active_pairs accumulation, close/optimize. It
+    produces *data* and knows nothing about executors. Instantiating a
+    recorded template into a live connector is instantiate_template —
+    owned by the runtime, not the recorder."""
+
     input_adapter: Adapter
     output_adapter: Adapter
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
@@ -258,55 +266,81 @@ class ExpansionBuilder(Connector):
 
         optimize(self, self.active_pairs)
 
-    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
-        if isinstance(port, Erasure):
-            for wire in wires:
-                exec.annihilate(wire, port)
-            return
-
-        new_wire_identity: dict[Wire, Wire] = {}
-        q: list[Port] = []
-        pairs: list[tuple[Port, Port]] = []
-
-        new_inputs = copy.copy(self.input_interface.interface)
-        new_outputs = copy.copy(self.output_interface.interface)
-        new_wire_identity[self.input_interface.interface] = new_inputs
-        new_wire_identity[self.output_interface.interface] = new_outputs
-
-        if new_inputs.target:
-            q.append(new_inputs.target)
-
-        if new_outputs.target:
-            q.append(new_outputs.target)
-
-        for l, r in self.active_pairs:
-            ll = copy.copy(l)
-            rr = copy.copy(r)
-            pairs.append((ll, rr))
-            q.append(ll)
-            q.append(rr)
-
-        while q:
-            head = q.pop()
-
-            for i, wire in enumerate(head.wires):
-                if wire in new_wire_identity:
-                    wire = new_wire_identity[wire]
-                    assert wire.target is None, wire.target
-                else:
-                    old_wire = wire
-                    wire = copy.copy(wire)
-                    new_wire_identity[old_wire] = wire
-                    if wire.target:
-                        q.append(wire.target)
-
-                head.wires[i] = wire
-
-        for l, r in pairs:
-            exec.connect_ports(l, r)
-
-        exec.connect(new_inputs, port)
-        exec.connect(new_outputs, wires[0])
-
     def __copy__(self) -> Self:
+        # Templates are shared singletons; copying yields the same template.
         return self
+
+
+def instantiate_template(
+    template: NetTemplateBuilder,
+    exec: Connector,
+    port: Port,
+    wires: Sequence[Wire],
+    /,
+) -> None:
+    """Copy a recorded template into a live executor — the closure §5.1
+    liberates from ExpansionBuilder.__call__. This function is what the
+    Python runtime resolves "use this template here" to; an emitter backend
+    instead walks template.active_pairs and emits source. Grafts still hold
+    callable templates until they carry AgentRefs (§5.1 step 3), so
+    ExpansionBuilder and VariablesFlow delegate __call__ here."""
+
+    if isinstance(port, Erasure):
+        for wire in wires:
+            exec.annihilate(wire, port)
+        return
+
+    new_wire_identity: dict[Wire, Wire] = {}
+    q: list[Port] = []
+    pairs: list[tuple[Port, Port]] = []
+
+    new_inputs = copy.copy(template.input_interface.interface)
+    new_outputs = copy.copy(template.output_interface.interface)
+    new_wire_identity[template.input_interface.interface] = new_inputs
+    new_wire_identity[template.output_interface.interface] = new_outputs
+
+    if new_inputs.target:
+        q.append(new_inputs.target)
+
+    if new_outputs.target:
+        q.append(new_outputs.target)
+
+    for l, r in template.active_pairs:
+        ll = copy.copy(l)
+        rr = copy.copy(r)
+        pairs.append((ll, rr))
+        q.append(ll)
+        q.append(rr)
+
+    while q:
+        head = q.pop()
+
+        for i, wire in enumerate(head.wires):
+            if wire in new_wire_identity:
+                wire = new_wire_identity[wire]
+                assert wire.target is None, wire.target
+            else:
+                old_wire = wire
+                wire = copy.copy(wire)
+                new_wire_identity[old_wire] = wire
+                if wire.target:
+                    q.append(wire.target)
+
+            head.wires[i] = wire
+
+    for l, r in pairs:
+        exec.connect_ports(l, r)
+
+    exec.connect(new_inputs, port)
+    exec.connect(new_outputs, wires[0])
+
+
+@dataclasses.dataclass
+class ExpansionBuilder(NetTemplateBuilder):
+    """A recorder that is also a live Expansion (the Python-side template):
+    grafts copy it into executors per invocation, via the delegation below.
+    Once grafts carry AgentRefs (§5.1 step 3), only the runtime owns
+    instantiation and this class exists for the legacy agents."""
+
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
+        instantiate_template(self, exec, port, wires)

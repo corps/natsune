@@ -12,7 +12,9 @@ from natsune.adapters import (
 from natsune.connector import (
     Connector,
     ExpansionBuilder,
+    NetTemplateBuilder,
     global_wire_lock,
+    instantiate_template,
     new_wires_cache,
     serialize_port,
 )
@@ -487,7 +489,7 @@ class FlowVariableMap:
 
 
 @dataclasses.dataclass(kw_only=True)
-class VariablesFlow(ExpansionBuilder):
+class VariablesFlow(NetTemplateBuilder):
     variables: Variables
     return_adapter: Adapter
     exceptions: FlowRegister = dataclasses.field(init=False)
@@ -497,6 +499,12 @@ class VariablesFlow(ExpansionBuilder):
     variable_registers: dict[str, FlowRegister] = dataclasses.field(
         default_factory=dict
     )
+
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
+        # Expansion-protocol conformance while grafts still hold callables
+        # (§5.1 step 3 replaces this with AgentRefs); the closure itself
+        # lives in instantiate_template, owned by the Python runtime.
+        instantiate_template(self, exec, port, wires)
 
     def __post_init__(self) -> None:
         self.input_adapter = FlowInput.adapter(self.variables)
