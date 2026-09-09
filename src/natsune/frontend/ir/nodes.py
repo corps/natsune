@@ -1,6 +1,7 @@
 import ast
 import dataclasses
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, assert_never
 
 from natsune.adapters import VA, Adapter
 from natsune.frontend.diagnostics import Position
@@ -35,56 +36,56 @@ IrTarget = IrTargetName | IrTargetTuple | IrTargetDynamic
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrExpr(IrNode):
+class IrVar(IrNode):
+    name: str
+    is_global: bool = False
     adapter: Adapter = VA
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrVar(IrExpr):
-    name: str
-    is_global: bool = False
-
-
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrConst(IrExpr):
+class IrConst(IrNode):
     value: Any
+    adapter: Adapter = VA
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrTuple(IrExpr):
+class IrTuple(IrNode):
     elements: tuple[IrExpr, ...]
+    adapter: Adapter = VA
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrParIndex(IrExpr):
+class IrParIndex(IrNode):
     base: IrExpr
     index: int
+    adapter: Adapter = VA
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrBoolOp(IrExpr):
+class IrBoolOp(IrNode):
     op: str
     values: tuple[IrExpr, ...]
+    adapter: Adapter = VA
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrCallInet(IrExpr):
+class IrCallInet(IrNode):
     ref: Any
     args: tuple[IrExpr, ...]
     arity: int
     arg_adapters: tuple[Adapter, ...]
     return_adapter: Adapter
+    adapter: Adapter = VA
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrDynamic(IrExpr):
+class IrDynamic(IrNode):
     source_text: str
     captures: tuple[tuple[str, IrExpr], ...] = ()
+    adapter: Adapter = VA
 
 
-@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrStmt(IrNode):
-    pass
+IrExpr = IrVar | IrConst | IrTuple | IrParIndex | IrBoolOp | IrCallInet | IrDynamic
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -93,27 +94,27 @@ class IrBody(IrNode):
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrAssign(IrStmt):
+class IrAssign(IrNode):
     targets: tuple[IrTarget, ...]
     value: IrExpr
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrAugAssign(IrStmt):
+class IrAugAssign(IrNode):
     target: IrTarget
     op: ast.operator
     value: IrExpr
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrIf(IrStmt):
+class IrIf(IrNode):
     test: IrExpr
     then_body: IrBody
     else_body: IrBody
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrFor(IrStmt):
+class IrFor(IrNode):
     target: IrTarget
     iter: IrExpr
     body: IrBody
@@ -121,30 +122,43 @@ class IrFor(IrStmt):
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrWhile(IrStmt):
+class IrWhile(IrNode):
     test: IrExpr
     body: IrBody
     orelse: IrBody
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrReturn(IrStmt):
+class IrReturn(IrNode):
     value: IrExpr | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrBreak(IrStmt):
+class IrBreak(IrNode):
     pass
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrContinue(IrStmt):
+class IrContinue(IrNode):
     pass
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
-class IrExprStmt(IrStmt):
+class IrExprStmt(IrNode):
     value: IrExpr
+
+
+IrStmt = (
+    IrAssign
+    | IrAugAssign
+    | IrIf
+    | IrFor
+    | IrWhile
+    | IrReturn
+    | IrBreak
+    | IrContinue
+    | IrExprStmt
+)
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -153,3 +167,34 @@ class IrFunction(IrNode):
     params: tuple[tuple[str, Adapter], ...] = ()
     return_adapter: Adapter = VA
     body: IrBody
+
+
+def iter_child_expressions(node: IrExpr | IrStmt) -> Iterator[IrExpr]:
+    """Yield the direct IrExpr children of an expression or statement (shallow)."""
+    match node:
+        case IrVar() | IrConst():
+            return
+        case IrTuple(elements=elements):
+            yield from elements
+        case IrParIndex(base=base):
+            yield base
+        case IrBoolOp(values=values):
+            yield from values
+        case IrCallInet(args=args):
+            yield from args
+        case IrDynamic(captures=captures):
+            for _, capture in captures:
+                yield capture
+        case IrAssign(value=value) | IrAugAssign(value=value) | IrExprStmt(value=value):
+            yield value
+        case IrIf(test=test) | IrWhile(test=test):
+            yield test
+        case IrFor(iter=iter_):
+            yield iter_
+        case IrReturn(value=value):
+            if value is not None:
+                yield value
+        case IrBreak() | IrContinue():
+            return
+        case _:
+            assert_never(node)
