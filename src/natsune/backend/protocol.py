@@ -29,10 +29,6 @@ class Backend(Protocol):
         an AgentRef here; metadata (arity, adapters) is copied (§6)."""
         ...
 
-    def constant(self, value: Any, adapter: Adapter) -> Port:
-        """Adapter-driven value discipline (§8.3) not yet enforced."""
-        ...
-
     def materialize_dynamic(
         self,
         node: ast.expr,

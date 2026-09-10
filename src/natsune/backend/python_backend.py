@@ -24,7 +24,6 @@ from natsune.compiler import construct_locals, eval_expression
 from natsune.connector import Connector
 from natsune.control_flow import VariablesFlow
 from natsune.invocations import merge_invocation, send_parameters
-from natsune.ports import ConstantValuePort, Port
 from natsune.registers import (
     FromRegister,
     as_constant_register,
@@ -74,9 +73,6 @@ class PythonBackend:
                 ),
             )
         return self.calls[ref]
-
-    def constant(self, value: Any, adapter: Adapter) -> Port:
-        return ConstantValuePort(value)
 
     def materialize_dynamic(
         self,

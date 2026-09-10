@@ -15,8 +15,8 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 249 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 32 backend
+- Tests: 250 passing total — 171 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 33 backend
   (declaration layer, recorder split, agent invocation, lowering oracle;
   `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
@@ -124,7 +124,6 @@ class Backend(Protocol):
     # → emitted function, Primitive → intrinsic, PythonCallable → refuse.
 
     def resolve_call(self, ref: Any) -> AgentRef: ...      # IrCallInet.ref
-    def constant(self, value: Any, adapter: Adapter) -> Port: ...
     def materialize_dynamic(self, node: ast.expr, source_text: str,
                             captures: Mapping[str, FromRegister],
                             adapter: Adapter, connector: Connector) -> FromRegister: ...
@@ -213,7 +212,7 @@ AgentRefs. `backend/types.py#net_template_of` is the canonical
 `NetTemplate` producer (used by `PythonBackend.finish`). Oracle: full
 legacy suite green.
 
-**Step 3: mechanism landed, legacy sweep pending.** `AgentRef` moved to
+**Step 3: landed.** `AgentRef` moved to
 `ports.py` (it is net-level currency); `Graft` carries an optional
 `agent: AgentRef | None`, and `serialize_port` renders tagged grafts as
 `graft:<name>` (untagged legacy grafts render exactly as before).
@@ -222,9 +221,12 @@ legacy suite green.
 `agent_invocation` is the declarative counterpart of
 `expansion_invocation`: identical wiring, adapters from the declaration,
 graft tagged with the ref. The legacy agents still call
-`expansion_invocation` directly; sweeping them onto declared refs happens
-with the composite lowering prototype, which consumes `agent_invocation`
-from day one.
+`expansion_invocation` directly — deliberate, not deferred debt: sweeping
+them would change legacy serialization output (untagged `graft`
+renderings that legacy tests assert verbatim), and those classes die at
+cutover anyway. `agent_invocation` is the lowering-facing entry; new
+lowering code consumes it exclusively, starting with the composite
+prototype (§7.2b).
 
 ## 6. Practical notes
 
@@ -265,24 +267,49 @@ from day one.
    backend code required. **Landed.**
 1. `natsune/backend/` skeleton + `PythonBackend` as a thin shell over the
    existing executor/eval machinery (behavior-preserving by construction).
-   **Partially landed:** the declaration layer exists — `backend/types.py`
-   (AgentRef, PythonCallable, Primitive, NetTemplate, AgentDef, LoweredUnit),
-   `backend/protocol.py` (compile-time subset per §5),
-   `backend/python_backend.py` (declare/resolve/constant/finish;
-   materialize_dynamic deferred to §8.4), `backend/agents.py` (the survey:
-   primitives as static AgentDefs; composites classified per-call-site —
-   the flow_map coupling is the load-bearing note). Runtime still open
-   (§8.1); grafts-by-ref rewiring is §5.1 step 3.
+   **Landed:** `backend/types.py` (AgentRef, PythonCallable, Primitive,
+   NetTemplate, AgentDef, LoweredUnit, net_template_of), `protocol.py`
+   (compile-time subset per §5), `python_backend.py`
+   (declare/resolve/materialize_dynamic/finish — materialize_dynamic is
+   implemented, see §8.4), `agents.py` (the survey: primitives as static
+   AgentDefs; composites classified per-call-site — the flow_map coupling
+   is the load-bearing note), `runtime.py` (resolve_impl +
+   agent_invocation, §5.1 step 3). The runtime half of `finish` is still
+   open (§8.1).
 2. Write the new Ir-lowering against the protocol; diff its `VariablesFlow`s
    against the old compiler's using the serializer as the oracle (all 18
    snapshot programs exist for this).
    **First slice landed:** `backend/lowering.py#lower_function` lowers the
-   straight-line subset (Const/Var/Dynamic expressions; single-target
-   Assign with the legacy target-to-target chain, AugAssign rebind per
-   §8.6, Return stop-at-first-return, ExprStmt, implicit-None tail) with
-   exact `serialize_active_pairs` equality against legacy for 10 oracle
-   programs. Dynamics materialize flow-internally (see §8.4 finding);
-   composites (If/For/While) are next and consume `agent_invocation`.
+   straight-line subset (Const/Var/Dynamic expressions; Assign with the
+   legacy target-to-target chain, AugAssign rebind per §8.6, Return
+   stop-at-first-return, ExprStmt, implicit-None tail) with exact
+   `serialize_active_pairs` equality against legacy (oracle programs in
+   `tests/backend/test_lowering_oracle.py`; see the divergence note in §6).
+   Remaining lowering work, in order:
+
+   a. **IrCallInet (next).** Arity is already validated in the frontend
+      (§3.3). Mirror old compiler.py:405–425: `ref =
+      backend.resolve_call(...)`, graft the callee via a new
+      `runtime.callee_invocation(impl, connector)` duck-typing the legacy
+      `invocation(connector) -> (inputs, output)` contract, wire args
+      left-to-right (strict zip), return the output register. Tag the
+      graft's `Graft.agent` with the resolved ref — first real consumer of
+      `resolve_call`. New-lowered callees linking to each other is cutover
+      territory (CompiledFunction refs), not prototype territory.
+   b. **IrIf.** Lower branches as VariablesFlows; declare a per-site
+      composite AgentDef (impl=NetTemplate embedding branch AgentRefs) and
+      invoke via `agent_invocation`. Replace IfThenElseStatement's
+      flow_map side effect with IrBody.variable_usage; requires the
+      wire_continuation + mapped_variables_readin machinery in
+      control_flow.py. Hardest piece — study the old If branch
+      (compiler.py:886–908) first.
+   c. **IrWhile/IrFor.** Loop composite; same threading plus recursion
+      (an AgentRef appearing in its own template is just a cycle).
+   d. **IrTuple/IrTargetTuple/IrParIndex/IrBoolOp.** Par packing and
+      element-wise typing; mostly mechanical.
+   e. **Full 18-snapshot oracle.** Point the oracle at all of
+      `tests/frontend/programs.py` (delayed_inverse and the infinite-loop
+      programs may need special handling).
 3. Only then `CppBackend`: Connector-as-emitter + agent registry → C++ source.
 4. Cutover (delete `compiler.py`, switch the `inet` decorator) stays a
    separate, last step.
@@ -301,6 +328,11 @@ from day one.
    become primitives per target or a target-provided table.
 3. **Constants** — `Any`-typed `ConstantValuePort` vs. serializable constants
    for C++; where the adapter-driven value discipline constrains them.
+   Constants enter nets solely as recorded `ConstantValuePort`s inside
+   templates (lowering uses `as_constant_register` directly; there is no
+   `constant()` factory on the protocol — dropped as unused), so this
+   question is purely about how an emitter serializes what's already
+   recorded.
 4. **Dynamic fallback gating** — is `materialize_dynamic` Python-only by
    contract, with a diagnostic for C++? (Likely yes; matches `IrDynamic`
    being the escape hatch.) **Resolved (first lowering slice):** the

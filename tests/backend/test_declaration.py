@@ -17,7 +17,6 @@ from natsune.backend import (
 )
 from natsune.connector import serialize_active_pairs
 from natsune.control_flow import SerialOr, VariablesFlow
-from natsune.ports import ConstantValuePort
 from natsune.compiler import inet
 
 import pytest
@@ -75,12 +74,6 @@ def test_declare_agent_idempotent_and_conflict_detecting():
         backend.declare_agent("x", d2)
     # Re-declaring the identical defn is a no-op (e.g. re-finished flows).
     assert backend.declare_agent("x", d1) == AgentRef("x")
-
-
-def test_constant_port():
-    port = PythonBackend().constant(42, VA)
-    assert isinstance(port, ConstantValuePort)
-    assert port.value == 42
 
 
 def test_resolve_call_mints_stable_ref_and_copies_metadata():
