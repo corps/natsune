@@ -1,12 +1,13 @@
 """The new Ir → VariablesFlow lowering — migration step 2.
 
-Scope: straight-line bodies plus inet calls. Statements: IrAssign (chained
-targets mirror the old compiler's target-to-target chain), IrAugAssign
-(rebind interpretation per §8.6, synthesized as the old compiler's read-
-modify-write dynamic), IrReturn (stop at first return, mirroring
-parse_statement_body), IrExprStmt, and the default_return_none tail.
-Expressions include IrCallInet via runtime.callee_invocation (§7.2a).
-Composites (IrIf/IrFor/IrWhile) and multi-target tuple assigns are next.
+Scope: straight-line bodies, inet calls, and falling-through ifs.
+Statements: IrAssign (chained targets mirror the old compiler's target-to-
+target chain), IrAugAssign (rebind interpretation per §8.6, synthesized as
+the old compiler's read-modify-write dynamic), IrReturn (stop at first
+return, mirroring parse_statement_body), IrExprStmt, IrIf (per-branch
+scheme, §7.2b), and the default_return_none tail. Expressions include
+IrCallInet via runtime.callee_invocation (§7.2a). Exiting branches,
+IrWhile/IrFor, and multi-target tuple assigns are next.
 
 Deliberate protocol routing:
 - Dynamics route through Backend.materialize_dynamic — the Python
@@ -27,11 +28,17 @@ import ast
 
 from natsune.adapters import VA, Adapter, Variables
 from natsune.backend.protocol import Backend
-from natsune.backend.runtime import callee_invocation
-from natsune.backend.types import LoweredUnit
-from natsune.control_flow import VariablesFlow
+from natsune.backend.runtime import agent_invocation, callee_invocation
+from natsune.backend.types import AgentDef, InetCallable, LoweredUnit
+from natsune.control_flow import (
+    IfThenElseInputInto,
+    IfThenElseStatement,
+    IfThenElseStatementOutputInto,
+    VariablesFlow,
+)
 from natsune.frontend.ir import IrFunction
 from natsune.frontend.ir.nodes import (
+    Exits,
     IrAssign,
     IrAugAssign,
     IrCallInet,
@@ -39,17 +46,21 @@ from natsune.frontend.ir.nodes import (
     IrDynamic,
     IrExpr,
     IrExprStmt,
+    IrIf,
     IrReturn,
+    IrStmt,
     IrTarget,
     IrTargetDynamic,
     IrTargetName,
     IrVar,
 )
+from natsune.invocations import closer
 from natsune.ports import ConstantValuePort
 from natsune.registers import (
     FromRegister,
     as_constant_register,
     as_from_register,
+    as_to_register,
     send_value,
 )
 
@@ -83,10 +94,13 @@ class _FunctionLowering:
     def __init__(self, ir: IrFunction, backend: Backend) -> None:
         self.ir = ir
         self.backend = backend
+        self._if_count = 0
+        self._variables: dict[str, Adapter] = {}
 
     def run(self, name: str) -> LoweredUnit:
-        flow = VariablesFlow(
-            variables=Variables(self._collect_variables()),
+        self._variables = self._collect_variables()
+        self.flow = flow = VariablesFlow(
+            variables=Variables(self._variables),
             return_adapter=self.ir.return_adapter,
         )
         self._lower_body(flow, default_return_none=True)
@@ -115,38 +129,132 @@ class _FunctionLowering:
 
     def _lower_body(self, flow: VariablesFlow, *, default_return_none: bool) -> None:
         with flow:
-            for stmt in self.ir.body.statements:
-                if isinstance(stmt, IrReturn):
-                    flow.flow_map.return_output = True
-                    if stmt.value is None:
-                        # Old bare return: evaluate_from_expression(None)
-                        send_value(
-                            as_constant_register(None, flow),
-                            flow.control_output.return_value.readin(),
-                        )
-                    else:
-                        send_value(
-                            self._from_expr(stmt.value, flow),
-                            flow.control_output.return_value.readin(),
-                        )
-                    return  # old parse stops at the first return
-                if isinstance(stmt, IrAssign):
-                    self._lower_assign(stmt, flow)
-                elif isinstance(stmt, IrAugAssign):
-                    self._lower_augassign(stmt, flow)
-                elif isinstance(stmt, IrExprStmt):
-                    self._from_expr(stmt.value, flow).close()
-                else:
-                    raise NotImplementedError(
-                        f"{type(stmt).__name__} lowering lands with the "
-                        "composite prototype"
-                    )
-            if default_return_none:
+            closed = self._lower_statements(flow, self.ir.body.statements)
+            if default_return_none and not closed:
                 flow.flow_map.return_output = True
                 send_value(
                     as_from_register(ConstantValuePort(None), VA, flow),
                     flow.control_output.return_value.readin(),
                 )
+
+    def _lower_statements(
+        self, flow: VariablesFlow, statements: tuple[IrStmt, ...]
+    ) -> bool:
+        """Lower a statement list; returns True when a closer (IrReturn)
+        terminated it — the caller must not add a fall-through tail."""
+        for stmt in statements:
+            if isinstance(stmt, IrReturn):
+                flow.flow_map.return_output = True
+                if stmt.value is None:
+                    # Old bare return: evaluate_from_expression(None)
+                    send_value(
+                        as_constant_register(None, flow),
+                        flow.control_output.return_value.readin(),
+                    )
+                else:
+                    send_value(
+                        self._from_expr(stmt.value, flow),
+                        flow.control_output.return_value.readin(),
+                    )
+                return True  # old parse stops at the first return
+            if isinstance(stmt, IrAssign):
+                self._lower_assign(stmt, flow)
+            elif isinstance(stmt, IrAugAssign):
+                self._lower_augassign(stmt, flow)
+            elif isinstance(stmt, IrIf):
+                self._lower_if(stmt, flow)
+            elif isinstance(stmt, IrExprStmt):
+                self._from_expr(stmt.value, flow).close()
+            else:
+                raise NotImplementedError(
+                    f"{type(stmt).__name__} lowering lands with the "
+                    "composite prototype"
+                )
+        return False
+
+    def _lower_if(self, stmt: IrIf, flow: VariablesFlow) -> None:
+        """Per-branch scheme (§7.2b): the union is never formed. The
+        parent wires the full variables bundle into the composite context
+        (every cell extended — current value out, fresh state continues);
+        each branch runs over its own registers and emits every variable's
+        final state on fall-through (untouched cells pass through); the
+        taken branch's bundle is the only live one (the composite
+        dispatches). The continuation is the parent flow itself: branch
+        outputs feed the extended cells, and later reads see them
+        normally."""
+        for body in (stmt.then_body, stmt.else_body):
+            if body.exits != Exits.FALLTHROUGH:
+                raise NotImplementedError(
+                    "branches that exit (return/break/continue) land with "
+                    "the closer machinery (§7.2b slice 2)"
+                )
+
+        composite = IfThenElseStatement(
+            true_case=self._lower_branch(stmt.then_body),
+            false_case=self._lower_branch(stmt.else_body),
+        )
+        name = f"if_{self._if_count}"
+        self._if_count += 1
+        ref = self.backend.declare_agent(
+            name,
+            AgentDef(
+                name,
+                composite.input_adapter,
+                composite.output_adapter,
+                InetCallable(composite),
+            ),
+        )
+
+        with agent_invocation(
+            ref,
+            self.backend.agent_def(ref),
+            flow,
+            IfThenElseInputInto,
+            IfThenElseStatementOutputInto,
+        ) as if_invocation:
+            send_value(self._from_expr(stmt.test, flow), if_invocation.port.readin())
+
+            # Context: the full bundle, unclassified — the either-or split
+            # is the composite's job, not the parent's.
+            cells = [flow.exceptions, *flow.variable_registers.values()]
+            gives: list = []
+            with closer(if_invocation.wire.context) as context:
+                slots = context.variables.readin().split()
+                for register, slot in zip(cells, slots, strict=True):
+                    taken, give = register.extend()
+                    gives.append(give)
+                    send_value(as_from_register(taken, register.adapter, flow), slot)
+
+            # Continuation: the taken branch's final states feed the
+            # extended cells; later parent reads see them normally. Slots
+            # for control outputs the branches cannot emit (slice 1
+            # branches always fall through) are shortcut, mirroring the
+            # legacy wire_continuation.
+            result = if_invocation.wire.result
+            result.return_value.shortcut()
+            result.continue_variables.shortcut()
+            result.break_variables.shortcut()
+            finish = result.finish_variables.readout().split()
+            for register, give, out in zip(cells, gives, finish, strict=True):
+                send_value(out, as_to_register(give, register.adapter, flow))
+
+    def _lower_branch(self, body) -> VariablesFlow:
+        """Lower one branch body as a self-contained flow over the full
+        function variables (the legacy new_branch().parse_statement_body
+        shape). Fall-through emits every variable's final state; untouched
+        cells pass through by construction of the register plumbing."""
+        branch = VariablesFlow(
+            variables=Variables(self._variables),
+            return_adapter=self.ir.return_adapter,
+        )
+        with branch:
+            self._lower_statements(branch, body.statements)
+            branch.flow_map.finish_output = True
+            send_value(
+                branch.variables_readout(),
+                branch.control_output.finish_variables.readin(),
+            )
+        return branch
 
     def _lower_assign(self, stmt: IrAssign, flow: VariablesFlow) -> None:
         # The old chain: value -> target[0] -> target[1] -> ...

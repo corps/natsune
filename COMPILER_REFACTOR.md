@@ -383,13 +383,33 @@ prototype (§7.2b).
         it lands, its presence in the body decides the gate (see §6
         exceptions bullet).
 
-   b. **IrIf.** Lower branches as VariablesFlows; declare a per-site
-      composite AgentDef (impl=NetTemplate embedding branch AgentRefs) and
-      invoke via `agent_invocation`. Replace IfThenElseStatement's
-      flow_map side effect with IrBody.variable_usage; requires the
-      wire_continuation + mapped_variables_readin machinery in
-      control_flow.py. Hardest piece — study the old If branch
-      (compiler.py:886–908) first.
+   b. **IrIf — slice 1 landed (per-branch scheme).** The variable_usage
+      union is never formed — it is an either-or, not a union: the parent
+      wires the full variables bundle into the composite context (every
+      cell extended — current value out, fresh state continues), each
+      branch lowers as a self-contained flow (the legacy
+      `new_branch().parse_statement_body` shape) whose fall-through emits
+      every variable's final state, and the taken branch's bundle is the
+      only live one — the composite dispatches. The continuation is the
+      parent flow itself: branch outputs feed the extended cells, and
+      result control slots the branches cannot emit are shortcut
+      (mirroring wire_continuation). Branches are declared per-site
+      (`if_N`, impl=InetCallable wrapping the IfThenElseStatement
+      composite — a deviation from the older impl=NetTemplate plan: the
+      dispatch is primitive machinery; embedding branch AgentRefs in a
+      data template lands with §8.2). Validation: branch bodies remain
+      pair-comparable with legacy (the reference is reconstructed via
+      InetBranchCompiler — the compiled parent net's optimize pass
+      inlines branch bodies and dissolves the composite, so the parent
+      net is not a usable oracle here); composite wiring is IR-is-spec
+      wholesale (the adopted divergence — legacy classified its context
+      from the union and erased unflagged cells, we forward and let the
+      branch decide); the decisive check is differential execution — the
+      same program through the legacy compiler and the new lowering
+      (tests/backend/test_if_lowering.py; its driver is the §8.1 runtime
+      in miniature). Slice 1 scope: falling-through branches only
+      (exiting branches raise; closer/disjunctive machinery is slice 2);
+      tests limited to the supported expression set.
    c. **IrWhile/IrFor.** Loop composite; same threading plus recursion
       (an AgentRef appearing in its own template is just a cycle).
    d. **IrTuple/IrTargetTuple/IrParIndex/IrBoolOp.** Par packing and
