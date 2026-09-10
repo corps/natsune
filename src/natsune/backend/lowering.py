@@ -46,13 +46,16 @@ from natsune.frontend.ir.nodes import (
     IrDynamic,
     IrExpr,
     IrExprStmt,
+    IrFor,
     IrIf,
     IrReturn,
     IrStmt,
     IrTarget,
     IrTargetDynamic,
     IrTargetName,
+    IrTargetTuple,
     IrVar,
+    IrWhile,
 )
 from natsune.invocations import closer
 from natsune.ports import ConstantValuePort
@@ -110,20 +113,57 @@ class _FunctionLowering:
 
     def _collect_variables(self) -> dict[str, Adapter]:
         """Params first, then locals in statement order — mirroring the old
-        compiler's collection pass (interface position is order-bearing)."""
+        compiler's collection pass (interface position is order-bearing).
+
+        The walk is recursive, like the old InetVariablesEvaluator: branch
+        and loop bodies contribute their targets at the enclosing
+        statement's position (then before else, a for-loop's target before
+        its body), and tuple targets contribute their element names
+        left-to-right (the frontend stamped each element's inferred Par
+        adapter into the IrTargetName). Dynamic targets declare nothing —
+        attribute/subscript lvalues route through the exec fallback, and
+        the names inside their captures are reads, not locals.
+        """
 
         variables: dict[str, Adapter] = dict(self.ir.params)
-        for stmt in self.ir.body.statements:
+        self._collect_from_statements(self.ir.body.statements, variables)
+        return variables
+
+    def _collect_from_statements(
+        self, statements: tuple[IrStmt, ...], variables: dict[str, Adapter]
+    ) -> None:
+        for stmt in statements:
             if isinstance(stmt, IrAssign):
                 for target in stmt.targets:
-                    if isinstance(target, IrTargetName) and not target.is_global:
-                        variables.setdefault(target.name, target.adapter)
+                    self._collect_from_target(target, variables)
             elif isinstance(stmt, IrAugAssign):
-                target = stmt.target
-                if isinstance(target, IrTargetName) and not target.is_global:
-                    # Old visit_AugAssign marks fresh targets VA unconditionally.
-                    variables.setdefault(target.name, VA)
-        return variables
+                # Old visit_AugAssign marks fresh targets VA unconditionally.
+                # A fresh augassign target is never in the symbols table, so
+                # the frontend already stamped VA into its IrTargetName.
+                self._collect_from_target(stmt.target, variables)
+            elif isinstance(stmt, IrIf):
+                self._collect_from_statements(stmt.then_body.statements, variables)
+                self._collect_from_statements(stmt.else_body.statements, variables)
+            elif isinstance(stmt, IrFor):
+                self._collect_from_target(stmt.target, variables)
+                self._collect_from_statements(stmt.body.statements, variables)
+                self._collect_from_statements(stmt.orelse.statements, variables)
+            elif isinstance(stmt, IrWhile):
+                self._collect_from_statements(stmt.body.statements, variables)
+                self._collect_from_statements(stmt.orelse.statements, variables)
+            # IrReturn/IrBreak/IrContinue/IrExprStmt declare nothing.
+
+    def _collect_from_target(
+        self, target: IrTarget, variables: dict[str, Adapter]
+    ) -> None:
+        match target:
+            case IrTargetName(is_global=False):
+                variables.setdefault(target.name, target.adapter)
+            case IrTargetTuple(elements=elements):
+                for element in elements:
+                    self._collect_from_target(element, variables)
+            case IrTargetName() | IrTargetDynamic():
+                pass  # globals are refused at lowering; dynamics declare nothing
 
     # -- statements -----------------------------------------------------------
 
@@ -131,6 +171,8 @@ class _FunctionLowering:
         with flow:
             closed = self._lower_statements(flow, self.ir.body.statements)
             if default_return_none and not closed:
+                # Same derivable bookkeeping as the IrReturn case (§6
+                # flow_map bullet).
                 flow.flow_map.return_output = True
                 send_value(
                     as_from_register(ConstantValuePort(None), VA, flow),
@@ -144,6 +186,11 @@ class _FunctionLowering:
         terminated it — the caller must not add a fall-through tail."""
         for stmt in statements:
             if isinstance(stmt, IrReturn):
+                # MARKED post-cutover removal (§6 flow_map bullet):
+                # bookkeeping, not wiring — the send below is what the net
+                # records (the oracle never serializes flow_map). Derivable
+                # from IrBody.exits; unconsumed until slice 2 moves shortcut
+                # decisions into lowering.
                 flow.flow_map.return_output = True
                 if stmt.value is None:
                     # Old bare return: evaluate_from_expression(None)
@@ -249,6 +296,8 @@ class _FunctionLowering:
         )
         with branch:
             self._lower_statements(branch, body.statements)
+            # Same derivable bookkeeping as the IrReturn case (§6 flow_map
+            # bullet): load-bearing only once slice 2 lets branches exit.
             branch.flow_map.finish_output = True
             send_value(
                 branch.variables_readout(),

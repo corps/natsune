@@ -15,10 +15,11 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 263 passing total — 174 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 43 backend
-  (declaration layer, recorder split, agent invocation, lowering oracle;
-  `tests/backend/`).
+- Tests: 287 passing total — 174 frontend + 49 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 64 backend
+  (declaration layer, recorder split, agent invocation + call lowering,
+  lowering oracle, usage cross-check, if lowering + differential
+  execution; `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
   `make snapshots-update` (env var `NATSUNE_UPDATE_SNAPSHOTS=1` on
   `tests/frontend/test_snapshots.py`; review generated `.ir` by eye).
@@ -287,6 +288,18 @@ prototype (§7.2b).
   responsibility") resolves to this same predicate; defer the flip to
   cutover — the flags are legacy-internal and the new lowering does not
   consult them.
+- **`flow_map` control-output flags (`finish`/`continue`/`break`/
+  `return_output`).** **MARKED post-cutover removal:** the lowering
+  mirrors legacy's dynamic marking (compiler.py:818/927/933) at the same
+  statement positions, but nothing in the new path consumes the flags —
+  `agent_invocation` skips the flow_map merge, `_lower_if` shortcuts the
+  composite's control slots unconditionally (slice-1 branches cannot
+  exit), and `finish` ignores the top flow's map. They are fully
+  derivable from the IR (`IrBody.exits`, or the `closed` result
+  `_lower_statements` already returns). When slice 2 hands shortcut
+  decisions to lowering (per the §5.1 agents note), compute the maps
+  from IR facts instead of mutating them during statement lowering, and
+  drop the mirroring marks (search "§6 flow_map bullet").
 - **Golden-net oracle.** `serialize_wire` + `new_wires_cache` can render any
   `VariablesFlow` to data. While `compiler.py` lives, the new lowering can be
   diffed against the old compiler's flows graph-for-graph. There is also
@@ -410,8 +423,58 @@ prototype (§7.2b).
       in miniature). Slice 1 scope: falling-through branches only
       (exiting branches raise; closer/disjunctive machinery is slice 2);
       tests limited to the supported expression set.
+
+      **Slice 2 — next: exiting branches (unlocking is_it_even).** Scope
+      is IrReturn inside branches; break/continue stay shortcut until
+      §7.2c (they cannot occur without loops). Design, settled under the
+      per-branch scheme:
+
+      - **Branch side — mostly free.** Branch flows carry the full
+        return adapter already; the existing IrReturn path in
+        `_lower_statements` routes to the branch's own
+        `control_output.return_value` and returns the closed-signal, so
+        `_lower_branch` just skips the finish tail when closed. The
+        composite routes the branch's whole FlowControl output to its
+        result (`IfThenElseBase.__call__` sends
+        `invocation.wire.readout() → conditional.result.readin()`), so
+        no new branch machinery is needed. Narrow the
+        `Exits.FALLTHROUGH`-only guard to permit RETURN; keep
+        BREAK/CONTINUE raised (the Exits machinery —
+        `_analyze_body_flow`/`IrBody.exits` — already classifies all of
+        this at build time).
+      - **Parent side — conditional slot consumption.** return_value is
+        consumed (→ `flow.control_output.return_value.readin()`) iff
+        either branch's exits carry RETURN; finish_variables is consumed
+        (→ the extended cells, as in slice 1) iff either body falls
+        through; otherwise shortcut. Legacy reference for the return
+        merge: `wire_continuation`'s `b | a` (composite return |
+        continuation return → parent return readin, compiler.py:758-766)
+        — under our scheme there is no continuation flow, so it is just
+        the composite's return into the parent's return readin.
+      - **Both-branches-return:** the IrIf is the body's closer
+        (`IrBody.closer` — already classified at build time);
+        `_lower_body` must skip the implicit-None tail (`closed or
+        self.ir.body.closer is not None`), and the context-extended
+        cells' give-sides are never fed by a finish bundle — decide
+        during implementation how to retire them (annihilate-on-shortcut;
+        legacy's `shortcut()` is extend+annihilate, so mirroring that
+        shape is the safe default).
+      - **Mixed return/fall-through:** both slots live; the returning
+        branch's internal finish readin dangles — legacy has exactly
+        this shape and runs it (is_it_even), so no action expected, but
+        watch the oracle.
+      - **Validation:** differential execution extends directly — the
+        driver in tests/backend/test_if_lowering.py is the harness; add
+        is_it_even (`10 → True`, `11 → False`), mixed return/fall-through
+        in both orders, and both-branches-return (the if as closer; the
+        implicit-None tail must not fire). Branch-body pair-equality
+        carries over unchanged — returning branch bodies reconstruct via
+        the same InetBranchCompiler harness (parse stops at the return).
    c. **IrWhile/IrFor.** Loop composite; same threading plus recursion
-      (an AgentRef appearing in its own template is just a cycle).
+      (an AgentRef appearing in its own template is just a cycle). Run
+      AFTER slice 2 — continue/break control slots become live here and
+      want the return-slot plumbing from exiting branches in place
+      first.
    d. **IrTuple/IrTargetTuple/IrParIndex/IrBoolOp.** Par packing and
       element-wise typing; mostly mechanical.
    e. **Full 18-snapshot oracle.** Point the oracle at all of

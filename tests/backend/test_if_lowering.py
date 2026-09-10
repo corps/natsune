@@ -72,6 +72,18 @@ def h(a: int, b: int) -> int:
     return x
 """
 
+# The variable is declared inside the branches only — the collection pass
+# must walk nested bodies (legacy's visitor did), or the branch flow has no
+# register for it.
+BRANCH_LOCAL = """
+def k(a: int) -> int:
+    if a > 0:
+        y = a + 1
+    else:
+        y = a - 1
+    return y
+"""
+
 
 def _exec_source(source: str, filename: str):
     text = textwrap.dedent(source)
@@ -144,6 +156,16 @@ def test_branch_bodies_match_legacy():
     assert _serialize(composite.false_case) == _serialize(legacy_else)
 
 
+def test_branch_local_variable_matches_legacy():
+    """Same, for a variable declared inside the branches only: the bundle
+    comes from the recursive collection walk, so both sides carry y."""
+    legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BRANCH_LOCAL))
+    composite = _our_composite(_new_lowering(textwrap.dedent(BRANCH_LOCAL)))
+
+    assert _serialize(composite.true_case) == _serialize(legacy_then)
+    assert _serialize(composite.false_case) == _serialize(legacy_else)
+
+
 def test_parent_net_carries_tagged_composite():
     lowering = _new_lowering(textwrap.dedent(IF_ELSE))
     rendered = "\n".join(_serialize(lowering.flow))
@@ -195,6 +217,8 @@ def _run(expansion, *args):
         (NESTED_IF, (1, 1), 2),
         (NESTED_IF, (1, -1), 2),  # inner else: a - b
         (NESTED_IF, (-1, 5), 0),  # outer branch skipped
+        (BRANCH_LOCAL, (5,), 6),
+        (BRANCH_LOCAL, (-5,), -6),
     ],
 )
 def test_differential_execution(source, args, expected):

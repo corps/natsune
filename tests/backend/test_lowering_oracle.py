@@ -13,7 +13,7 @@ import pytest
 
 from natsune.adapters import VA
 from natsune.backend import PythonBackend
-from natsune.backend.lowering import lower_function
+from natsune.backend.lowering import _FunctionLowering, lower_function
 from natsune.backend.types import NetTemplate
 from natsune.compiler import InetFunctionCompiler
 from natsune.connector import serialize_active_pairs
@@ -224,3 +224,47 @@ def test_augassign_synthesizes_binop_node():
     assert isinstance(node.left, ast.Name) and node.left.id == "x"
     assert isinstance(node.right, ast.BinOp)  # the value's original ast_node
     assert ast.unparse(node) == "x + (a + 1)"  # legacy unparse parenthesizes
+
+
+_COLLECTION_CASES = [
+    # plain locals in statement order
+    "def f(a: int) -> int:\n    x = a\n    y = x\n    return y",
+    # locals declared inside branches only: the collection walk must
+    # descend into nested bodies (legacy's visitor always did)
+    "def g(a: int) -> int:\n    if a > 0:\n        y = a + 1\n    else:\n        y = a - 1\n    return y",
+    # tuple targets: element names join the bundle, left-to-right (the
+    # assignment itself lowers with the composite prototype — only the
+    # collection pass is under test here)
+    "def h(a: int) -> int:\n    x, y = a, a\n    return a",
+    "def k(a: int) -> int:\n    (x, (y, z)) = a, (a, a)\n    return a",
+    # fresh augassign target: legacy marks it VA unconditionally
+    "def m(a: int) -> int:\n    total = 0\n    total += a\n    return total",
+    # attribute/subscript lvalues are dynamics: they declare nothing
+    "def p(a) -> None:\n    a.b = 1\n    a[0] = 2",
+]
+
+
+@pytest.mark.parametrize("source", _COLLECTION_CASES)
+def test_variable_collection_matches_legacy(source: str) -> None:
+    """The bundle is the interface: names, adapters, AND order must equal
+    the legacy collection pass (interface position is order-bearing, §6).
+    The new walk is recursive over targets and nested bodies, so it collects
+    exactly the names legacy's recursive visitor does."""
+    filename = "collection.py"
+    text = textwrap.dedent(source)
+    ns: dict = {}
+    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
+    linecache.cache[filename] = (
+        len(text),
+        None,
+        text.splitlines(keepends=True),
+        filename,
+    )
+    func = next(v for v in ns.values() if callable(v))
+    legacy = InetFunctionCompiler(func, {}, filename)
+    legacy.compile()
+
+    ir, sink = build_ir_for(source)
+    assert not sink.diagnostics
+    lowering = _FunctionLowering(ir, PythonBackend())
+    assert list(lowering._collect_variables()) == list(legacy.variables)
