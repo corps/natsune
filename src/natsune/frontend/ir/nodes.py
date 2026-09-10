@@ -4,7 +4,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from enum import IntFlag
 from typing import Any, Literal, assert_never
 
-from natsune.adapters import VA, Adapter
+from natsune.adapters import VA, Adapter, read_independently
 from natsune.frontend.diagnostics import Position
 
 
@@ -306,14 +306,32 @@ def _merge_variable_usage(
         _record_variable_usage(into, name, how)
 
 
-def _collect_expr_usage(expr: IrExpr, usage: dict[str, VariableUsage]) -> None:
+def _collect_expr_usage(
+    expr: IrExpr,
+    usage: dict[str, VariableUsage],
+    adapters: Mapping[str, Adapter],
+) -> None:
     if isinstance(expr, IrVar) and not expr.is_global:
-        _record_variable_usage(usage, expr.name, "read")
+        # Usage classifies the EFFECT on the variable's cell, not the
+        # syntactic position (§1): a read of a variable whose adapter
+        # linearizes reads (Reference/Inverse/Par today) is effectually a
+        # write — the cell advances.
+        adapter = adapters.get(expr.name)
+        how = (
+            "read"
+            if adapter is None or read_independently(adapter.adapter_wiring_type())
+            else "write"
+        )
+        _record_variable_usage(usage, expr.name, how)
     for child in iter_child_expressions(expr):
-        _collect_expr_usage(child, usage)
+        _collect_expr_usage(child, usage, adapters)
 
 
-def _collect_target_usage(target: IrTarget, usage: dict[str, VariableUsage]) -> None:
+def _collect_target_usage(
+    target: IrTarget,
+    usage: dict[str, VariableUsage],
+    adapters: Mapping[str, Adapter],
+) -> None:
     match target:
         case IrTargetName(is_global=False, name=name):
             _record_variable_usage(usage, name, "write")
@@ -321,10 +339,10 @@ def _collect_target_usage(target: IrTarget, usage: dict[str, VariableUsage]) -> 
             return  # global names are not tracked
         case IrTargetTuple(elements=elements):
             for element in elements:
-                _collect_target_usage(element, usage)
+                _collect_target_usage(element, usage, adapters)
         case IrTargetDynamic(captures=captures):
             for _, capture in captures:
-                _collect_expr_usage(capture, usage)
+                _collect_expr_usage(capture, usage, adapters)
         case _:
             assert_never(target)
 
@@ -350,21 +368,25 @@ def _iter_child_bodies(stmt: IrStmt) -> Iterator[IrBody]:
             assert_never(stmt)
 
 
-def _collect_stmt_usage(stmt: IrStmt, usage: dict[str, VariableUsage]) -> None:
+def _collect_stmt_usage(
+    stmt: IrStmt,
+    usage: dict[str, VariableUsage],
+    adapters: Mapping[str, Adapter],
+) -> None:
     match stmt:
         case IrAssign(targets=targets):
             for target in targets:
-                _collect_target_usage(target, usage)
+                _collect_target_usage(target, usage, adapters)
         case IrAugAssign(target=target):
-            _collect_target_usage(target, usage)
+            _collect_target_usage(target, usage, adapters)
         case IrFor(target=target):
-            _collect_target_usage(target, usage)
+            _collect_target_usage(target, usage, adapters)
         case IrIf() | IrWhile() | IrBreak() | IrContinue() | IrReturn() | IrExprStmt():
             pass
         case _:
             assert_never(stmt)
     for expr in iter_child_expressions(stmt):
-        _collect_expr_usage(expr, usage)
+        _collect_expr_usage(expr, usage, adapters)
     for body in _iter_child_bodies(stmt):
         _merge_variable_usage(usage, body.variable_usage)
 
@@ -437,6 +459,7 @@ def _analyze_body_flow(
 
 def analyze_ir_body(
     statements: tuple[IrStmt, ...],
+    adapters: Mapping[str, Adapter],
 ) -> tuple[
     Mapping[str, VariableUsage], Sequence[IrIf | IrWhile | IrFor], IrBodyExit | None
 ]:
@@ -446,9 +469,14 @@ def analyze_ir_body(
     inside the statements must already carry their own computed fields,
     keeping the whole computation bottom-up. Invalid exit structures raise
     IrStructureError here, at build time.
+
+    ``adapters`` is the function-wide name→adapter table (params and
+    annotated locals — SymbolsTable.variables): reads are classified by
+    the variable's wiring discipline, so the table must be complete,
+    which it is — it is built ahead of IR construction, order-free.
     """
     usage: dict[str, VariableUsage] = {}
     for stmt in statements:
-        _collect_stmt_usage(stmt, usage)
+        _collect_stmt_usage(stmt, usage, adapters)
     disjunctives, body_exit = _analyze_body_flow(statements)
     return usage, disjunctives, body_exit

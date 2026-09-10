@@ -1,39 +1,29 @@
 """Step-0 cross-check for §7.2b (COMPILER_REFACTOR.md §6, first bullet):
 IrBody.variable_usage vs the legacy flow_map usage flags.
 
-Findings (the reason this file asserts soundness, not equality):
+Semantics (§1): usage classifies the EFFECT on the variable's cell, not
+the syntactic position — "read" = independent copy (cell identity
+preserved), "write" = linear use that advances the cell. Classification
+is adapter-declared via adapters.read_independently over the wiring
+type; deliberately VALUE-leaf-only while Par reads linearize (§6).
 
-The legacy flow_map flags are NOT a usage analysis — they are wherever
-evaluation happened to run. FlowRegister.readout/readin set flags only on
-the flow whose registers they touched, and several legacy constructs run
-on fragment flows whose flags never reach the parent:
+Findings (why the checks below are shaped the way they are):
 
-- if/while tests are evaluated in a fresh `new_test()` flow that is
-  closed and grafted, never invoked-into the parent (compiler.py:723) —
-  test reads are invisible to the parent's map (is_it_even: `input`).
-- for-target writes go through the deconstruct case flows' variable
-  interface, bypassing FlowRegister.readin (sum_it_up: `i` has
-  flow_write=False despite being written every iteration); iterable
-  reads (`range(start, end)` captures) land on case flows too.
-- Ref/Inverse reads set flow_write, not flow_read — FlowRegister.readout
-  branches on ValueAdapter (registers.py:291) — so a Ref-typed read
-  looks like a write.
+Legacy's flow_map flags are NOT a complete usage analysis — they are
+wherever evaluation happened to run. Fragment flows whose flags never
+reach the parent: if/while tests evaluate in a `new_test()` flow that is
+closed and grafted, never merged (test reads invisible — is_it_even's
+`input`); for-target writes bypass FlowRegister.readin via the
+deconstruct case flows' interface (sum_it_up's `i`); iterable captures
+land on case flows too (sum_it_up's `start`/`end`).
 
-The IR's variable_usage is the first complete statement-level analysis
-here: it walks the actual tree, merges nested bodies (write wins), and
-records globals-aware reads. 2b will source wiring decisions from it.
-
-What we can and do assert — legacy flags are a SOUND SUBSET of the IR:
-
-1. every legacy-flagged name appears in the IR usage (both directions of
-   the flag), and
-2. a legacy write-flag on a ValueAdapter-typed variable implies the IR
-   says "write" (readin only fires on assignments/targets). Ref/Inverse
-   names are exempt: their read-as-write quirk is pinned separately.
-
-Plus pinned divergences (the §6 bullet promises disagreements are
-surfaced, not smoothed over): the three fragment-flow sites above, each
-with a concrete program.
+The IR, post-normalization, now AGREES with legacy everywhere legacy is
+complete — including the Ref/Inverse read-as-write behavior, which the
+IR adopted as intended semantics (linear reads ARE writes) rather than
+as a quirk. The soundness check below is therefore unconditional:
+every legacy-flagged name appears in the IR usage, and a legacy write
+is an IR write. The remaining disagreements are exactly legacy's
+under-reporting sites, pinned individually.
 
 Programs excluded from the parametrized check entirely: cross-program
 calls (invoke_an_inet, use_references, test_delayed_inverse,
@@ -47,7 +37,6 @@ import textwrap
 
 import pytest
 
-from natsune.adapters import ValueAdapter
 from natsune.compiler import InetFunctionCompiler
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.ir import build_ir
@@ -55,7 +44,7 @@ from natsune.frontend.link import collect_call_links
 from natsune.frontend.signature import analyze_signature
 from natsune.frontend.source import extract_source
 from natsune.frontend.symbols import collect_symbols
-from natsune.special_forms import Ref
+from natsune.special_forms import Par, Ref
 from tests.frontend.helpers import build_ir_for
 from tests.frontend.programs import PROGRAMS
 
@@ -106,24 +95,23 @@ def _legacy_flags(flow) -> dict[str, tuple[bool, bool]]:
 
 
 def test_legacy_flags_are_a_sound_subset_of_ir_usage() -> None:
-    """Every legacy-flagged name must exist in the IR usage; a legacy
-    write on a value-typed variable must be an IR write."""
+    """Every legacy-flagged name must exist in the IR usage, and a legacy
+    write must be an IR write — unconditionally, now that the IR
+    normalizes linear reads (Reference/Inverse/Par) to writes."""
 
     for func in CROSSCHECK_PROGRAMS:
-        ir = _build_ir(func)
+        ir_usage = dict(_build_ir(func).body.variable_usage)
         flow = _legacy_flow(func)
-        legacy = _legacy_flags(flow)
-        ir_usage = dict(ir.body.variable_usage)
         context = func.__name__
 
-        for name, (read, write) in legacy.items():
+        for name, (read, write) in _legacy_flags(flow).items():
             if not (read or write):
                 continue  # untouched variable — the IR records nothing
             assert name in ir_usage, (
                 f"{context}: legacy flags {name!r} "
                 f"(flow_read={read}, flow_write={write}); IR usage has no entry"
             )
-            if write and isinstance(flow.variables[name], ValueAdapter):
+            if write:
                 assert ir_usage[name] == "write", (
                     f"{context}: legacy flow_write on {name!r} but IR says "
                     f"{ir_usage[name]!r}"
@@ -131,10 +119,10 @@ def test_legacy_flags_are_a_sound_subset_of_ir_usage() -> None:
 
 
 def test_test_flow_reads_never_reach_parent_flags():
-    # Pinned: the if-test is evaluated in a new_test() flow that is closed
-    # and grafted, never merged into the parent — so `input`'s read (the
-    # entire predicate!) is invisible to legacy's parent flow_map. The IR
-    # records it. 2b sourcing flags from the IR fixes this class.
+    # Pinned legacy under-reporting: the if-test is evaluated in a
+    # new_test() flow that is closed and grafted, never merged into the
+    # parent — so `input`'s read (the entire predicate!) is invisible to
+    # legacy's parent flow_map. The IR records it.
     ir_usage = dict(_build_ir(program("is_it_even")).body.variable_usage)
     legacy = _legacy_flags(_legacy_flow(program("is_it_even")))
 
@@ -143,10 +131,11 @@ def test_test_flow_reads_never_reach_parent_flags():
 
 
 def test_for_target_writes_and_iterable_reads_missed():
-    # Pinned: sum_it_up's `i` is written every iteration (for target) but
-    # legacy shows read-only — the write went through the deconstruct case
-    # flows' interface, bypassing FlowRegister.readin. The iterable's
-    # `start`/`end` reads landed on case flows as well and never merged.
+    # Pinned legacy under-reporting: sum_it_up's `i` is written every
+    # iteration (for target) but legacy shows read-only — the write went
+    # through the deconstruct case flows' interface, bypassing
+    # FlowRegister.readin. The iterable's `range(start, end)` reads
+    # landed on case flows as well and never merged.
     ir_usage = dict(_build_ir(program("sum_it_up")).body.variable_usage)
     legacy = _legacy_flags(_legacy_flow(program("sum_it_up")))
 
@@ -162,13 +151,11 @@ def test_for_target_writes_and_iterable_reads_missed():
     assert legacy["end"] == (False, False)
 
 
-def test_ref_read_is_legacy_write_is_ir_read():
-    # Pinned: reading a Ref-typed variable — here `a.append(1)`, a dynamic
-    # capture, with NO assignment anywhere — sets legacy flow_write
-    # (FlowRegister.readout on a non-ValueAdapter), while the IR records
-    # "read". 2b must not treat Ref-cell reads as writes when sourcing
-    # wiring decisions from the IR, or Ref contexts will extend fresh
-    # cells where legacy read through the shared one.
+def test_ref_read_normalizes_to_write_and_agrees():
+    # Reading a Ref-typed variable — here `a.append(1)`, a dynamic
+    # capture, with NO assignment anywhere — is a linear use: the IR
+    # normalizes it to "write" (adapters.read_independently refuses on
+    # REFERENCE wiring), agreeing with legacy's flow_write.
     source = "def append_to(a: Ref[list]) -> None:\n    a.append(1)"
 
     text = textwrap.dedent(source)
@@ -182,9 +169,37 @@ def test_ref_read_is_legacy_write_is_ir_read():
         filename,
     )
 
-    ir, sink = build_ir_for(source)
+    ir, sink = build_ir_for(source, namespace={"Ref": Ref})
     assert not sink.diagnostics
     legacy = _legacy_flags(_legacy_flow(ns["append_to"]))
 
-    assert dict(ir.body.variable_usage) == {"a": "read"}
+    assert dict(ir.body.variable_usage) == {"a": "write"}
     assert legacy["a"] == (False, True)
+
+
+def test_par_reads_linearize():
+    # Par is the conservative edge (§6): even an all-copyable Par
+    # linearizes on read, because reads go through a readout of the whole
+    # Par with the neighbor elements closed — matching legacy's flags
+    # exactly. Post-cutover, element-pass-through reads relax this to the
+    # recursive discipline rule; this pin (and the doc marker) is what
+    # that improvement updates.
+    source = "def second(p: Par[int, int]) -> int:\n    return p[1]"
+
+    text = textwrap.dedent(source)
+    filename = "usage_par_case.py"
+    ns: dict = {"Par": Par}
+    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
+    linecache.cache[filename] = (
+        len(text),
+        None,
+        text.splitlines(keepends=True),
+        filename,
+    )
+
+    ir, sink = build_ir_for(source, namespace={"Par": Par})
+    assert not sink.diagnostics
+    legacy = _legacy_flags(_legacy_flow(ns["second"]))
+
+    assert dict(ir.body.variable_usage) == {"p": "write"}
+    assert legacy["p"] == (False, True)

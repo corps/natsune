@@ -34,6 +34,18 @@ proposed `Backend` protocol, and the open questions to settle.
     called from `_build_body` in `frontend/ir/builder.py`:
     - `variable_usage: Mapping[str, "read" | "write"]` — non-global usages,
       child bodies' own usages merged into parents (write wins over read).
+      Usage classifies the EFFECT on the variable's cell, not the syntactic
+      position: "read" = independent copy (cell identity preserved);
+      "write" = linear use that advances the cell. Assignments are
+      writes; a read is a write whenever the variable's wiring type is
+      not the VALUE leaf — Reference/Inverse read linearly, and ALL Par
+      reads linearize today (a Par read is a whole-Par readout with the
+      neighbor elements closed). Classification is adapter-declared via
+      `adapters.read_independently` over the wiring type, with
+      SymbolsTable.variables as the env. The Par conservatism is marked
+      for post-cutover relaxation (element-pass-through reads → the
+      recursive discipline rule: a Par is a read iff every constituent
+      is) — see the §6 marker.
     - `disjunctives` — the `IrIf | IrWhile | IrFor` statements before the
       closer that can fall through (`Exits.FALLTHROUGH` set on their
       `exits`; returns flow to the list).
@@ -245,24 +257,36 @@ prototype (§7.2b).
   `variable_usage` is the same analysis one level up — the new lowering can
   feed `IrBody.variable_usage` (and per-body `disjunctives`/`closer`) directly
   into flow-register and continuation decisions.
-  **Cross-checked (tests/backend/test_usage_crosscheck.py) — and the
-  analyses do NOT agree: legacy's flags are not a usage analysis, they
-  are wherever evaluation happened to run.** Fragment flows whose flags
-  never reach the parent: if/while tests evaluate in a `new_test()` flow
-  that is closed and grafted, never merged (test reads invisible —
-  is_it_even's `input` is (False, False) in legacy, "read" in IR);
-  for-target writes bypass `FlowRegister.readin` via the deconstruct case
-  flows' interface (sum_it_up's `i` is read-flagged only); iterable
-  captures land on case flows too (`start`/`end` unflagged). Plus the
-  read-as-write quirk: `FlowRegister.readout` sets flow_write for
-  non-ValueAdapter reads (Ref/Inverse). Consequences for 2b: (a) the IR
-  is the complete analysis — source wiring flags from it; (b) the
-  golden-net oracle for composites must still reproduce legacy's
-  *decisions*, which were made on the partial flags — so expect
-  deliberate divergences around if-tests and for-targets, asserted as
-  the IR being the spec (as with unary folding); (c) Ref/Inverse cell
-  contexts must not treat IR reads as writes, or Ref branches will
-  extend fresh cells where legacy read through the shared one.
+  **Cross-checked (tests/backend/test_usage_crosscheck.py).** Semantics
+  settled: usage classifies the effect on the cell — "read" = independent
+  copy, "write" = linear use (advances the cell). Ref/Inverse read-as-write
+  is INTENDED semantics (linear reads are writes), adopted by the IR via
+  `adapters.read_independently`; the analyses now agree everywhere legacy
+  is complete, and the soundness invariant is unconditional (legacy flag
+  ⇒ IR entry; legacy write ⇒ IR write). Legacy's flags remain a partial
+  record — fragment flows whose flags never reach the parent: if/while
+  tests evaluate in a `new_test()` flow that is closed and grafted, never
+  merged (test reads invisible — is_it_even's `input` is (False, False)
+  in legacy, "read" in IR); for-target writes bypass `FlowRegister.readin`
+  via the deconstruct case flows' interface (sum_it_up's `i` is
+  read-flagged only); iterable captures land on case flows too
+  (`start`/`end` unflagged). Consequences for 2b: (a) source wiring flags
+  from the IR — it is the complete analysis; (b) the golden-net oracle
+  for composites must still reproduce legacy's *decisions*, which were
+  made on the partial flags — expect deliberate divergences around
+  if-test reads and for-target cells, asserted as the IR being the spec
+  (as with unary folding).
+  **MARKED post-cutover improvement:** Par reads currently linearize —
+  `read_independently` is VALUE-leaf-only because a Par read is a
+  whole-Par readout with the neighbor elements closed (even a copyable
+  element advances the cell). Element-pass-through reads (readout of the
+  item, pass-through of the rest) relax the rule to the recursive
+  discipline (VALUE recursively — a Par is a read iff every constituent
+  is); this pin lives in test_par_reads_linearize + the read_independently
+  docstring. Relatedly, `FlowRegister.readout`'s TODO ("adapter
+  responsibility") resolves to this same predicate; defer the flip to
+  cutover — the flags are legacy-internal and the new lowering does not
+  consult them.
 - **Golden-net oracle.** `serialize_wire` + `new_wires_cache` can render any
   `VariablesFlow` to data. While `compiler.py` lives, the new lowering can be
   diffed against the old compiler's flows graph-for-graph. There is also

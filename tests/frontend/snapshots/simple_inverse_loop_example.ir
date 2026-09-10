@@ -27,7 +27,7 @@
             (scale
               (var scale :va)))))
       (body
-        (usage total :write b :read)
+        (usage total :write b :write)
         (augassign +
           (target
             (name total :va))

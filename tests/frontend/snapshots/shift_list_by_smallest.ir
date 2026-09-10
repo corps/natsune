@@ -45,7 +45,7 @@
       (iter
         (var l :va))
       (body
-        (usage v :read smallest_acc :write smallest :read result :read)
+        (usage v :read smallest_acc :write smallest :write result :write)
         (if *
           (test
             (dynamic :va

@@ -27,7 +27,7 @@
                 (var a :va))))
           (const True :va)))
       (then
-        (usage paths :read)
+        (usage paths :write)
         (exprstmt
           (dynamic :va
             (source "paths.append('Infinite Or')")
@@ -45,7 +45,7 @@
                 (var a :va))))
           (const False :va)))
       (then
-        (usage paths :read)
+        (usage paths :write)
         (exprstmt
           (dynamic :va
             (source "paths.append('Infinite And')")

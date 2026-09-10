@@ -117,7 +117,7 @@ def _build_body(body: list[ast.stmt], builder: IrBuilder) -> IrBody:
         if built is not None:
             statements.append(built)
     built = tuple(statements)
-    usage, disjunctives, closer = analyze_ir_body(built)
+    usage, disjunctives, closer = analyze_ir_body(built, builder.symbols.variables)
     return IrBody(
         statements=built,
         variable_usage=usage,

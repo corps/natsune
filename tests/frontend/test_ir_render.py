@@ -153,6 +153,11 @@ def test_golden_control_flow():
 
 
 def test_golden_par_index_and_augassign():
+    # p is Par[int, str]: p[1] alone is copyable, but reads go through a
+    # readout of the whole Par with neighbors closed, so ANY p-read
+    # linearizes the cell — both the p[0] += 3 and the p[1] read report
+    # :write (read_independently is VALUE-leaf-only for now; element
+    # pass-through is the marked post-cutover improvement, §6).
     assert (
         _render(
             """
@@ -167,7 +172,7 @@ def test_golden_par_index_and_augassign():
             "  (param p par[va, va])\n"
             "  (returns va)\n"
             "  (body\n"
-            "    (usage p :read)\n"
+            "    (usage p :write)\n"
             "    (augassign +\n"
             "      (target\n"
             "        (dynamic\n"
