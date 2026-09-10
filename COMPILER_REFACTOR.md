@@ -15,8 +15,8 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 256 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 39 backend
+- Tests: 263 passing total — 174 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 43 backend
   (declaration layer, recorder split, agent invocation, lowering oracle;
   `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
@@ -244,8 +244,25 @@ prototype (§7.2b).
   `variables_readout(flow_map)` branches on it. The IR's build-time
   `variable_usage` is the same analysis one level up — the new lowering can
   feed `IrBody.variable_usage` (and per-body `disjunctives`/`closer`) directly
-  into flow-register and continuation decisions. Cross-check these two
-  analyses against each other; disagreement is a bug in one of them.
+  into flow-register and continuation decisions.
+  **Cross-checked (tests/backend/test_usage_crosscheck.py) — and the
+  analyses do NOT agree: legacy's flags are not a usage analysis, they
+  are wherever evaluation happened to run.** Fragment flows whose flags
+  never reach the parent: if/while tests evaluate in a `new_test()` flow
+  that is closed and grafted, never merged (test reads invisible —
+  is_it_even's `input` is (False, False) in legacy, "read" in IR);
+  for-target writes bypass `FlowRegister.readin` via the deconstruct case
+  flows' interface (sum_it_up's `i` is read-flagged only); iterable
+  captures land on case flows too (`start`/`end` unflagged). Plus the
+  read-as-write quirk: `FlowRegister.readout` sets flow_write for
+  non-ValueAdapter reads (Ref/Inverse). Consequences for 2b: (a) the IR
+  is the complete analysis — source wiring flags from it; (b) the
+  golden-net oracle for composites must still reproduce legacy's
+  *decisions*, which were made on the partial flags — so expect
+  deliberate divergences around if-tests and for-targets, asserted as
+  the IR being the spec (as with unary folding); (c) Ref/Inverse cell
+  contexts must not treat IR reads as writes, or Ref branches will
+  extend fresh cells where legacy read through the shared one.
 - **Golden-net oracle.** `serialize_wire` + `new_wires_cache` can render any
   `VariablesFlow` to data. While `compiler.py` lives, the new lowering can be
   diffed against the old compiler's flows graph-for-graph. There is also
