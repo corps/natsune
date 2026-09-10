@@ -85,10 +85,18 @@ def execute_commute_or_anihilate(
     connector.connect(l2.wires[0], r1.wires[0])
     connector.connect(l2.wires[1], r2.wires[0])
 
-    connector.connect(l.wires[0], l1)
-    connector.connect(l.wires[1], l2)
-    connector.connect(r.wires[1], r1)
-    connector.connect(r.wires[0], r2)
+    # Crossed re-parenting: each agent's own outputs/branches attach to the
+    # copies of the OTHER symbol.  For `dup x tup` this makes dup
+    # distributive: branch subtrees meet the new dups (commute, recursing
+    # down the tree) and leaves meet dups principal-to-principal (clone), so
+    # both outputs receive full copies.  Keeping them straight (l.wires ->
+    # l1/l2, r.wires -> r1/r2) instead lets branch subtrees annihilate
+    # against the new same-label tups, dissolving nested structures and
+    # partitioning their leaves across the outputs.
+    connector.connect(l.wires[0], r1)
+    connector.connect(l.wires[1], r2)
+    connector.connect(r.wires[0], l1)
+    connector.connect(r.wires[1], l2)
 
 
 def execute_erasure(connector: Connector, l: Port, r: Port) -> None:
