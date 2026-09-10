@@ -29,6 +29,12 @@ class Backend(Protocol):
         an AgentRef here; metadata (arity, adapters) is copied (§6)."""
         ...
 
+    def agent_def(self, ref: AgentRef) -> AgentDef:
+        """One hop from a ref back to its declaration — the registry lookup
+        that makes refs addressable. Resolution of the impl is per-target
+        (runtime.callee_invocation for the Python backend)."""
+        ...
+
     def materialize_dynamic(
         self,
         node: ast.expr,

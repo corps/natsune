@@ -15,15 +15,24 @@ from natsune.ports import AgentRef, Port
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class PythonCallable:
-    """impl resolved by PythonBackend: today's executor-side machinery.
+class InetCallable:
+    """impl referencing a callable net object in the runtime environment
+    (§7.2a) — target-neutral by design: the Python backend locates the
+    object and constructs the invocation protocol against its flow; the
+    C++ backend resolves same-unit callees to emitted functions and
+    refuses foreign ones (§4 gating).
 
-    Either an Expansion/ExpansionWithAdapters instance (grafts exactly as
-    the current agents do) or an old-style ``__inet__`` compiler exposing
-    ``invocation(connector)``. CppBackend refuses this impl (§4 gating).
+    Today ``ref`` is the old-style ``__inet__`` InetFunctionCompiler (the
+    very object IrCallInet.ref carries); at cutover it becomes
+    CompiledFunction. Resolution duck-types the runtime object: live
+    Expansion instances resolve as themselves (agent_invocation path);
+    legacy compilers resolve through callee_invocation's manual wiring —
+    the same shape as NetTemplate resolution, with a live flow instead of
+    recorded pairs and a slightly different way of filling in registers
+    (variable-interface sorting vs. template data).
     """
 
-    fn: Any
+    ref: Any
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -68,7 +77,7 @@ class AgentDef:
     name: str
     input_adapter: Adapter
     output_adapter: Adapter
-    impl: PythonCallable | NetTemplate | Primitive
+    impl: InetCallable | NetTemplate | Primitive
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

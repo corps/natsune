@@ -6,15 +6,15 @@ from natsune.backend.agents import (
 )
 from natsune.backend.protocol import Backend
 from natsune.backend.python_backend import PythonBackend
-from natsune.backend.runtime import agent_invocation, resolve_impl
+from natsune.backend.runtime import agent_invocation, callee_invocation, resolve_impl
 from natsune.backend.types import (
     AgentDef,
     AgentRef,
     Artifact,
+    InetCallable,
     LoweredUnit,
     NetTemplate,
     Primitive,
-    PythonCallable,
     net_template_of,
 )
 
@@ -25,13 +25,14 @@ __all__ = [
     "Backend",
     "COMPOSITE_AGENTS",
     "CompositeAgent",
+    "InetCallable",
     "LoweredUnit",
     "NetTemplate",
     "Primitive",
     "PythonBackend",
-    "PythonCallable",
     "agent_def_for",
     "agent_invocation",
+    "callee_invocation",
     "net_template_of",
     "primitive_agents",
     "resolve_impl",

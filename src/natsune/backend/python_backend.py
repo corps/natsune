@@ -15,9 +15,9 @@ from natsune.backend.types import (
     AgentDef,
     AgentRef,
     Artifact,
+    InetCallable,
     LoweredUnit,
     NetTemplate,
-    PythonCallable,
     net_template_of,
 )
 from natsune.compiler import construct_locals, eval_expression
@@ -40,11 +40,17 @@ class PythonBackend:
     ``agents`` doubles as the symbol table the §5.1 registry will formalize;
     ``calls`` keys old-style callee objects by identity so refs stay stable
     within a unit (cross-run stability is the §6 nondeterminism note —
-    cutover replaces refs with CompiledFunction anyway).
+    cutover replaces refs with CompiledFunction anyway). Resolution of an
+    InetCallable lives in runtime.callee_invocation; this class owns
+    declaration only.
     """
 
     agents: dict[str, AgentDef] = dataclasses.field(default_factory=dict)
-    calls: dict[Any, AgentRef] = dataclasses.field(default_factory=dict)
+    # Keyed by id(): old-style callee objects are unhashable dataclasses,
+    # and identity is exactly the sharing semantics wanted within a unit
+    # (cross-run stability is the §6 nondeterminism note — cutover
+    # replaces refs with CompiledFunction anyway).
+    calls: dict[int, AgentRef] = dataclasses.field(default_factory=dict)
 
     def declare_agent(self, name: str, defn: AgentDef) -> AgentRef:
         existing = self.agents.get(name)
@@ -56,23 +62,36 @@ class PythonBackend:
     def resolve_call(self, ref: Any) -> AgentRef:
         if isinstance(ref, AgentRef):
             return ref
-        if ref not in self.calls:
+        key = id(ref)  # old-style callee objects are unhashable dataclasses
+        if key not in self.calls:
             # Old-style __inet__ compiler object, duck-typed — no import of
             # natsune.compiler. Copy metadata when present (§6 opaque
             # callee refs); stable per-backend ordinal name. The args
             # ParValueAdapter IS the multi-param interface — no unpacking.
+            # The declaration's adapters describe the CALL interface; the
+            # callee's flow interface (FlowInput/FlowControl) is a
+            # resolution detail owned by callee_invocation (§7.2a).
             args_adapter = getattr(ref, "args_adapter", None)
             name = f"call_{len(self.calls)}"
-            self.calls[ref] = self.declare_agent(
+            self.calls[key] = self.declare_agent(
                 name,
                 AgentDef(
                     name,
                     args_adapter if args_adapter is not None else VA,
                     getattr(ref, "return_adapter", VA),
-                    PythonCallable(ref),
+                    InetCallable(ref),
                 ),
             )
-        return self.calls[ref]
+        return self.calls[key]
+
+    def agent_def(self, ref: AgentRef) -> AgentDef:
+        """Registry lookup: refs are by-value handles; this is the one hop
+        from a ref back to its declaration (lowering needs the impl to
+        resolve)."""
+        defn = self.agents.get(ref.name)
+        if defn is None:
+            raise KeyError(f"unknown agent {ref.name!r}")
+        return defn
 
     def materialize_dynamic(
         self,

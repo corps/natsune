@@ -1,10 +1,11 @@
-"""The new Ir → VariablesFlow lowering — migration step 2, first slice.
+"""The new Ir → VariablesFlow lowering — migration step 2.
 
-Scope: straight-line bodies. Statements: IrAssign (chained targets mirror
-the old compiler's target-to-target chain), IrAugAssign (rebind
-interpretation per §8.6, synthesized as the old compiler's read-modify-
-write dynamic), IrReturn (stop at first return, mirroring
+Scope: straight-line bodies plus inet calls. Statements: IrAssign (chained
+targets mirror the old compiler's target-to-target chain), IrAugAssign
+(rebind interpretation per §8.6, synthesized as the old compiler's read-
+modify-write dynamic), IrReturn (stop at first return, mirroring
 parse_statement_body), IrExprStmt, and the default_return_none tail.
+Expressions include IrCallInet via runtime.callee_invocation (§7.2a).
 Composites (IrIf/IrFor/IrWhile) and multi-target tuple assigns are next.
 
 Deliberate protocol routing:
@@ -26,12 +27,14 @@ import ast
 
 from natsune.adapters import VA, Adapter, Variables
 from natsune.backend.protocol import Backend
+from natsune.backend.runtime import callee_invocation
 from natsune.backend.types import LoweredUnit
 from natsune.control_flow import VariablesFlow
 from natsune.frontend.ir import IrFunction
 from natsune.frontend.ir.nodes import (
     IrAssign,
     IrAugAssign,
+    IrCallInet,
     IrConst,
     IrDynamic,
     IrExpr,
@@ -228,6 +231,19 @@ class _FunctionLowering:
             return self.backend.materialize_dynamic(
                 expr.ast_node, expr.source_text, used, expr.adapter, flow
             )
+        if isinstance(expr, IrCallInet):
+            # Mirror old compiler.py:405–425: resolve the callee, wire args
+            # left-to-right, return the output register. Arity/keywords are
+            # frontend-validated (§3.3); the zip is strict anyway.
+            ref = self.backend.resolve_call(expr.ref)
+            inputs, output = callee_invocation(self.backend.agent_def(ref), flow)
+            for input_register, arg in zip(inputs, expr.args, strict=True):
+                send_value(self._from_expr(arg, flow), input_register)
+            # should_capture_exceptions is False for now: IrTry does not
+            # exist yet, so no body can request capture. When it lands, its
+            # presence in the body decides the gate (legacy: the identity
+            # when False, an ExceptionSink invocation when True).
+            return output
         raise NotImplementedError(f"{type(expr).__name__} lowering is not in scope")
 
     def _var_read(self, name: str, flow: VariablesFlow) -> FromRegister:

@@ -3,8 +3,8 @@
 The library splits two ways:
 
 **Primitives** — self-contained expansions with static adapter signatures.
-They translate 1:1 to static AgentDefs whose impl is PythonCallable (the
-live instance IS today's resolution). Parameterized primitives
+They translate 1:1 to static AgentDefs whose impl is InetCallable (the
+live instance IS today's runtime-environment resolution). Parameterized primitives
 (ConcurrentValueMerge(should_shortcircuit, merger), the ext-fn invocations
 merge/split/filter in invocations.py) are factories: lowering constructs
 them per-site, so they get AgentDefs at declaration time, not here.
@@ -20,7 +20,7 @@ cells — move into lowering, fed by IrBody.variable_usage (§6 first bullet).
 import dataclasses
 
 from natsune.adapters import VA, Adapter
-from natsune.backend.types import AgentDef, PythonCallable
+from natsune.backend.types import AgentDef, InetCallable
 from natsune.control_flow import (
     CloseAfterContingent,
     ParallelOr,
@@ -47,7 +47,7 @@ def agent_def_for(
         name,
         input_adapter if input_adapter is not None else agent.input_adapter,
         output_adapter if output_adapter is not None else agent.output_adapter,
-        PythonCallable(agent),
+        InetCallable(agent),
     )
 
 
@@ -68,7 +68,7 @@ def primitive_agents() -> dict[str, AgentDef]:
             "tracer",
             VA,
             VA,
-            PythonCallable(Tracer("trace")),
+            InetCallable(Tracer("trace")),
         ),
     ]
     return {d.name: d for d in defs}

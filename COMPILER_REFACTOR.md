@@ -15,8 +15,8 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 250 passing total — 171 frontend + 46 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 33 backend
+- Tests: 256 passing total — 171 frontend + 46 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 39 backend
   (declaration layer, recorder split, agent invocation, lowering oracle;
   `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
@@ -99,7 +99,7 @@ class AgentDef:
     #                          lattice already has the product type — one
     #                          spelling per interface
     output_adapter: Adapter
-    impl: PythonCallable | NetTemplate | Primitive   # tagged union
+    impl: InetCallable | NetTemplate | Primitive   # tagged union
 ```
 
 Lowering then only ever handles wires, ports, and agent references.
@@ -120,10 +120,14 @@ class Backend(Protocol):
     def declare_agent(self, name: str, defn: AgentDef) -> AgentRef: ...
     # Target-neutral declaration; only impl RESOLUTION differs per target.
     # PythonBackend: NetTemplate → instantiate_template closure (today's
-    # copy-per-invocation), PythonCallable → call it. CppBackend: NetTemplate
-    # → emitted function, Primitive → intrinsic, PythonCallable → refuse.
+    # copy-per-invocation), InetCallable → duck-type the runtime object
+    # (live Expansions as themselves; legacy compilers via
+    # callee_invocation). CppBackend: NetTemplate → emitted function,
+    # Primitive → intrinsic, foreign InetCallable → refuse.
 
     def resolve_call(self, ref: Any) -> AgentRef: ...      # IrCallInet.ref
+    def agent_def(self, ref: AgentRef) -> AgentDef: ...    # registry hop:
+    # refs are by-value handles; lowering needs the impl back to resolve.
     def materialize_dynamic(self, node: ast.expr, source_text: str,
                             captures: Mapping[str, FromRegister],
                             adapter: Adapter, connector: Connector) -> FromRegister: ...
@@ -183,7 +187,7 @@ it subclasses `ExpansionBuilder` purely to *be* a graftable template.
 3. **Grafts carry references.** `expansion_invocation` becomes
    `agent_invocation(ref, ...)`: `Graft` records `(AgentRef, port, wires)`
    instead of an `Expansion` closure. The registry resolves: `impl =
-   NetTemplate | PythonCallable | Primitive` (§4's union), with
+   NetTemplate | InetCallable | Primitive` (§4's union), with
    `NetTemplate` extracted from a finished builder's `active_pairs` (already
    data via `serialize_active_pairs`).
 4. **`lower()` through the backend.** `lower` builds `VariablesFlow`s as
@@ -217,7 +221,9 @@ legacy suite green.
 `agent: AgentRef | None`, and `serialize_port` renders tagged grafts as
 `graft:<name>` (untagged legacy grafts render exactly as before).
 `backend/runtime.py#resolve_impl` resolves declarations to Expansions
-(PythonCallable only — NetTemplate/Primitive refuse until §8.1) and
+(InetCallable wrapping a live Expansion only — NetTemplate/Primitive
+refuse until §8.1; legacy compilers refuse here, they resolve through
+callee_invocation) and
 `agent_invocation` is the declarative counterpart of
 `expansion_invocation`: identical wiring, adapters from the declaration,
 graft tagged with the ref. The legacy agents still call
@@ -248,9 +254,14 @@ prototype (§7.2b).
   `tests/backend/test_lowering_oracle.py`.
 - **Opaque callee refs.** `IrCallInet.ref` currently holds old-style
   `__inet__` compiler objects; the frontend treats them as opaque and copies
-  metadata (arity, adapters). In the backend, `resolve_call`/`declare_agent`
-  is where they become `AgentDef`s; at cutover the ref type becomes
-  `CompiledFunction`.
+  metadata (arity, adapters). Realized in §7.2a: `resolve_call` mints
+  `call_N` declarations keyed by `id(ref)` (the compilers are unhashable
+  dataclasses) and `agent_def(ref)` is the hop back; at cutover the ref
+  type becomes `CompiledFunction`. Known approximation: when a legacy
+  callee lacks a `return_adapter` attribute, the declared output adapter
+  falls back to VA (this describes the call interface; the resolved flow
+  interface that `callee_invocation` wires is taken from the callee flow
+  itself).
 - **Nondeterminism.** The old `random_identifier` must not leak into backend
   agent names — cross-target/cross-module linking needs stable names (the IR
   already uses deterministic `__natsune_N__` placeholders).
@@ -267,7 +278,7 @@ prototype (§7.2b).
    backend code required. **Landed.**
 1. `natsune/backend/` skeleton + `PythonBackend` as a thin shell over the
    existing executor/eval machinery (behavior-preserving by construction).
-   **Landed:** `backend/types.py` (AgentRef, PythonCallable, Primitive,
+   **Landed:** `backend/types.py` (AgentRef, InetCallable, Primitive,
    NetTemplate, AgentDef, LoweredUnit, net_template_of), `protocol.py`
    (compile-time subset per §5), `python_backend.py`
    (declare/resolve/materialize_dynamic/finish — materialize_dynamic is
@@ -287,15 +298,47 @@ prototype (§7.2b).
    `tests/backend/test_lowering_oracle.py`; see the divergence note in §6).
    Remaining lowering work, in order:
 
-   a. **IrCallInet (next).** Arity is already validated in the frontend
-      (§3.3). Mirror old compiler.py:405–425: `ref =
-      backend.resolve_call(...)`, graft the callee via a new
-      `runtime.callee_invocation(impl, connector)` duck-typing the legacy
-      `invocation(connector) -> (inputs, output)` contract, wire args
-      left-to-right (strict zip), return the output register. Tag the
-      graft's `Graft.agent` with the resolved ref — first real consumer of
-      `resolve_call`. New-lowered callees linking to each other is cutover
-      territory (CompiledFunction refs), not prototype territory.
+   a. **IrCallInet — landed.** `lowering.py#_from_expr` routes IrCallInet
+      through `backend.resolve_call` + `backend.agent_def(ref)` +
+      `runtime.callee_invocation(defn, connector)`: manual wiring (a
+      `Graft(flow, [Wire()], agent=ref)` built by hand), because the
+      legacy `InetFunctionCompiler.invocation` creates its own untagged
+      graft deep inside `VariablesFlow.invocation`, out of reach for
+      tagging. `callee_invocation` duplicates the legacy register-sorting
+      dance (slot 0 = callee exceptions, closed; one register per
+      parameter; locals erased) and the `with closer(...)` is
+      load-bearing: its exit annihilates the interface registers'
+      dangling state wire-ends, which serialization is sensitive to.
+      Oracle: three call cases in `tests/backend/test_lowering_oracle.py`,
+      exact equality after stripping declaration-layer `graft:<name>`
+      tags (the tag is registry identity, not net structure — §5.1
+      step 3). Discoveries recorded along the way:
+
+      - **`PythonCallable` renamed to `InetCallable`** (field `fn` →
+        `ref`): the union member means "a callable net object in the
+        runtime environment" — today the legacy `__inet__` compiler, at
+        cutover `CompiledFunction` — resolved per-target by duck-typing:
+        live Expansions resolve as themselves (`resolve_impl`); legacy
+        compilers via `callee_invocation`'s manual wiring. Not
+        Python-specific: a C++ backend resolves same-unit callees to
+        emitted functions and refuses foreign ones.
+      - **`resolve_call` keys by `id(ref)`.** `InetFunctionCompiler` is
+        an unhashable dataclass, so object-keying crashed on first real
+        use (the old test's dummy was hashable and hid it).
+      - **Legacy flow_map constraint — not inherited.** Legacy
+        `FlowVariableMap.update` (control_flow.py:483) crashes unless
+        every callee variable name already exists in the caller's map;
+        legacy only compiles calls when names coincide (all legacy-suite
+        call sites happen to). `callee_invocation` skips the flow_map
+        side effect by design (it moves into lowering, fed by
+        `IrBody.variable_usage`), so the new lowering has no such
+        constraint; the oracle call cases name variables to keep the
+        legacy side compilable for comparison.
+      - **Exceptions gate:** `should_capture_exceptions` is False for
+        now — IrTry doesn't exist, so no body can request capture; when
+        it lands, its presence in the body decides the gate (see §6
+        exceptions bullet).
+
    b. **IrIf.** Lower branches as VariablesFlows; declare a per-site
       composite AgentDef (impl=NetTemplate embedding branch AgentRefs) and
       invoke via `agent_invocation`. Replace IfThenElseStatement's

@@ -7,11 +7,11 @@ from natsune.backend import (
     AgentDef,
     AgentRef,
     Backend,
+    InetCallable,
     LoweredUnit,
     NetTemplate,
     Primitive,
     PythonBackend,
-    PythonCallable,
     agent_def_for,
     primitive_agents,
 )
@@ -36,8 +36,8 @@ def test_agent_def_for_extracts_adapters():
     d = agent_def_for("serial_or", agent)
     assert d.input_adapter is agent.input_adapter
     assert d.output_adapter is agent.output_adapter
-    assert isinstance(d.impl, PythonCallable)
-    assert d.impl.fn is agent
+    assert isinstance(d.impl, InetCallable)
+    assert d.impl.ref is agent
 
 
 def test_primitive_agents_table():
@@ -50,7 +50,7 @@ def test_primitive_agents_table():
         "tracer",
     }
     for d in table.values():
-        assert isinstance(d.impl, PythonCallable)
+        assert isinstance(d.impl, InetCallable)
 
 
 def test_composite_classification():
@@ -68,7 +68,7 @@ def test_composite_classification():
 def test_declare_agent_idempotent_and_conflict_detecting():
     backend = PythonBackend()
     d1 = AgentDef("x", VA, VA, Primitive("p"))
-    d2 = AgentDef("x", VA, VA, PythonCallable(object()))
+    d2 = AgentDef("x", VA, VA, InetCallable(object()))
     assert backend.declare_agent("x", d1) == AgentRef("x")
     with pytest.raises(ValueError):
         backend.declare_agent("x", d2)
@@ -92,8 +92,8 @@ def test_resolve_call_mints_stable_ref_and_copies_metadata():
     assert defn.input_adapter is _DummyInet.args_adapter
     assert defn.output_adapter is VA
     impl = defn.impl
-    assert isinstance(impl, PythonCallable)
-    assert impl.fn is dummy
+    assert isinstance(impl, InetCallable)
+    assert impl.ref is dummy
 
     # Already-declared AgentRefs pass through untouched.
     named = backend.declare_agent("known", defn)

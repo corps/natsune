@@ -10,8 +10,8 @@ import pytest
 from natsune.adapters import VA
 from natsune.backend.agents import primitive_agents
 from natsune.backend.python_backend import PythonBackend
-from natsune.backend.runtime import agent_invocation, resolve_impl
-from natsune.backend.types import AgentDef, NetTemplate, Primitive, PythonCallable
+from natsune.backend.runtime import agent_invocation, callee_invocation, resolve_impl
+from natsune.backend.types import AgentDef, InetCallable, NetTemplate, Primitive
 from natsune.calculus import Calculus
 from natsune.control_flow import MergeOutputInto, Tracer
 from natsune.ports import AgentRef, Graft, Wire, WirePort
@@ -93,11 +93,11 @@ def test_graft_copy_preserves_agent_ref():
     assert copy.copy(graft).agent == AgentRef("tracer")
 
 
-def test_resolve_impl_python_callable():
+def test_resolve_impl_resolves_live_expansions():
     defn = primitive_agents()["tracer"]
     impl = defn.impl
-    assert isinstance(impl, PythonCallable)
-    assert resolve_impl(defn) is impl.fn
+    assert isinstance(impl, InetCallable)
+    assert resolve_impl(defn) is impl.ref
 
 
 def test_resolve_impl_refuses_unresolvable():
@@ -106,4 +106,4 @@ def test_resolve_impl_refuses_unresolvable():
     with pytest.raises(NotImplementedError):
         resolve_impl(AgentDef("p", VA, VA, Primitive("foreach")))
     with pytest.raises(TypeError):
-        resolve_impl(AgentDef("b", VA, VA, PythonCallable(42)))
+        resolve_impl(AgentDef("b", VA, VA, InetCallable(42)))

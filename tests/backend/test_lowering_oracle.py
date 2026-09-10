@@ -4,16 +4,26 @@ straight-line subset. Equality is exact — emission order included — since
 the lowering mirrors parse_statement_body statement-for-statement."""
 
 import ast
+import dataclasses
+import inspect
 import linecache
 import textwrap
 
 import pytest
 
+from natsune.adapters import VA
 from natsune.backend import PythonBackend
 from natsune.backend.lowering import lower_function
 from natsune.backend.types import NetTemplate
 from natsune.compiler import InetFunctionCompiler
 from natsune.connector import serialize_active_pairs
+from natsune.frontend.diagnostics import DiagnosticSink
+from natsune.frontend.ir import build_ir
+from natsune.frontend.link import collect_call_links
+from natsune.frontend.signature import analyze_signature
+from natsune.frontend.source import extract_source
+from natsune.frontend.symbols import collect_symbols
+from natsune.ports import Graft
 from tests.frontend.helpers import build_ir_for
 
 _CASES = [
@@ -69,6 +79,108 @@ def _new_serialization(source: str) -> list[str]:
     template = unit.body_def.impl
     assert isinstance(template, NetTemplate)
     return serialize_active_pairs(list(template.pairs), {})
+
+
+def _untag(pairs) -> list[tuple]:
+    """Strip declaration-layer agent tags so call grafts serialize exactly
+    like legacy's untagged ``graft`` — the tag is registry identity, not
+    net structure (§5.1 step 3), and the oracle compares structure."""
+
+    def scrub(p):
+        if isinstance(p, Graft) and p.agent is not None:
+            return dataclasses.replace(p, agent=None)
+        return p
+
+    return [tuple(scrub(p) for p in pair) for pair in pairs]
+
+
+_CALL_CASES = [
+    # single call, plain arg. NOTE on naming: legacy FlowVariableMap.update
+    # (control_flow.py:483) requires every callee variable name to already
+    # exist in the caller's map — a legacy constraint that only holds when
+    # names coincide (the legacy suite's call sites all do). The new
+    # lowering skips that side effect by design (§7.2a), so it doesn't
+    # inherit the constraint; these cases name variables to keep the
+    # legacy side compilable, which the oracle needs for comparison.
+    (
+        "f",
+        "def f(a: int) -> int:\n"
+        "    b = inc(a)\n"
+        "    return b\n"
+        "\n"
+        "def inc(a: int) -> int:\n"
+        "    return a + 1",
+    ),
+    # call result into a local; two call sites share one declaration
+    (
+        "f",
+        "def f(a: int, b: int) -> int:\n"
+        "    c = add(a, b)\n"
+        "    return add(c, a)\n"
+        "\n"
+        "def add(a: int, b: int) -> int:\n"
+        "    return a + b",
+    ),
+    # callee with its own local (exercises the extras-closing branch of
+    # the register sort on both sides)
+    (
+        "f",
+        "def f(a: int) -> int:\n"
+        "    b = step(a)\n"
+        "    return b\n"
+        "\n"
+        "def step(a: int) -> int:\n"
+        "    b = a + 1\n"
+        "    return b * 2",
+    ),
+]
+
+
+def _call_case_serialization(caller: str, source: str) -> tuple[list[str], list[str]]:
+    """Compile a multi-function snippet both ways. The callee is legacy-
+    compiled and __inet__-attached first (exactly what @inet does), so the
+    caller links against a legacy callee — the prototype's only linkable
+    kind (new-lowered callees linking to each other are cutover territory,
+    §7.4)."""
+    filename = "call_case.py"
+    text = textwrap.dedent(source)
+    ns: dict = {}
+    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
+    linecache.cache[filename] = (
+        len(text),
+        None,
+        text.splitlines(keepends=True),
+        filename,
+    )
+
+    callee_name = next(
+        n for n, v in ns.items() if n != caller and inspect.isfunction(v)
+    )
+    callee_compiler = InetFunctionCompiler(ns[callee_name], ns, filename)
+    callee_compiler.compile()
+    setattr(ns[callee_name], "__inet__", callee_compiler)
+
+    legacy = InetFunctionCompiler(ns[caller], ns, filename)
+    legacy.compile()
+    old = serialize_active_pairs(list(legacy.compiled.active_pairs), {})
+
+    src = extract_source(ns[caller], globals=ns, filename=filename)
+    signature = analyze_signature(src, DiagnosticSink())
+    symbols = collect_symbols(src, signature, DiagnosticSink())
+    links = collect_call_links(src.func_def.body, ns)
+    sink = DiagnosticSink()
+    ir = build_ir(src, signature, symbols, links, sink)
+    assert not sink.diagnostics
+    unit = lower_function(ir, PythonBackend())
+    template = unit.body_def.impl
+    assert isinstance(template, NetTemplate)
+    return old, serialize_active_pairs(_untag(template.pairs), {})
+
+
+@pytest.mark.parametrize("caller,source", _CALL_CASES)
+def test_golden_net_calls(caller: str, source: str) -> None:
+    old, new = _call_case_serialization(caller, source)
+    assert new == old
 
 
 @pytest.mark.parametrize("source", _CASES)
