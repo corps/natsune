@@ -1,6 +1,7 @@
 import ast
 import dataclasses
 from collections.abc import Iterator, Mapping, Sequence
+from enum import IntFlag
 from typing import Any, Literal, assert_never
 
 from natsune.adapters import VA, Adapter
@@ -97,14 +98,34 @@ type IrExpr = (
 )
 
 
+class Exits(IntFlag):
+    """Ways a node can terminate, as a may-analysis: each set bit is a
+    possible exit kind. FALLTHROUGH means flow returns to the enclosing
+    statement list (the node is a disjunctive).
+    """
+
+    BOTTOM = 0
+    FALLTHROUGH = 1
+    RETURN = 2
+    BREAK = 4
+    CONTINUE = 8
+
+
+# Bits of a loop body's exits that pass through the loop unchanged: RETURN
+# escapes the function, FALLTHROUGH keeps flow alive. CONTINUE is dropped
+# (it only re-tests the loop header); BREAK is promoted to FALLTHROUGH
+# separately (see _loop_exits).
+LOOP_BODY_MASK = Exits.FALLTHROUGH | Exits.RETURN
+
+
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class IrBody(IrNode):
     """A statement list with derived fields computed at build time by
     analyze_ir_body: variable_usage merges nested bodies' own usages
     ("write" wins over "read"); disjunctives are the IrIf/IrWhile/IrFor
-    statements before exit that return flow to this list; exit is the first
+    statements before exit that return flow to this list; closer is the first
     statement that never returns flow (None when all statements fall
-    through). Invalid exit structures raise IrStructureError at build time.
+    through). Invalid flow structures raise IrStructureError at build time.
     """
 
     statements: tuple[IrStmt, ...] = ()
@@ -114,7 +135,28 @@ class IrBody(IrNode):
     disjunctives: Sequence[IrIf | IrWhile | IrFor] = dataclasses.field(
         default=(), compare=False, repr=False
     )
-    exit: IrBodyExit | None = dataclasses.field(default=None, compare=False, repr=False)
+    closer: IrBodyExit | None = dataclasses.field(
+        default=None, compare=False, repr=False
+    )
+
+    @property
+    def exits(self) -> Exits:
+        result = Exits.BOTTOM
+        if self.closer is not None:
+            if isinstance(self.closer, (IrIf, IrWhile, IrFor)):
+                result = self.closer.exits
+            elif isinstance(self.closer, IrReturn):
+                result = Exits.RETURN
+            elif isinstance(self.closer, IrBreak):
+                result = Exits.BREAK
+            elif isinstance(self.closer, IrContinue):
+                result = Exits.CONTINUE
+            else:
+                assert_never(self.closer)
+
+        for disjunctive in self.disjunctives:
+            result |= disjunctive.exits
+        return result or Exits.FALLTHROUGH
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -136,6 +178,10 @@ class IrIf(IrNode):
     then_body: IrBody
     else_body: IrBody
 
+    @property
+    def exits(self) -> Exits:
+        return self.then_body.exits | self.else_body.exits
+
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class IrFor(IrNode):
@@ -144,12 +190,20 @@ class IrFor(IrNode):
     body: IrBody
     orelse: IrBody
 
+    @property
+    def exits(self) -> Exits:
+        return _loop_exits(self.body, self.orelse)
+
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class IrWhile(IrNode):
     test: IrExpr
     body: IrBody
     orelse: IrBody
+
+    @property
+    def exits(self) -> Exits:
+        return _loop_exits(self.body, self.orelse)
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -197,6 +251,10 @@ class IrFunction(IrNode):
     params: tuple[tuple[str, Adapter], ...] = ()
     return_adapter: Adapter = VA
     body: IrBody
+
+    @property
+    def exits(self) -> Exits:
+        return self.body.exits
 
 
 def iter_child_expressions(node: IrExpr | IrStmt) -> Iterator[IrExpr]:
@@ -311,9 +369,21 @@ def _collect_stmt_usage(stmt: IrStmt, usage: dict[str, VariableUsage]) -> None:
         _merge_variable_usage(usage, body.variable_usage)
 
 
-def _child_body_exits(stmt: IrIf | IrWhile | IrFor) -> tuple[IrBodyExit | None, ...]:
-    """Exits of a disjunctive statement's own bodies, in declaration order."""
-    return tuple(body.exit for body in _iter_child_bodies(stmt))
+def _loop_exits(body: IrBody, orelse: IrBody) -> Exits:
+    """Exits of IrWhile/IrFor.
+
+    RETURN propagates past the loop; FALLTHROUGH (an iteration completes)
+    and CONTINUE (jumps to the re-test) keep the loop alive. The orelse
+    runs whenever the loop completes normally — conditions and iterables
+    are opaque, so its exits always contribute. BREAK terminates the loop
+    while skipping the orelse: flow resumes after the loop, so it
+    contributes FALLTHROUGH for the loop as a whole.
+    """
+    body_exits = body.exits
+    result = (body_exits & LOOP_BODY_MASK) | orelse.exits
+    if body_exits & Exits.BREAK:
+        result |= Exits.FALLTHROUGH
+    return result
 
 
 def _validate_post_exit(stmt: IrStmt) -> None:
@@ -324,29 +394,27 @@ def _validate_post_exit(stmt: IrStmt) -> None:
     """
     if isinstance(stmt, (IrReturn, IrContinue, IrBreak)):
         raise IrStructureError(
-            f"{type(stmt).__name__} after the statement list's exit: post-exit "
+            f"{type(stmt).__name__} after the statement list's close: post-close "
             "statements run concurrently and cannot exit themselves"
         )
-    if isinstance(stmt, (IrIf, IrWhile, IrFor)) and any(
-        body_exit is not None for body_exit in _child_body_exits(stmt)
-    ):
+    if isinstance(stmt, (IrIf, IrWhile, IrFor)) and stmt.exits != Exits.FALLTHROUGH:
         raise IrStructureError(
-            f"{type(stmt).__name__} after the statement list's exit has an exiting "
-            "path: post-exit disjunctives must fall through on every path"
+            f"{type(stmt).__name__} after the statement list's close has a closing "
+            "path: post-close disjunctives must fall through on every path"
         )
 
 
 def _analyze_body_flow(
     statements: tuple[IrStmt, ...],
 ) -> tuple[Sequence[IrIf | IrWhile | IrFor], IrBodyExit | None]:
-    """Scan a statement list for its disjunctives and exit.
+    """Scan a statement list for its disjunctives and closer.
 
-    A disjunctive (IrIf/IrWhile/IrFor) with at least one own body whose exit
-    is None returns flow to the statement list and is collected; the first
-    statement that never returns flow is the exit. Statements after the exit
-    are validated by _validate_post_exit. Child body exits are read from the
-    stored field, so the analysis runs bottom-up: children must already
-    carry their computed fields.
+    A disjunctive (IrIf/IrWhile/IrFor) that can fall through (its exits
+    carries Exits.FALLTHROUGH) returns flow to the statement list and is
+    collected; the first statement that never returns flow is the closer.
+    Statements after the closer are validated by _validate_post_exit. Exits
+    are read from the stored exits properties, so the analysis runs
+    bottom-up: children must already carry their computed fields.
     """
     disjunctives: list[IrIf | IrWhile | IrFor] = []
     body_exit: IrBodyExit | None = None
@@ -356,7 +424,7 @@ def _analyze_body_flow(
             body_exit, exit_index = stmt, index
             break
         if isinstance(stmt, (IrIf, IrWhile, IrFor)):
-            if any(e is None for e in _child_body_exits(stmt)):
+            if Exits.FALLTHROUGH & stmt.exits:
                 disjunctives.append(stmt)  # returns flow to this list
             else:
                 body_exit, exit_index = stmt, index  # every path exits

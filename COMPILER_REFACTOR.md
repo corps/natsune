@@ -34,13 +34,16 @@ proposed `Backend` protocol, and the open questions to settle.
     called from `_build_body` in `frontend/ir/builder.py`:
     - `variable_usage: Mapping[str, "read" | "write"]` — non-global usages,
       child bodies' own usages merged into parents (write wins over read).
-    - `disjunctives` — the `IrIf | IrWhile | IrFor` statements before the exit
-      with at least one own body whose exit is None (returns flow to the list).
-    - `exit: IrBodyExit | None` — first statement that never returns flow
-      (bare return/continue/break, or a disjunctive whose bodies all exit).
-    - Invalid post-exit structures raise `IrStructureError` **at build time**.
+    - `disjunctives` — the `IrIf | IrWhile | IrFor` statements before the
+      closer that can fall through (`Exits.FALLTHROUGH` set on their
+      `exits`; returns flow to the list).
+    - `closer: IrBodyExit | None` — first statement that never returns flow
+      (bare return/continue/break, or a disjunctive with no fall-through
+      path).
+    - Invalid post-close structures raise `IrStructureError` **at build
+      time**.
   - The renderer prints `(usage a :write b :read)` per body and marks
-    statements with ` *` (disjunctive) / ` !` (exit) after the tag.
+    statements with ` *` (disjunctive) / ` !` (closer) after the tag.
 
 Open semantic leftovers inherited from the old plan's §10 that are now
 *lowering* decisions: AugAssign Ref/InPlace semantics (keep `IrAugAssign`
@@ -240,7 +243,7 @@ prototype (§7.2b).
   tracks per-variable `flow_read`/`flow_write`, and
   `variables_readout(flow_map)` branches on it. The IR's build-time
   `variable_usage` is the same analysis one level up — the new lowering can
-  feed `IrBody.variable_usage` (and per-body `disjunctives`/`exit`) directly
+  feed `IrBody.variable_usage` (and per-body `disjunctives`/`closer`) directly
   into flow-register and continuation decisions. Cross-check these two
   analyses against each other; disagreement is a bug in one of them.
 - **Golden-net oracle.** `serialize_wire` + `new_wires_cache` can render any

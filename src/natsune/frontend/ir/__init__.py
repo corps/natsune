@@ -2,6 +2,7 @@
 
 from natsune.frontend.ir.builder import build_ir
 from natsune.frontend.ir.nodes import (
+    Exits,
     IrAssign,
     IrAugAssign,
     IrBody,
@@ -36,6 +37,7 @@ from natsune.frontend.ir.nodes import (
 from natsune.frontend.ir.render import render_adapter, render_function
 
 __all__ = [
+    "Exits",
     "IrAssign",
     "IrAugAssign",
     "IrBody",

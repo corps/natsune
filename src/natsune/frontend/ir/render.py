@@ -122,8 +122,8 @@ class IrRenderer:
         return self.block(node, depth, header, children)
 
     def flow_marker(self, body: IrBody, stmt: IrStmt) -> str:
-        """' !' when stmt is the body's exit, ' *' when it is a disjunctive."""
-        if stmt is body.exit:
+        """' !' when stmt is the body's closer, ' *' when it is a disjunctive."""
+        if stmt is body.closer:
             return " !"
         if any(stmt is disjunctive for disjunctive in body.disjunctives):
             return " *"
@@ -133,7 +133,7 @@ class IrRenderer:
 
     def stmt(self, node: IrStmt, depth: int, flow: str = "") -> list[str]:
         """flow marks statements determined by the parent IrBody: ' *' for
-        its disjunctives, ' !' for its exit (see IrBody.disjunctives/exit)."""
+        its disjunctives, ' !' for its closer (see IrBody.disjunctives/closer)."""
         match node:
             case IrAssign():
                 targets = self.block(

@@ -5,6 +5,7 @@ import pytest
 
 from natsune.adapters import VA, ParValueAdapter, adapter_from_type
 from natsune.frontend.ir import (
+    Exits,
     IrAssign,
     IrAugAssign,
     IrBoolOp,
@@ -193,6 +194,75 @@ def test_while_break_continue_orelse():
     assert isinstance(branch.then_body.statements[0], IrBreak)
     assert isinstance(branch.else_body.statements[0], IrContinue)
     assert isinstance(while_stmt.orelse.statements[0], IrAssign)
+
+
+def test_while_body_break_skips_orelse_and_falls_through():
+    ir, stmts, sink = _body_of("""
+        def f(c: int) -> int:
+            while c:
+                break
+            else:
+                return 1
+            return 0
+        """)
+
+    assert sink.diagnostics == set()
+    [while_stmt, ret] = stmts
+    assert isinstance(while_stmt, IrWhile)
+    # break terminates the loop while skipping the orelse: flow resumes
+    # after the loop, so the loop can fall through even though the orelse
+    # always returns. (Promoting BREAK to FALLTHROUGH; masking it out
+    # entirely classified this loop as a closer and rejected the trailing
+    # return as a post-close statement.)
+    assert while_stmt.exits == (Exits.FALLTHROUGH | Exits.RETURN)
+    assert while_stmt.body.exits == Exits.BREAK
+    # The loop returns flow to the list: disjunctive, with the trailing
+    # return as the closer.
+    assert ir.body.disjunctives == (while_stmt,)
+    assert ir.body.closer is ret
+    assert ir.body.exits == (Exits.FALLTHROUGH | Exits.RETURN)
+
+
+def test_for_body_break_skips_orelse_and_falls_through():
+    ir, stmts, sink = _body_of(
+        """
+        def f() -> int:
+            for i in xs:
+                break
+            else:
+                return 1
+            return 0
+        """,
+        namespace={"xs": [1]},
+    )
+
+    assert sink.diagnostics == set()
+    [for_stmt, ret] = stmts
+    assert isinstance(for_stmt, IrFor)
+    # Same rule as while: break skips the orelse and resumes after the loop.
+    assert for_stmt.exits == (Exits.FALLTHROUGH | Exits.RETURN)
+    assert ir.body.disjunctives == (for_stmt,)
+    assert ir.body.closer is ret
+
+
+def test_while_body_continue_only_exits_via_orelse():
+    ir, stmts, sink = _body_of("""
+        def f(c: int) -> int:
+            while c:
+                continue
+            else:
+                return 1
+        """)
+
+    assert sink.diagnostics == set()
+    [while_stmt] = stmts
+    assert isinstance(while_stmt, IrWhile)
+    # continue only re-tests the condition, so the loop terminates via the
+    # orelse alone: it never falls through and is the body's closer.
+    assert while_stmt.exits == Exits.RETURN
+    assert ir.body.disjunctives == ()
+    assert ir.body.closer is while_stmt
+    assert ir.body.exits == Exits.RETURN
 
 
 def test_for_target_and_global_iter():
