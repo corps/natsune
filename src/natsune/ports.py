@@ -121,22 +121,9 @@ class Expansion(Protocol):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class AgentRef:
-    """Opaque handle to a declared agent; the currency that flows inside
-    nets. The registry (Backend.declare_agent) owns the AgentDef; grafts
-    record WHICH agent they instantiate via the ``agent`` field."""
-
-    name: str
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class Graft(Port):
     execute: Expansion
     wires: MutableSequence[Wire] = dataclasses.field(default_factory=lambda: [])
-    # Which declared agent this graft instantiates, when it was created
-    # through the declaration layer (agent_invocation). None for legacy
-    # closures (expansion_invocation).
-    agent: AgentRef | None = None
 
     def __copy__(self) -> Self:
         if hasattr(self.execute, "__copy__"):

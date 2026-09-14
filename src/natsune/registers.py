@@ -12,6 +12,7 @@ from natsune.adapters import (
     ValueAdapter,
 )
 from natsune.connector import Connector
+from natsune.control_flow import SerialOr
 from natsune.ports import (
     ConstantValuePort,
     Graft,
@@ -64,6 +65,7 @@ class FromRegister(Protocol):
     def __add__(self, other: FromRegister) -> FromRegister: ...
     def __invert__(self) -> ToRegister: ...
     def trace(self, label: str) -> FromRegister: ...
+    def to_interface(self) -> FromInterfaceRegister: ...
 
 
 class ToRegister(Protocol):
@@ -164,6 +166,11 @@ class _FromRegister:
         self.connector.connect(self.port, g)
         return _FromRegister(g.wires[0], self.adapter, self.connector)
 
+    def to_interface(self) -> FromInterfaceRegister:
+        result = FromInterfaceRegister(self.adapter, self.connector)
+        self.connector.connect(self.port, result.interface)
+        return result
+
     def __invert__(self) -> ToRegister:
         return _ToRegister(self.port, self.adapter, self.connector)
 
@@ -256,6 +263,14 @@ class FromInterfaceRegister(InterfaceRegister):
         taken, given = self.extend()
         self.connector.annihilate(taken)
         self.connector.annihilate(given)
+
+    def __ior__(self, other: FromRegister) -> FromInterfaceRegister:
+        taken, given = self.extend()
+        send_value(
+            as_from_register(taken, self.adapter, self.connector) | other,
+            as_to_register(given, self.adapter, self.connector),
+        )
+        return self
 
 
 class ToInterfaceRegister(InterfaceRegister):

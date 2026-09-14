@@ -4,21 +4,18 @@ from collections.abc import Iterable
 from typing import Any
 
 from natsune.adapters import Adapter, adapter_from_type
-
-# The object behind `__inet__`: the old `InetFunctionCompiler` until cutover.
-# Opaque by design — do not call methods on it outside `link.py`/`from_ref`.
-OpaqueInet = Any
+from natsune.legacy import LegacyInetInterface
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LinkedInet:
-    ref: OpaqueInet
+    ref: LegacyInetInterface
     arity: int
     arg_adapters: tuple[Adapter, ...]
     return_adapter: Adapter
 
     @classmethod
-    def from_ref(cls, ref: OpaqueInet) -> LinkedInet:
+    def from_ref(cls, ref: LegacyInetInterface) -> LinkedInet:
         arg_adapters = tuple(ref.args_adapter.concurrent_items)
         return cls(
             ref=ref,

@@ -84,6 +84,82 @@ def k(a: int) -> int:
     return y
 """
 
+# Slice 2: every branch returns — the if is the body's closer, the
+# composite's return is the only return source, and the implicit-None
+# tail must not fire on top of it.
+BOTH_RETURN = """
+def r(a: int) -> int:
+    if a > 0:
+        return 1
+    else:
+        return 2
+"""
+
+# Slice 2b: MIXED ifs — the rest of the list is absorbed into the
+# fall-through branches, so the trailing return lowers inside the
+# dispatch (it is is_it_even's exact shape).
+MIXED_TAIL = """
+def r2(a: int) -> int:
+    if a > 0:
+        return 1
+    return 2
+"""
+
+# The doc's §7.2b headline program, verbatim: dynamic test, bool return.
+IS_IT_EVEN = """
+def is_it_even(input: int) -> bool:
+    if input % 2 == 0:
+        return True
+    return False
+"""
+
+# Mixed with NO trailing return: the implicit-None tail is what gets
+# absorbed into the fall-through branch.
+MIXED_IMPLICIT_NONE = """
+def t(a: int) -> int:
+    if a > 0:
+        return 1
+"""
+
+# Mixed where the fall-through branch keeps computing after the if; the
+# trailing region is absorbed past it.
+MIXED_THEN_TAIL = """
+def s(a: int) -> int:
+    x = 10
+    if a > 0:
+        return 1
+    x = x + a
+    return x
+"""
+
+NESTED_BOTH_RETURN = """
+def n(a: int, b: int) -> int:
+    if a > 0:
+        if b > 0:
+            return 1
+        else:
+            return 2
+    else:
+        return 3
+"""
+
+# Mixed via nesting: the inner if returns through one branch and falls
+# through the other; the outer falls through its then-branch into the
+# tail return. The absorbed copy of the tail lands inside the outer's
+# then-branch, after the inner composite.
+MIXED_NESTED = """
+def m(a: int, b: int) -> int:
+    x = 0
+    if a > 0:
+        if b > 0:
+            return 1
+        else:
+            return 2
+    else:
+        x = a - b
+    return x
+"""
+
 
 def _exec_source(source: str, filename: str):
     text = textwrap.dedent(source)
@@ -219,8 +295,21 @@ def _run(expansion, *args):
         (NESTED_IF, (-1, 5), 0),  # outer branch skipped
         (BRANCH_LOCAL, (5,), 6),
         (BRANCH_LOCAL, (-5,), -6),
+        (BOTH_RETURN, (5,), 1),
+        (BOTH_RETURN, (-5,), 2),
+        (MIXED_TAIL, (5,), 1),
+        (MIXED_TAIL, (-5,), 2),
+        (MIXED_THEN_TAIL, (5,), 1),
+        (MIXED_THEN_TAIL, (-1,), 9),
+        (MIXED_NESTED, (1, 1), 1),
+        (MIXED_NESTED, (1, -1), 2),
+        (MIXED_NESTED, (-1, 5), -6),
+        (IS_IT_EVEN, (10,), True),
+        (IS_IT_EVEN, (11,), False),
     ],
 )
+
+
 def test_differential_execution(source, args, expected):
     """The same program through the legacy compiler and through the new
     lowering must produce identical results."""
@@ -232,9 +321,44 @@ def test_differential_execution(source, args, expected):
     assert ours == expected
 
 
-def test_exiting_branches_are_still_out_of_scope():
-    source = "def r(a: int) -> int:\n    if a > 0:\n        return 1\n    return 2"
-    ir, sink = build_ir_for(source)
-    assert not sink.diagnostics
-    with pytest.raises(NotImplementedError, match="closer machinery"):
-        lower_function(ir, PythonBackend())
+def test_mixed_implicit_none_tail():
+    """A mixed if with NO trailing return: the implicit-None tail is
+    absorbed into the fall-through branch.
+
+    Deliberate oracle divergence (§6: the IR is the spec): legacy produces
+    NO output on the fall-through path here — its wire_continuation
+    starves when the continuation is the implicit-None tail — so the
+    expected values are asserted directly."""
+    lowering = _new_lowering(textwrap.dedent(MIXED_IMPLICIT_NONE))
+    assert _run(lowering.flow, 5) == 1
+    assert _run(lowering.flow, -5) is None
+
+
+def test_nested_both_return_differential():
+    """Slice 2 handles nested all-branches-return ifs on every path.
+
+    Deliberate oracle divergence (the §6 rule: the IR is the spec): legacy
+    produces NO output for the paths that return through the inner if —
+    its wire_continuation merge starves when a returning branch's own
+    composite sits between it and the branch return — so legacy cannot
+    serve as the oracle here and the expected values are asserted
+    directly."""
+    lowering = _new_lowering(textwrap.dedent(NESTED_BOTH_RETURN))
+    assert _run(lowering.flow, 1, 1) == 1
+    assert _run(lowering.flow, 1, -1) == 2
+    assert _run(lowering.flow, -1, 5) == 3
+
+
+def test_branch_bodies_match_legacy_both_return():
+    """Slice 2: returning branch bodies are pair-identical to legacy's
+    (both skip the finish tail when the body closed)."""
+    legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BOTH_RETURN))
+    composite = _our_composite(_new_lowering(textwrap.dedent(BOTH_RETURN)))
+
+    assert _serialize(composite.true_case) == _serialize(legacy_then)
+    assert _serialize(composite.false_case) == _serialize(legacy_else)
+
+
+# break/continue outside loops never reach lowering: the frontend
+# rejects them at build time (IrStructureError), so there is no
+# lowering-level refusal left to test after slice 2b.

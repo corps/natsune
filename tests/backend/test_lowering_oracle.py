@@ -214,7 +214,9 @@ def test_augassign_synthesizes_binop_node():
                 node, source_text, captures, adapter, connector
             )
 
-    ir, sink = build_ir_for("def u(a: int) -> int:\n    x = 0\n    x += a + 1\n    return x")
+    ir, sink = build_ir_for(
+        "def u(a: int) -> int:\n    x = 0\n    x += a + 1\n    return x"
+    )
     assert not sink.diagnostics
     lower_function(ir, SpyBackend())
 
@@ -267,4 +269,4 @@ def test_variable_collection_matches_legacy(source: str) -> None:
     ir, sink = build_ir_for(source)
     assert not sink.diagnostics
     lowering = _FunctionLowering(ir, PythonBackend())
-    assert list(lowering._collect_variables()) == list(legacy.variables)
+    assert list(lowering.collect_variables()) == list(legacy.variables)

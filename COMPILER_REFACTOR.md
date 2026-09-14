@@ -15,11 +15,12 @@ proposed `Backend` protocol, and the open questions to settle.
   `natsune.compiler` is enforced inside `tests/frontend/test_link.py`).
 - The old `src/natsune/compiler.py` is byte-identical to its pre-refactor state
   and remains the live implementation (`inet` decorator, AST → `VariablesFlow`).
-- Tests: 287 passing total — 174 frontend + 49 legacy
-  (`tests/test_compiler.py` etc. exercise only the old code) + 64 backend
+- Tests: 300 passing total — 174 frontend + 49 legacy
+  (`tests/test_compiler.py` etc. exercise only the old code) + 77 backend
   (declaration layer, recorder split, agent invocation + call lowering,
   lowering oracle, usage cross-check, if lowering + differential
-  execution; `tests/backend/`).
+  execution incl. slice-2 all-branches-return and slice-2b mixed
+  absorption; `tests/backend/`).
 - Snapshot workflow: `make snapshots-check` /
   `make snapshots-update` (env var `NATSUNE_UPDATE_SNAPSHOTS=1` on
   `tests/frontend/test_snapshots.py`; review generated `.ir` by eye).
@@ -289,17 +290,16 @@ prototype (§7.2b).
   cutover — the flags are legacy-internal and the new lowering does not
   consult them.
 - **`flow_map` control-output flags (`finish`/`continue`/`break`/
-  `return_output`).** **MARKED post-cutover removal:** the lowering
-  mirrors legacy's dynamic marking (compiler.py:818/927/933) at the same
-  statement positions, but nothing in the new path consumes the flags —
-  `agent_invocation` skips the flow_map merge, `_lower_if` shortcuts the
-  composite's control slots unconditionally (slice-1 branches cannot
-  exit), and `finish` ignores the top flow's map. They are fully
-  derivable from the IR (`IrBody.exits`, or the `closed` result
-  `_lower_statements` already returns). When slice 2 hands shortcut
-  decisions to lowering (per the §5.1 agents note), compute the maps
-  from IR facts instead of mutating them during statement lowering, and
-  drop the mirroring marks (search "§6 flow_map bullet").
+  `return_output`).** **MARKED post-cutover removal:** nothing in the
+  new path consumes the flags — `agent_invocation` skips the flow_map
+  merge, and `finish` ignores the top flow's map. Since slice 2, slot
+  consumption in `_lower_if` is decided from per-branch `IrBody.exits`
+  (not from the maps), and the marks are emitted only where the
+  lowering actually wires the corresponding output (`_branch_flow`'s
+  finish tail, the `_lower_body`/`_lower_statements` return tails) —
+  partial derivations already, no longer verbatim mirrors of legacy's
+  compiler.py:818/927/933 marking. They remain inert bookkeeping; drop
+  them at cutover (search "§6 flow_map bullet").
 - **Golden-net oracle.** `serialize_wire` + `new_wires_cache` can render any
   `VariablesFlow` to data. While `compiler.py` lives, the new lowering can be
   diffed against the old compiler's flows graph-for-graph. There is also
@@ -396,7 +396,9 @@ prototype (§7.2b).
         it lands, its presence in the body decides the gate (see §6
         exceptions bullet).
 
-   b. **IrIf — slice 1 landed (per-branch scheme).** The variable_usage
+   b. **IrIf — LANDED: slice 1 (fall-through-only), slice 2
+      (all-branches-return), slice 2b (mixed, by absorption).** The
+      variable_usage
       union is never formed — it is an either-or, not a union: the parent
       wires the full variables bundle into the composite context (every
       cell extended — current value out, fresh state continues), each
@@ -424,16 +426,16 @@ prototype (§7.2b).
       (exiting branches raise; closer/disjunctive machinery is slice 2);
       tests limited to the supported expression set.
 
-      **Slice 2 — next: exiting branches (unlocking is_it_even).** Scope
-      is IrReturn inside branches; break/continue stay shortcut until
-      §7.2c (they cannot occur without loops). Design, settled under the
-      per-branch scheme:
+      **Slice 2 — exiting branches (unlocking is_it_even); status below.**
+      Scope is IrReturn inside branches; break/continue stay shortcut
+      until §7.2c (they cannot occur without loops). Design, settled
+      under the per-branch scheme:
 
       - **Branch side — mostly free.** Branch flows carry the full
         return adapter already; the existing IrReturn path in
         `_lower_statements` routes to the branch's own
         `control_output.return_value` and returns the closed-signal, so
-        `_lower_branch` just skips the finish tail when closed. The
+        `_branch_flow` just skips the finish tail when closed. The
         composite routes the branch's whole FlowControl output to its
         result (`IfThenElseBase.__call__` sends
         `invocation.wire.readout() → conditional.result.readin()`), so
@@ -470,11 +472,106 @@ prototype (§7.2b).
         implicit-None tail must not fire). Branch-body pair-equality
         carries over unchanged — returning branch bodies reconstruct via
         the same InetBranchCompiler harness (parse stops at the return).
+
+      **Slice 2 status — superseded by slice 2b (below); all-branches-
+      return machinery as described is landed.** The both-branches-return
+      case: the guard refuses only BREAK/CONTINUE (mixed now routes to
+      absorption — slice 2b); slot
+      consumption is decided from the per-branch `exits` — return_value
+      consumed iff some branch returns, finish_variables iff some falls
+      through, and a slot no branch can emit is **shortcut, never
+      readout** (an unfired slot's readout yields the cell's initial
+      erasure, which flows on and drives whatever it feeds — legacy's
+      `flow_map.shortcut` exists for exactly this); under all-return the
+      extended cells retire via annihilate-on-shortcut (the gives closed,
+      mirroring legacy's `shortcut()` shape) and the composite's return
+      feeds the parent's return readin directly (single source: a
+      both-return if is the body's closer, so nothing can follow it).
+      `_branch_flow` skips the finish tail when the body closed;
+      `_lower_body` skips the implicit-None tail when `body.closer` is
+      set. **Legacy bug found en route:** for NESTED all-return ifs
+      (return through an inner if sitting in one branch of an outer one)
+      legacy produces NO output on the inner paths — its
+      wire_continuation merge starves — while the new lowering is correct
+      on every path (test_nested_both_return_differential asserts ours
+      directly; legacy cannot be oracle there).
+
+      **Slice 2b — mixed return/fall-through — LANDED (absorption).**
+      The mixed case is NOT free (the "no action expected" note above was
+      optimistic): the statements after the if run only on the
+      fall-through path, and a cell-independent source there (a constant
+      return — is_it_even's `return False`) has nothing to gate on.
+      Established by experiment (all reproducible with a FlowRegister +
+      SerialOr + a DeterministicSerialExecutor):
+
+      - VA `produce_ingression` **annihilates the taken state** — chained
+        `readin()` extensions on one control register are wrong for
+        alternative sources: the later extension destroys the earlier
+        write, so the return path's value is lost (write-only-ext1 →
+        hang; ext2-written → ext1's value annihilated).
+      - `FromRegister.__or__` (SerialOr) is a **first-occurrence
+        selector** — intended semantics, confirmed: the port side firing
+        IS the selection; the chosen value is forwarded and the other
+        side closed. A dead port means no selection ever happened, so
+        the merge never fires even if the second side arrives. A bare
+        `comp | cont` therefore cannot express the mixed case: the
+        choreography's job is to guarantee the port side is precisely
+        the live alternative (drive) while can't-fire slots are shortcut
+        into silence — which is what wire_continuation's map shortcuts +
+        borrow/join gadgets provide.
+      - **A connected graft's interface transmits dispatch structure
+        regardless of values.** A sibling continuation flow — its inputs
+        chained (starving), closed, or left entirely unwired — still
+        fired its body on the return path in every wiring variant tried;
+        consuming ANY of its output slots (even a readout) suffices to
+        activate it. Nothing value-bearing may sit beside a composite.
+
+      The landing is therefore NOT legacy's continuation structure (the
+      borrow/join choreography could not be re-derived soundly from
+      primitives, and the sibling-graft experiments above bound what is
+      unsafe). Instead: **ABSORPTION** (`_lower_absorbing_if`) — a mixed
+      if consumes the REST of its enclosing list into its fall-through
+      branches (own statements + rest), recursively, so the trailing
+      region lowers inside the dispatch:
+
+      - every return becomes a branch-internal single writer; the
+        composite's return slot is the parent's only return source;
+      - closing branches skip the rest (dead code — same rule the
+        frontend applies after a closer);
+      - the implicit-None tail, at the function level, is absorbed too
+        (the function-body tail moved into `_lower_statements`), so a
+        trailing mixed if converts to all-return and the tail never
+        double-fires;
+      - wiring after absorption uses the slice-2 rule on POST-absorption
+        closedness: all branches return → return consumed, finish
+        shortcut, gives retired; any fall-through → finish feeds the
+        gives, return shortcut. A mixed if inside a BRANCH body (no tail
+        to absorb) can stay genuinely mixed — both slots consumed.
+
+      Cost: the region duplicates once per fall-through branch, so
+      nested mixed ifs multiply copies (2^mixed-nesting depth; depth-1
+      in realistic code). Noted for the C++ emitter.
+
+      **Two further legacy bugs found en route** (besides slice 2's
+      nested all-return starvation): legacy produces NO output for
+      `if c: return 1` with the implicit-None tail (fall-through path —
+      the continuation is the tail), and cannot serve as oracle there;
+      is_it_even itself, the other mixed shapes, and the nested mixed
+      case all differential-match legacy.
+
+      Validation: is_it_even verbatim (`10 → True`, `11 → False`) via
+      the legacy differential, mixed in both orders, mixed-nested, and
+      the implicit-None tail (asserted directly — see above);
+      branch-body pair-equality unaffected.
    c. **IrWhile/IrFor.** Loop composite; same threading plus recursion
-      (an AgentRef appearing in its own template is just a cycle). Run
-      AFTER slice 2 — continue/break control slots become live here and
-      want the return-slot plumbing from exiting branches in place
-      first.
+      (an AgentRef appearing in its own template is just a cycle).
+      Continue/break control slots become live here. NOTE: slice 2b's
+      absorption does NOT transfer to loops — the trailing region after
+      a loop runs after EXHAUSTION, so absorbing it into the loop body
+      would re-execute it per iteration. The trailing-region sequencing
+      design for loops is still open: either the legacy
+      wire_continuation drive (finish + borrow/join choreography) or a
+      loop-specific form.
    d. **IrTuple/IrTargetTuple/IrParIndex/IrBoolOp.** Par packing and
       element-wise typing; mostly mechanical.
    e. **Full 18-snapshot oracle.** Point the oracle at all of

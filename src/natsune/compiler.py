@@ -24,7 +24,7 @@ from natsune.connector import Connector
 from natsune.control_flow import (
     ConcurrentValueMerge,
     ExceptionSink,
-    FlowVariableMap,
+    FlowMap,
     IfThenElse,
     IfThenElseStatement,
     Loop,
@@ -184,6 +184,12 @@ class InetFunctionCompiler:
             ),
             False,
         )
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
     def syntax_error(self, node: ast.AST, message: str) -> SyntaxError:
         lineno = self.func_def.lineno
@@ -739,7 +745,7 @@ class InetBranchCompiler:
         self,
         control: FlowControlInto,
         continuation: VariablesFlow,
-        control_flow_map: FlowVariableMap,
+        control_flow_map: FlowMap,
     ):
         control_flow_map.shortcut(control)
         x1, x2 = Wire.as_interface()

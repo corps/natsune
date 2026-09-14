@@ -8,33 +8,17 @@ needed it — templates record into themselves.
 
 import ast
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Collection, Protocol, runtime_checkable
 
 from natsune.adapters import Adapter
-from natsune.backend.types import AgentDef, AgentRef, Artifact
-from natsune.connector import Connector
-from natsune.control_flow import VariablesFlow
-from natsune.ports import Port
+from natsune.backend.agents import AgentImpl
+from natsune.connector import Connector, FrozenExpansion
+from natsune.frontend import IrFunction
 from natsune.registers import FromRegister
 
 
 @runtime_checkable
 class Backend(Protocol):
-    def declare_agent(self, name: str, defn: AgentDef) -> AgentRef:
-        """Register a declaration; only impl RESOLUTION differs per target."""
-        ...
-
-    def resolve_call(self, ref: Any) -> AgentRef:
-        """IrCallInet.ref (today: opaque old-style __inet__ objects) becomes
-        an AgentRef here; metadata (arity, adapters) is copied (§6)."""
-        ...
-
-    def agent_def(self, ref: AgentRef) -> AgentDef:
-        """One hop from a ref back to its declaration — the registry lookup
-        that makes refs addressable. Resolution of the impl is per-target
-        (runtime.callee_invocation for the Python backend)."""
-        ...
-
     def materialize_dynamic(
         self,
         node: ast.expr,
@@ -61,8 +45,11 @@ class Backend(Protocol):
         grafts — matches the legacy shape."""
         ...
 
-    def finish(self, flow: VariablesFlow, *, name: str = "main") -> Artifact:
-        """Declares the function's own body as an AgentDef (NetTemplate
-        extracted from the flow's active_pairs). What the artifact *is* —
-        runnable vs. text — is §8.1, deferred with the runtime protocol."""
-        ...
+    def finish(
+        self,
+        func: IrFunction,
+        flow: FrozenExpansion,
+        agents: Collection[AgentImpl],
+        *,
+        name: str = "main",
+    ) -> Any: ...

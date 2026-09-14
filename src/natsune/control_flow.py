@@ -1,6 +1,6 @@
 import dataclasses
 from functools import cached_property
-from typing import Any, Callable, Self, Sequence
+from typing import Any, Callable, Literal, Mapping, Self, Sequence
 
 from natsune.adapters import (
     RA_VA,
@@ -12,9 +12,7 @@ from natsune.adapters import (
 from natsune.connector import (
     Connector,
     ExpansionBuilder,
-    NetTemplateBuilder,
     global_wire_lock,
-    instantiate_template,
     new_wires_cache,
     serialize_port,
 )
@@ -452,12 +450,22 @@ class Tracer:
 
 
 @dataclasses.dataclass
-class FlowVariableMap:
+class FlowMap:
     usage: dict[str, FlowRegisterUsage]
     finish_output: bool
     continue_output: bool
     break_output: bool
     return_output: bool
+
+    def __bool__(self) -> bool:
+        return any(
+            (
+                self.finish_output,
+                self.continue_output,
+                self.break_output,
+                self.return_output,
+            )
+        )
 
     def shortcut(self, flow_control: FlowControlInto) -> None:
         if not self.finish_output:
@@ -470,8 +478,8 @@ class FlowVariableMap:
             flow_control.return_value.shortcut()
         pass
 
-    def __or__(self, other: FlowVariableMap) -> FlowVariableMap:
-        return FlowVariableMap(
+    def __or__(self, other: FlowMap) -> FlowMap:
+        return FlowMap(
             {k: self.usage[k] | other.usage[k] for k in self.usage.keys()},
             self.finish_output | other.finish_output,
             self.continue_output | other.continue_output,
@@ -479,7 +487,7 @@ class FlowVariableMap:
             self.return_output | other.return_output,
         )
 
-    def update(self, other: FlowVariableMap) -> None:
+    def update(self, other: FlowMap) -> None:
         for k, v in other.usage.items():
             self.usage[k] |= v
         self.finish_output |= other.finish_output
@@ -489,7 +497,7 @@ class FlowVariableMap:
 
 
 @dataclasses.dataclass(kw_only=True)
-class VariablesFlow(NetTemplateBuilder):
+class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
     exceptions: FlowRegister = dataclasses.field(init=False)
@@ -500,11 +508,11 @@ class VariablesFlow(NetTemplateBuilder):
         default_factory=dict
     )
 
-    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
-        # Expansion-protocol conformance while grafts still hold callables
-        # (§5.1 step 3 replaces this with AgentRefs); the closure itself
-        # lives in instantiate_template, owned by the Python runtime.
-        instantiate_template(self, exec, port, wires)
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
 
     def __post_init__(self) -> None:
         self.input_adapter = FlowInput.adapter(self.variables)
@@ -524,9 +532,7 @@ class VariablesFlow(NetTemplateBuilder):
             send_value(variable_input.readout(), flow_register.interface_readin())
             variable_input.close()
 
-    def variables_readout(
-        self, flow_map: FlowVariableMap | None = None
-    ) -> FromRegister:
+    def variables_readout(self, flow_map: FlowMap | None = None) -> FromRegister:
         x1, x2 = Wire.as_interface()
         readouts: list[FromRegister] = []
 
@@ -552,8 +558,8 @@ class VariablesFlow(NetTemplateBuilder):
         )
 
     @cached_property
-    def flow_map(self) -> FlowVariableMap:
-        return FlowVariableMap(
+    def flow_map(self) -> FlowMap:
+        return FlowMap(
             {k: v.usage for k, v in self.variable_registers.items()},
             False,
             False,
@@ -563,7 +569,7 @@ class VariablesFlow(NetTemplateBuilder):
 
     def mapped_variables_readin(
         self,
-        flow_map: FlowVariableMap,
+        flow_map: FlowMap,
         target_readin: ToRegister,
     ) -> ToRegister:
         assert target_readin.connector == self
@@ -694,7 +700,7 @@ class Loop(ExpansionWithAdapters):
     orelse: VariablesFlow
 
     @cached_property
-    def flow_map(self) -> FlowVariableMap:
+    def flow_map(self) -> FlowMap:
         return self.iteration.flow_map | self.body.flow_map | self.orelse.flow_map
 
     @cached_property
@@ -933,7 +939,7 @@ class IfThenElseStatement(IfThenElseBase):
     false_case: VariablesFlow
 
     @cached_property
-    def flow_map(self) -> FlowVariableMap:
+    def flow_map(self) -> FlowMap:
         return self.true_case.flow_map | self.false_case.flow_map
 
     def invocation(

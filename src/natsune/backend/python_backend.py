@@ -1,29 +1,16 @@
-"""PythonBackend: a thin shell over the existing executor machinery.
-
-Compile-time only for now (§5): templating + declarations. Resolution of
-NetTemplate impls into live closures arrives with the recorder split
-(§5.1 steps 1–2); the runtime half is deferred (§8.1).
-"""
-
 import ast
 import dataclasses
+import threading
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable, Collection
 
-from natsune.adapters import VA, Adapter
-from natsune.backend.types import (
-    AgentDef,
-    AgentRef,
-    Artifact,
-    InetCallable,
-    LoweredUnit,
-    NetTemplate,
-    net_template_of,
-)
+from natsune.adapters import Adapter
+from natsune.backend.agents import AgentImpl, callee_invocation
 from natsune.compiler import construct_locals, eval_expression
-from natsune.connector import Connector
-from natsune.control_flow import VariablesFlow
-from natsune.invocations import merge_invocation, send_parameters
+from natsune.connector import Connector, FrozenExpansion
+from natsune.executor import Executor, ThreadPoolExecutor
+from natsune.frontend import IrFunction
+from natsune.invocations import filter_invocation, merge_invocation, send_parameters
 from natsune.registers import (
     FromRegister,
     as_constant_register,
@@ -35,64 +22,6 @@ from natsune.registers import (
 
 @dataclasses.dataclass
 class PythonBackend:
-    """The Python target, as far as declaration goes today.
-
-    ``agents`` doubles as the symbol table the §5.1 registry will formalize;
-    ``calls`` keys old-style callee objects by identity so refs stay stable
-    within a unit (cross-run stability is the §6 nondeterminism note —
-    cutover replaces refs with CompiledFunction anyway). Resolution of an
-    InetCallable lives in runtime.callee_invocation; this class owns
-    declaration only.
-    """
-
-    agents: dict[str, AgentDef] = dataclasses.field(default_factory=dict)
-    # Keyed by id(): old-style callee objects are unhashable dataclasses,
-    # and identity is exactly the sharing semantics wanted within a unit
-    # (cross-run stability is the §6 nondeterminism note — cutover
-    # replaces refs with CompiledFunction anyway).
-    calls: dict[int, AgentRef] = dataclasses.field(default_factory=dict)
-
-    def declare_agent(self, name: str, defn: AgentDef) -> AgentRef:
-        existing = self.agents.get(name)
-        if existing is not None and existing != defn:
-            raise ValueError(f"agent {name!r} already declared differently")
-        self.agents[name] = defn
-        return AgentRef(name)
-
-    def resolve_call(self, ref: Any) -> AgentRef:
-        if isinstance(ref, AgentRef):
-            return ref
-        key = id(ref)  # old-style callee objects are unhashable dataclasses
-        if key not in self.calls:
-            # Old-style __inet__ compiler object, duck-typed — no import of
-            # natsune.compiler. Copy metadata when present (§6 opaque
-            # callee refs); stable per-backend ordinal name. The args
-            # ParValueAdapter IS the multi-param interface — no unpacking.
-            # The declaration's adapters describe the CALL interface; the
-            # callee's flow interface (FlowInput/FlowControl) is a
-            # resolution detail owned by callee_invocation (§7.2a).
-            args_adapter = getattr(ref, "args_adapter", None)
-            name = f"call_{len(self.calls)}"
-            self.calls[key] = self.declare_agent(
-                name,
-                AgentDef(
-                    name,
-                    args_adapter if args_adapter is not None else VA,
-                    getattr(ref, "return_adapter", VA),
-                    InetCallable(ref),
-                ),
-            )
-        return self.calls[key]
-
-    def agent_def(self, ref: AgentRef) -> AgentDef:
-        """Registry lookup: refs are by-value handles; this is the one hop
-        from a ref back to its declaration (lowering needs the impl to
-        resolve)."""
-        defn = self.agents.get(ref.name)
-        if defn is None:
-            raise KeyError(f"unknown agent {ref.name!r}")
-        return defn
-
     def materialize_dynamic(
         self,
         node: ast.expr,
@@ -142,15 +71,46 @@ class PythonBackend:
         send_value(context, context_in)
         return result_a
 
-    def finish(self, flow: VariablesFlow, *, name: str = "main") -> Artifact:
-        body_name = f"{name}__body"
-        template = net_template_of(flow)
-        self.declare_agent(
-            body_name,
-            AgentDef(body_name, flow.input_adapter, flow.output_adapter, template),
-        )
-        return LoweredUnit(
-            name=name,
-            body=AgentRef(body_name),
-            agents=dict(self.agents),
-        )
+    def finish(
+        self,
+        func: IrFunction,
+        flow: FrozenExpansion,
+        agents: Collection[AgentImpl],
+        *,
+        name: str = "main",
+    ) -> Any:
+        return func, flow, agents
+
+
+def as_callable(
+    executor: Executor | None, func: IrFunction, flow: FrozenExpansion
+) -> Callable[..., Any]:
+    def impl(*args: Any) -> Any:
+        outputs: list = []
+        if executor is not None:
+            exec_to_use = executor
+        else:
+            exec_to_use = ThreadPoolExecutor()
+
+        inputs, output = callee_invocation(flow, len(func.params), exec_to_use)
+        for to_register, arg in zip(inputs, args, strict=True):
+            send_value(as_constant_register(arg, exec_to_use), to_register)
+
+        end_event = threading.Event()
+
+        def output_callback(x):
+            outputs.append(x)
+            end_event.set()
+
+        to_register, from_register = filter_invocation(output_callback, exec_to_use)
+        from_register.close()
+        send_value(output, to_register)
+
+        exec_to_use.run(end_event)
+
+        if not outputs:
+            raise ValueError("No output produced by the function")
+
+        return outputs[0]
+
+    return impl

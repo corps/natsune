@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable, Generator, Iterator, Self, Sequence
 from natsune.ports import (
     CombPort,
     Erasure,
+    Expansion,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
     Graft,
@@ -31,8 +32,8 @@ if TYPE_CHECKING:
 __all__ = [
     "Connector",
     "ExpansionBuilder",
-    "NetTemplateBuilder",
-    "instantiate_template",
+    "FrozenExpansion",
+    "materialize_template",
     "serialize_active_pairs",
     "serialize_port",
     "new_wires_cache",
@@ -171,7 +172,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
     elif isinstance(port, CombPort):
         front = port.label
     elif isinstance(port, Graft):
-        front = "graft" if port.agent is None else f"graft:{port.agent.name}"
+        front = "graft" if port.agent is None else f"graft:{port.agent}"
     elif isinstance(port, WirePort):
         wire_str = serialize_wire(port.wires[0], wires_cache, reverse)
         if reverse:
@@ -211,31 +212,48 @@ def new_wires_cache() -> dict[Wire, str]:
     return cache
 
 
-def freeze(obj):
-    """Freeze an existing dataclass instance in-place."""
-    cls = type(obj)
+@dataclasses.dataclass(frozen=True, slots=True)
+class FrozenExpansion(Expansion):
+    input_wire: Wire
+    output_wire: Wire
+    active_pairs: tuple[tuple[Port, Port], ...]
+    input_adapter: Adapter
+    output_adapter: Adapter
 
-    def setattr(self, name, value):
-        if name == "target":
-            raise AttributeError(f"Cannot set attribute '{name}' on frozen object")
-        return object.__setattr__(self, name, value)
+    def __copy__(self) -> Self:
+        return self
 
-    frozen_cls = type(f"Frozen{cls.__name__}", (cls,), {"__setattr__": setattr})
-    obj.__class__ = frozen_cls
-    return obj
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
+        materialize_template(
+            self.input_wire,
+            self.output_wire,
+            self.active_pairs,
+            exec,
+            port,
+            wires,
+        )
 
 
 @dataclasses.dataclass
-class NetTemplateBuilder(Connector):
-    """The target-neutral recorder half of ExpansionBuilder (§5.1): adapters,
-    interface registers, active_pairs accumulation, close/optimize. It
-    produces *data* and knows nothing about executors. Instantiating a
-    recorded template into a live connector is instantiate_template —
-    owned by the runtime, not the recorder."""
-
+class ExpansionBuilder(Connector):
     input_adapter: Adapter
     output_adapter: Adapter
     active_pairs: list[tuple[Port, Port]] = dataclasses.field(default_factory=list)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def freeze(self) -> FrozenExpansion:
+        return FrozenExpansion(
+            self.input_interface.interface,
+            self.output_interface.interface,
+            tuple(self.active_pairs),
+            self.input_adapter,
+            self.output_adapter,
+        )
 
     @cached_property
     def input_interface(self) -> FromInterfaceRegister:
@@ -265,26 +283,31 @@ class NetTemplateBuilder(Connector):
         from natsune.optimizer import optimize
 
         optimize(self, self.active_pairs)
+        self.active_pairs = tuple(self.active_pairs)  # type: ignore
 
     def __copy__(self) -> Self:
-        # Templates are shared singletons; copying yields the same template.
         return self
 
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
+        materialize_template(
+            self.input_interface.interface,
+            self.output_interface.interface,
+            self.active_pairs,
+            exec,
+            port,
+            wires,
+        )
 
-def instantiate_template(
-    template: NetTemplateBuilder,
+
+def materialize_template(
+    input_wire: Wire,
+    output_wire: Wire,
+    active_pairs: Sequence[tuple[Port, Port]],
     exec: Connector,
     port: Port,
     wires: Sequence[Wire],
     /,
 ) -> None:
-    """Copy a recorded template into a live executor — the closure §5.1
-    liberates from ExpansionBuilder.__call__. This function is what the
-    Python runtime resolves "use this template here" to; an emitter backend
-    instead walks template.active_pairs and emits source. Grafts still hold
-    callable templates until they carry AgentRefs (§5.1 step 3), so
-    ExpansionBuilder and VariablesFlow delegate __call__ here."""
-
     if isinstance(port, Erasure):
         for wire in wires:
             exec.annihilate(wire, port)
@@ -294,10 +317,10 @@ def instantiate_template(
     q: list[Port] = []
     pairs: list[tuple[Port, Port]] = []
 
-    new_inputs = copy.copy(template.input_interface.interface)
-    new_outputs = copy.copy(template.output_interface.interface)
-    new_wire_identity[template.input_interface.interface] = new_inputs
-    new_wire_identity[template.output_interface.interface] = new_outputs
+    new_inputs = copy.copy(input_wire)
+    new_outputs = copy.copy(output_wire)
+    new_wire_identity[input_wire] = new_inputs
+    new_wire_identity[output_wire] = new_outputs
 
     if new_inputs.target:
         q.append(new_inputs.target)
@@ -305,7 +328,7 @@ def instantiate_template(
     if new_outputs.target:
         q.append(new_outputs.target)
 
-    for l, r in template.active_pairs:
+    for l, r in active_pairs:
         ll = copy.copy(l)
         rr = copy.copy(r)
         pairs.append((ll, rr))
@@ -333,14 +356,3 @@ def instantiate_template(
 
     exec.connect(new_inputs, port)
     exec.connect(new_outputs, wires[0])
-
-
-@dataclasses.dataclass
-class ExpansionBuilder(NetTemplateBuilder):
-    """A recorder that is also a live Expansion (the Python-side template):
-    grafts copy it into executors per invocation, via the delegation below.
-    Once grafts carry AgentRefs (§5.1 step 3), only the runtime owns
-    instantiation and this class exists for the legacy agents."""
-
-    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
-        instantiate_template(self, exec, port, wires)

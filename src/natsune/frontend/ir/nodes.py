@@ -6,6 +6,7 @@ from typing import Any, Literal, assert_never
 
 from natsune.adapters import VA, Adapter, read_independently
 from natsune.frontend.diagnostics import Position
+from natsune.legacy import LegacyInetInterface
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -74,7 +75,7 @@ class IrBoolOp(IrNode):
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class IrCallInet(IrNode):
-    ref: Any
+    ref: LegacyInetInterface
     args: tuple[IrExpr, ...]
     arity: int
     arg_adapters: tuple[Adapter, ...]

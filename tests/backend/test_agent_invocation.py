@@ -8,9 +8,9 @@ import copy
 import pytest
 
 from natsune.adapters import VA
-from natsune.backend.agents import primitive_agents
+from natsune.backend.agents import primitive_agents, agent_invocation, callee_invocation
 from natsune.backend.python_backend import PythonBackend
-from natsune.backend.runtime import agent_invocation, callee_invocation, resolve_impl
+from natsune.backend.runtime import resolve_impl
 from natsune.backend.types import AgentDef, InetCallable, NetTemplate, Primitive
 from natsune.calculus import Calculus
 from natsune.control_flow import MergeOutputInto, Tracer

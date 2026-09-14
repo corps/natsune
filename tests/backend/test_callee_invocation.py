@@ -9,7 +9,7 @@ import pytest
 
 from natsune.adapters import VA, Variables
 from natsune.backend import PythonBackend
-from natsune.backend.runtime import callee_invocation
+from natsune.backend.agents import callee_invocation
 from natsune.backend.types import AgentDef, NetTemplate
 from natsune.compiler import InetFunctionCompiler
 from natsune.connector import serialize_active_pairs
