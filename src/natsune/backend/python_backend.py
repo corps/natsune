@@ -79,11 +79,11 @@ class PythonBackend:
         *,
         name: str = "main",
     ) -> Any:
-        return func, flow, agents
+        return name, func, flow, agents
 
 
 def as_callable(
-    executor: Executor | None, func: IrFunction, flow: FrozenExpansion
+    func: IrFunction, flow: FrozenExpansion, executor: Executor | None = None
 ) -> Callable[..., Any]:
     def impl(*args: Any) -> Any:
         outputs: list = []

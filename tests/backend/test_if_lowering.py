@@ -206,7 +206,7 @@ def _legacy_branches(source: str):
 def _new_lowering(source: str) -> _FunctionLowering:
     ir, sink = build_ir_for(source)
     assert not sink.diagnostics
-    lowering = _FunctionLowering(ir, PythonBackend())
+    lowering = lower_function(ir, PythonBackend())
     lowering.run(ir.name)
     return lowering
 
@@ -308,8 +308,6 @@ def _run(expansion, *args):
         (IS_IT_EVEN, (11,), False),
     ],
 )
-
-
 def test_differential_execution(source, args, expected):
     """The same program through the legacy compiler and through the new
     lowering must produce identical results."""

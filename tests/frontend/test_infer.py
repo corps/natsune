@@ -1,5 +1,6 @@
 import ast
 from types import SimpleNamespace
+from typing import cast, Any
 
 from natsune.adapters import VA, ParValueAdapter, adapter_from_type
 from natsune.frontend.infer import (
@@ -34,7 +35,7 @@ PAR_INT_STR = ParValueAdapter([INT, STR])
 
 def _inet_link(return_adapter) -> LinkedInet:
     return LinkedInet(
-        ref=None, arity=1, arg_adapters=(VA,), return_adapter=return_adapter
+        ref=cast(Any, None), arity=1, arg_adapters=(VA,), return_adapter=return_adapter
     )
 
 
