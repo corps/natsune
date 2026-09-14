@@ -6,6 +6,8 @@ from the protocol until §8.1 settles the artifact question; lowering never
 needed it — templates record into themselves.
 """
 
+import dataclasses
+
 import ast
 from collections.abc import Mapping
 from typing import Any, Collection, Protocol, runtime_checkable
@@ -15,6 +17,14 @@ from natsune.backend.agents import AgentImpl
 from natsune.connector import Connector, FrozenExpansion
 from natsune.frontend import IrFunction
 from natsune.registers import FromRegister
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LoweredUnit:
+    func: IrFunction
+    main: FrozenExpansion
+    agents: tuple[AgentImpl, ...]
+    name: str
 
 
 @runtime_checkable
@@ -47,9 +57,5 @@ class Backend(Protocol):
 
     def finish(
         self,
-        func: IrFunction,
-        flow: FrozenExpansion,
-        agents: Collection[AgentImpl],
-        *,
-        name: str = "main",
+        artifact: LoweredUnit,
     ) -> Any: ...

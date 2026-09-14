@@ -6,6 +6,7 @@ from typing import Any, Callable, Collection
 
 from natsune.adapters import Adapter
 from natsune.backend.agents import AgentImpl, callee_invocation
+from natsune.backend.protocol import LoweredUnit
 from natsune.compiler import construct_locals, eval_expression
 from natsune.connector import Connector, FrozenExpansion
 from natsune.executor import Executor, ThreadPoolExecutor
@@ -22,6 +23,8 @@ from natsune.registers import (
 
 @dataclasses.dataclass
 class PythonBackend:
+    executor: Executor | None = None
+
     def materialize_dynamic(
         self,
         node: ast.expr,
@@ -73,13 +76,9 @@ class PythonBackend:
 
     def finish(
         self,
-        func: IrFunction,
-        flow: FrozenExpansion,
-        agents: Collection[AgentImpl],
-        *,
-        name: str = "main",
+        artifact: LoweredUnit,
     ) -> Any:
-        return name, func, flow, agents
+        return as_callable(artifact.func, artifact.main, self.executor)
 
 
 def as_callable(

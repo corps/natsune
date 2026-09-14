@@ -12,7 +12,6 @@ from natsune.adapters import (
     ValueAdapter,
 )
 from natsune.connector import Connector
-from natsune.control_flow import SerialOr
 from natsune.ports import (
     ConstantValuePort,
     Graft,

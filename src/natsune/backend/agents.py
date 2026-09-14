@@ -1,7 +1,12 @@
 from typing import Sequence
 
 from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
-from natsune.control_flow import IfThenElseStatement
+from natsune.control_flow import (
+    IfThenElseStatement,
+    SerialOr,
+    SerialAnd,
+    CloseAfterContingent,
+)
 from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.invocations import Invocation, closer, pack_from, pack_into
 from natsune.legacy import LegacyInetInterface
@@ -13,7 +18,7 @@ from natsune.registers import (
     ToRegister,
 )
 
-type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement
+type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | SerialOr | SerialAnd | CloseAfterContingent
 
 
 def callee_invocation(

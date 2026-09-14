@@ -1,63 +1,65 @@
-"""The golden-net oracle (§6): the new lowering's recorded nets must be
-graph-for-graph identical to the legacy compiler's for the supported
-straight-line subset. Equality is exact — emission order included — since
-the lowering mirrors parse_statement_body statement-for-statement."""
+"""The oracle (§6), re-formed for the restructured lowering: the legacy
+compiler and the new lowering must agree with the source's own Python
+semantics on the supported straight-line subset.
+
+Exact net-shape equality against legacy is retired BY DESIGN: the new
+lowering sequences one VariablesFlow per statement list and catalogs
+agents after lowering (change 1 of the restructure), so recorded nets
+intentionally differ from legacy's single-flow shape. Behavioral
+equivalence with legacy — and through it, with the source — is the
+contract the oracle now checks."""
 
 import ast
-import dataclasses
 import inspect
 import linecache
 import textwrap
 
 import pytest
 
-from natsune.adapters import VA
-from natsune.backend import PythonBackend
+from natsune.backend.python_backend import PythonBackend
 from natsune.backend.lowering import _FunctionLowering, lower_function
-from natsune.backend.types import NetTemplate
 from natsune.compiler import InetFunctionCompiler
-from natsune.connector import serialize_active_pairs
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.ir import build_ir
 from natsune.frontend.link import collect_call_links
 from natsune.frontend.signature import analyze_signature
 from natsune.frontend.source import extract_source
 from natsune.frontend.symbols import collect_symbols
-from natsune.ports import Graft
 from tests.frontend.helpers import build_ir_for
 
 _CASES = [
+    # (source, args) — the expected value comes from running the source's
+    # own Python function; legacy and the new lowering must both match it.
     # dynamic return expression
-    "def f(a: int, b: int) -> int:\n    return a + b",
+    ("def f(a: int, b: int) -> int:\n    return a + b", (3, 4)),
     # assign dynamic to a local, read it back
-    "def g(a: int) -> int:\n    x = a + 1\n    return x * 2",
+    ("def g(a: int) -> int:\n    x = a + 1\n    return x * 2", (5,)),
     # augassign: fresh target, repeated rebinding
-    "def h(a: int) -> int:\n    total = 0\n    total += a\n    total += 5\n    return total",
+    ("def h(a: int) -> int:\n    total = 0\n    total += a\n    total += 5\n    return total", (7,)),
     # constants stay in the source; only the var is captured
-    "def k(a: int) -> int:\n    return -a",
+    ("def k(a: int) -> int:\n    return -a", (9,)),
     # NOTE: `return -1` is deliberately NOT here — the IR constant-folds it
     # to IrConst where legacy emitted a dynamic; see the divergence test below.
     # expression statement evaluated for effect, then discarded
-    "def p(a: int) -> None:\n    print(a)\n    print(a + 1)",
+    ("def p(a: int) -> None:\n    print(a)\n    print(a + 1)", (2,)),
     # implicit None return when the body falls through
-    "def q(a: int) -> None:\n    print(a)",
+    ("def q(a: int) -> None:\n    print(a)", (2,)),
     # bare return
-    "def r(a: int) -> None:\n    print(a)\n    return",
+    ("def r(a: int) -> None:\n    print(a)\n    return", (2,)),
     # chained assignment (legacy target-to-target chain)
-    "def s(a: int) -> int:\n    b = a + 1\n    c = b + 1\n    return c",
+    ("def s(a: int) -> int:\n    b = a + 1\n    c = b + 1\n    return c", (1,)),
     # augassign with nested dynamic value: legacy unparse parenthesizes the
     # right operand — text comes from the synthesized node, not an f-string
-    "def w(a: int) -> int:\n    x = 0\n    x += a + 1\n    return x",
+    ("def w(a: int) -> int:\n    x = 0\n    x += a + 1\n    return x", (4,)),
     # multiple statements, interleaved reads and writes
-    "def t(a: int, b: int) -> int:\n    x = a + b\n    y = x + a\n    return y + b",
+    ("def t(a: int, b: int) -> int:\n    x = a + b\n    y = x + a\n    return y + b", (2, 3)),
 ]
 
 
-def _legacy_flow(source: str):
-    filename = "case.py"
+def _exec_source(source: str, filename: str):
     text = textwrap.dedent(source)
     ns: dict = {}
-    exec(compile(text, filename, "exec"), ns)
+    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
     # The legacy compiler reads the function back through
     # inspect.getsourcelines; register the exec'd source (cf. helpers.make_source).
     linecache.cache[filename] = (
@@ -66,42 +68,104 @@ def _legacy_flow(source: str):
         text.splitlines(keepends=True),
         filename,
     )
-    func = next(v for v in ns.values() if callable(v))
-    compiler = InetFunctionCompiler(func, {}, filename)
+    return ns
+
+
+def _python_fn(source: str):
+    ns = _exec_source(source, "case.py")
+    return next(v for v in ns.values() if callable(v))
+
+
+def _legacy_flow(source: str):
+    func = _python_fn(source)
+    compiler = InetFunctionCompiler(func, {}, "case.py")
     compiler.compile()
     return compiler.compiled
 
 
-def _new_serialization(source: str) -> list[str]:
+def _new_fn(source: str):
+    """The new lowering, through the backend: lower_function returns the
+    finished artifact (a callable for the Python backend)."""
     ir, sink = build_ir_for(source)
     assert not sink.diagnostics
-    unit = lower_function(ir, PythonBackend())
-    template = unit.body_def.impl
-    assert isinstance(template, NetTemplate)
-    return serialize_active_pairs(list(template.pairs), {})
+    return lower_function(ir, PythonBackend())
 
 
-def _untag(pairs) -> list[tuple]:
-    """Strip declaration-layer agent tags so call grafts serialize exactly
-    like legacy's untagged ``graft`` — the tag is registry identity, not
-    net structure (§5.1 step 3), and the oracle compares structure."""
+class _CapturingBackend(PythonBackend):
+    """finish-capturing backend: the LoweredUnit is internal to
+    lower_function, so introspection tests recover it here — conforming
+    to the protocol, no src hooks."""
 
-    def scrub(p):
-        if isinstance(p, Graft) and p.agent is not None:
-            return dataclasses.replace(p, agent=None)
-        return p
+    def __init__(self) -> None:
+        super().__init__()
+        self.artifact = None
 
-    return [tuple(scrub(p) for p in pair) for pair in pairs]
+    def finish(self, artifact):
+        self.artifact = artifact
+        return artifact
+
+
+def _capturing_lower(source: str):
+    ir, sink = build_ir_for(source)
+    assert not sink.diagnostics
+    backend = _CapturingBackend()
+    lower_function(ir, backend)
+    assert backend.artifact is not None
+    return backend.artifact
+
+
+@pytest.mark.parametrize("source,args", _CASES)
+def test_matches_legacy_execution(source: str, args: tuple) -> None:
+    expected = _python_fn(source)(*args)
+    assert _run_legacy(_legacy_flow(source), *args) == expected
+    assert _new_fn(source)(*args) == expected
+
+
+def _run_legacy(expansion, *args):
+    """Drive a legacy-compiled flow with concrete args through a
+    deterministic executor (the inet decorator's runtime)."""
+    from natsune.control_flow_generated import FlowControlInto, FlowInputInto
+    from natsune.executor import DeterministicSerialExecutor
+    from natsune.invocations import expansion_invocation, filter_invocation
+    from natsune.registers import as_constant_register, send_value
+
+    import threading
+
+    exec = DeterministicSerialExecutor()
+
+    with expansion_invocation(
+        expansion, exec, FlowInputInto, FlowControlInto
+    ) as invocation:
+        variable_inputs = invocation.port.variables.readin().split()
+        variable_inputs[0].close()
+        for extra in variable_inputs[len(args) + 1 :]:
+            extra.close()
+        for register, arg in zip(variable_inputs[1 : len(args) + 1], args, strict=True):
+            send_value(as_constant_register(arg, exec), register)
+
+        outputs: list = []
+        end_event = threading.Event()
+
+        def output_callback(x):
+            outputs.append(x)
+            end_event.set()
+
+        to_register, from_register = filter_invocation(output_callback, exec)
+        from_register.close()
+        send_value(invocation.wire.return_value.readout(), to_register)
+
+    exec.run(end_event)
+    if not outputs:
+        raise ValueError("No output produced by the function")
+    return outputs[0]
 
 
 _CALL_CASES = [
-    # single call, plain arg. NOTE on naming: legacy FlowVariableMap.update
-    # (control_flow.py:483) requires every callee variable name to already
-    # exist in the caller's map — a legacy constraint that only holds when
-    # names coincide (the legacy suite's call sites all do). The new
-    # lowering skips that side effect by design (§7.2a), so it doesn't
-    # inherit the constraint; these cases name variables to keep the
-    # legacy side compilable, which the oracle needs for comparison.
+    # (caller, source, args). NOTE on naming: legacy FlowVariableMap.update
+    # requires every callee variable name to already exist in the caller's
+    # map — a legacy constraint that only holds when names coincide (the
+    # legacy suite's call sites all do). These cases name variables to keep
+    # the legacy side compilable, which the comparison needs.
     (
         "f",
         "def f(a: int) -> int:\n"
@@ -110,8 +174,9 @@ _CALL_CASES = [
         "\n"
         "def inc(a: int) -> int:\n"
         "    return a + 1",
+        (2,),
     ),
-    # call result into a local; two call sites share one declaration
+    # call result into a local; two call sites share one callee
     (
         "f",
         "def f(a: int, b: int) -> int:\n"
@@ -120,9 +185,9 @@ _CALL_CASES = [
         "\n"
         "def add(a: int, b: int) -> int:\n"
         "    return a + b",
+        (2, 3),
     ),
-    # callee with its own local (exercises the extras-closing branch of
-    # the register sort on both sides)
+    # callee with its own local
     (
         "f",
         "def f(a: int) -> int:\n"
@@ -132,27 +197,17 @@ _CALL_CASES = [
         "def step(a: int) -> int:\n"
         "    b = a + 1\n"
         "    return b * 2",
+        (3,),
     ),
 ]
 
 
-def _call_case_serialization(caller: str, source: str) -> tuple[list[str], list[str]]:
-    """Compile a multi-function snippet both ways. The callee is legacy-
-    compiled and __inet__-attached first (exactly what @inet does), so the
-    caller links against a legacy callee — the prototype's only linkable
-    kind (new-lowered callees linking to each other are cutover territory,
-    §7.4)."""
+def _legacy_caller_callable(caller: str, source: str):
+    """Compile a multi-function snippet the legacy way: the callee is
+    legacy-compiled and __inet__-attached first (exactly what @inet does),
+    so the caller links against a legacy callee."""
     filename = "call_case.py"
-    text = textwrap.dedent(source)
-    ns: dict = {}
-    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
-    linecache.cache[filename] = (
-        len(text),
-        None,
-        text.splitlines(keepends=True),
-        filename,
-    )
-
+    ns = _exec_source(source, filename)
     callee_name = next(
         n for n, v in ns.items() if n != caller and inspect.isfunction(v)
     )
@@ -162,44 +217,26 @@ def _call_case_serialization(caller: str, source: str) -> tuple[list[str], list[
 
     legacy = InetFunctionCompiler(ns[caller], ns, filename)
     legacy.compile()
-    old = serialize_active_pairs(list(legacy.compiled.active_pairs), {})
-
-    src = extract_source(ns[caller], globals=ns, filename=filename)
-    signature = analyze_signature(src, DiagnosticSink())
-    symbols = collect_symbols(src, signature, DiagnosticSink())
-    links = collect_call_links(src.func_def.body, ns)
-    sink = DiagnosticSink()
-    ir = build_ir(src, signature, symbols, links, sink)
-    assert not sink.diagnostics
-    unit = lower_function(ir, PythonBackend())
-    template = unit.body_def.impl
-    assert isinstance(template, NetTemplate)
-    return old, serialize_active_pairs(_untag(template.pairs), {})
+    return legacy.compiled
 
 
-@pytest.mark.parametrize("caller,source", _CALL_CASES)
-def test_golden_net_calls(caller: str, source: str) -> None:
-    old, new = _call_case_serialization(caller, source)
-    assert new == old
+@pytest.mark.parametrize("caller,source,args", _CALL_CASES)
+def test_call_cases_match_legacy_execution(caller: str, source: str, args: tuple) -> None:
+    expected = _python_fn(source)[caller](*args)
+    assert _run_legacy(_legacy_caller_callable(caller, source), *args) == expected
+    assert _new_fn(source)(*args) == expected
 
 
-@pytest.mark.parametrize("source", _CASES)
-def test_golden_net(source: str) -> None:
-    old = serialize_active_pairs(list(_legacy_flow(source).active_pairs), {})
-    new = _new_serialization(source)
-    assert new == old
-
-
-def test_folded_unary_const_is_a_deliberate_divergence():
-    # First recorded golden-net divergence. The IR folds `-1` to IrConst
-    # (mirroring CPython's own optimizer), so the new lowering wires a bare
-    # constant; legacy emitted a dynamic eval net for the same source. The
-    # IR is the spec — old behavior is reference, not law (§6).
+def test_folded_unary_const_lowers_without_agents():
+    # Recorded golden-net divergence, re-formed for the restructure. The
+    # IR folds `-1` to IrConst (mirroring CPython's own optimizer), so the
+    # lowered main flow wires a bare constant: the post-hoc agent catalog —
+    # walked from the recorded graph — finds no agent machinery at all.
+    # The IR is the spec — old behavior is reference, not law (§6).
     source = "def m(a: int) -> int:\n    return -1"
-    old = serialize_active_pairs(list(_legacy_flow(source).active_pairs), {})
-    new = _new_serialization(source)
-    assert old and "-1 = " in old[0]
-    assert new == []
+    unit = _capturing_lower(source)
+    assert unit.agents == ()
+    assert _new_fn(source)(5) == -1
 
 
 def test_augassign_synthesizes_binop_node():
@@ -253,15 +290,7 @@ def test_variable_collection_matches_legacy(source: str) -> None:
     The new walk is recursive over targets and nested bodies, so it collects
     exactly the names legacy's recursive visitor does."""
     filename = "collection.py"
-    text = textwrap.dedent(source)
-    ns: dict = {}
-    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
-    linecache.cache[filename] = (
-        len(text),
-        None,
-        text.splitlines(keepends=True),
-        filename,
-    )
+    ns = _exec_source(source, filename)
     func = next(v for v in ns.values() if callable(v))
     legacy = InetFunctionCompiler(func, {}, filename)
     legacy.compile()

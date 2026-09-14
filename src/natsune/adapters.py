@@ -106,6 +106,9 @@ class ValueAdapter(Adapter):
 class ParValueAdapter(Adapter):
     concurrent_items: Sequence[Adapter]
 
+    def __hash__(self) -> int:
+        return hash(tuple(self.concurrent_items))
+
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
         if initial is not None:
             raise ValueError("Initial value not supported for par")

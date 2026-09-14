@@ -669,7 +669,7 @@ class ExceptionSink:
         self.ref_adapter.close(a, executor)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
 class CloseAfterContingent(ExpansionWithAdapters):
     left: Adapter
     right: Adapter

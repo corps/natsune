@@ -30,7 +30,7 @@ class ControlBranchFlow:
         finish_variables = self.containing_flow.variables_readout(
             FlowMap(
                 {
-                    v: (
+                    k: (
                         FlowRegisterUsage(flow_write=True)
                         if v == "write"
                         else FlowRegisterUsage(flow_read=True)
@@ -111,7 +111,7 @@ class ControlBranchFlow:
             self.containing_flow.mapped_variables_readin(
                 FlowMap(
                     {
-                        v: (
+                        k: (
                             FlowRegisterUsage(flow_write=True)
                             if v == "write"
                             else FlowRegisterUsage(flow_read=True)

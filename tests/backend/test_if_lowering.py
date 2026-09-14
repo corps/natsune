@@ -1,22 +1,19 @@
-"""§7.2b slice 1: IrIf lowering under the per-branch scheme.
+"""§7.2b: IrIf lowering under the per-branch scheme, reconciled to the
+restructured lowering (statement-per-flow sequencing, ControlBranchFlow,
+post-hoc agent catalog).
 
-The union is never formed: the parent wires the full variables bundle
-into the composite context (every cell extended), each branch body is a
-self-contained flow whose fall-through emits every variable's final
-state, and the taken branch's bundle feeds the parent's extended cells.
-Consequences (§6/§7.2b):
-- composite-level pair-equality with legacy is abandoned by design —
-  legacy classified its context from the union; we don't classify at all;
-- branch BODIES are still plain flows lowered by the same statement
-  machinery as the straight-line slice, so they remain pair-comparable
-  with the legacy branch flows (asserted here; the legacy reference is
-  reconstructed via InetBranchCompiler because the compiled parent net's
-  optimize pass inlines branch bodies and dissolves the composite);
-- the decisive check is differential execution: the same program run
-  through the legacy compiler and through the new lowering must produce
-  identical results. The driver below is the §8.1 runtime in miniature
-  (graft a flow into an executor, feed args, collect the return) —
-  executing from the data-only NetTemplate lands with §8.1.
+- Legacy remains the behavioral oracle wherever it works: the same
+  program through the legacy compiler and through the new lowering must
+  produce identical results (two legacy divergences are pinned below and
+  asserted directly against expected values, §6: the IR is the spec).
+- Composite introspection recovers the LoweredUnit through a
+  finish-capturing backend (the unit is internal to lower_function);
+  branch bodies remain plain flows, so they stay pair-comparable with
+  the legacy branch flows (reconstructed via InetBranchCompiler, since
+  the compiled parent net inlines branch bodies).
+- The old tagged-graft serialization test is retired: agent labeling is
+  post-hoc now (the catalog is walked from the recorded graph), so there
+  are no intermediate graft tags to assert.
 """
 
 import ast
@@ -27,17 +24,12 @@ import threading
 import pytest
 
 from natsune.adapters import Variables, adapter_from_type
-from natsune.backend import PythonBackend
-from natsune.backend.lowering import _FunctionLowering, lower_function
-from natsune.backend.types import InetCallable
+from natsune.backend.python_backend import PythonBackend
+from natsune.backend.lowering import lower_function
 from natsune.compiler import InetBranchCompiler, InetFunctionCompiler
 from natsune.connector import serialize_active_pairs
-from natsune.control_flow import (
-    FlowControlInto,
-    FlowInputInto,
-    IfThenElseStatement,
-    VariablesFlow,
-)
+from natsune.control_flow import IfThenElseStatement, VariablesFlow
+from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.executor import DeterministicSerialExecutor
 from natsune.invocations import expansion_invocation, filter_invocation
 from natsune.registers import as_constant_register, send_value
@@ -84,9 +76,9 @@ def k(a: int) -> int:
     return y
 """
 
-# Slice 2: every branch returns — the if is the body's closer, the
-# composite's return is the only return source, and the implicit-None
-# tail must not fire on top of it.
+# Slice 2: every branch returns — the if closes the list, the composite's
+# return is the only return source, and the implicit-None tail must not
+# fire on top of it.
 BOTH_RETURN = """
 def r(a: int) -> int:
     if a > 0:
@@ -113,14 +105,6 @@ def is_it_even(input: int) -> bool:
     return False
 """
 
-# Mixed with NO trailing return: the implicit-None tail is what gets
-# absorbed into the fall-through branch.
-MIXED_IMPLICIT_NONE = """
-def t(a: int) -> int:
-    if a > 0:
-        return 1
-"""
-
 # Mixed where the fall-through branch keeps computing after the if; the
 # trailing region is absorbed past it.
 MIXED_THEN_TAIL = """
@@ -130,6 +114,14 @@ def s(a: int) -> int:
         return 1
     x = x + a
     return x
+"""
+
+# Mixed with NO trailing return: the implicit-None tail is what gets
+# absorbed into the fall-through branch.
+MIXED_IMPLICIT_NONE = """
+def t(a: int) -> int:
+    if a > 0:
+        return 1
 """
 
 NESTED_BOTH_RETURN = """
@@ -145,8 +137,7 @@ def n(a: int, b: int) -> int:
 
 # Mixed via nesting: the inner if returns through one branch and falls
 # through the other; the outer falls through its then-branch into the
-# tail return. The absorbed copy of the tail lands inside the outer's
-# then-branch, after the inner composite.
+# tail return.
 MIXED_NESTED = """
 def m(a: int, b: int) -> int:
     x = 0
@@ -203,56 +194,49 @@ def _legacy_branches(source: str):
     return branches
 
 
-def _new_lowering(source: str) -> _FunctionLowering:
+def _new_fn(source: str):
+    """The new lowering, through the backend: lower_function returns the
+    finished artifact (a callable for the Python backend)."""
     ir, sink = build_ir_for(source)
     assert not sink.diagnostics
-    lowering = lower_function(ir, PythonBackend())
-    lowering.run(ir.name)
-    return lowering
+    return lower_function(ir, PythonBackend())
 
 
-def _our_composite(lowering: _FunctionLowering) -> IfThenElseStatement:
-    assert isinstance(lowering.backend, PythonBackend)
-    impl = lowering.backend.agents["if_0"].impl
-    assert isinstance(impl, InetCallable)
-    return impl.ref
+class _CapturingBackend(PythonBackend):
+    """finish-capturing backend: the LoweredUnit is internal to
+    lower_function, so introspection tests recover it here — conforming
+    to the protocol, no src hooks."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.artifact = None
+
+    def finish(self, artifact):
+        self.artifact = artifact
+        return artifact
+
+
+def _capturing_lower(source: str):
+    ir, sink = build_ir_for(source)
+    assert not sink.diagnostics
+    backend = _CapturingBackend()
+    lower_function(ir, backend)
+    assert backend.artifact is not None
+    return backend.artifact
+
+
+def _our_composite(unit) -> IfThenElseStatement:
+    """The lowered if composite, from the post-hoc agent catalog."""
+    return next(a for a in unit.agents if isinstance(a, IfThenElseStatement))
 
 
 def _serialize(flow) -> list[str]:
     return serialize_active_pairs(list(flow.active_pairs), {})
 
 
-def test_branch_bodies_match_legacy():
-    """Branch bodies are plain flows: their recorded nets must be
-    graph-for-graph identical to the legacy branch flows."""
-    legacy_then, legacy_else = _legacy_branches(textwrap.dedent(IF_ELSE))
-    composite = _our_composite(_new_lowering(textwrap.dedent(IF_ELSE)))
-
-    assert _serialize(composite.true_case) == _serialize(legacy_then)
-    assert _serialize(composite.false_case) == _serialize(legacy_else)
-
-
-def test_branch_local_variable_matches_legacy():
-    """Same, for a variable declared inside the branches only: the bundle
-    comes from the recursive collection walk, so both sides carry y."""
-    legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BRANCH_LOCAL))
-    composite = _our_composite(_new_lowering(textwrap.dedent(BRANCH_LOCAL)))
-
-    assert _serialize(composite.true_case) == _serialize(legacy_then)
-    assert _serialize(composite.false_case) == _serialize(legacy_else)
-
-
-def test_parent_net_carries_tagged_composite():
-    lowering = _new_lowering(textwrap.dedent(IF_ELSE))
-    rendered = "\n".join(_serialize(lowering.flow))
-    assert "graft:if_0" in rendered
-
-
-def _run(expansion, *args):
-    """Drive a compiled flow with concrete args through a deterministic
-    executor (mirrors the inet decorator's runtime). Executing from the
-    data-only NetTemplate lands with the §8.1 runtime — the driver needs
-    the live flow's interface wires."""
+def _run_legacy(expansion, *args):
+    """Drive a legacy-compiled flow with concrete args through a
+    deterministic executor (mirrors the inet decorator's runtime)."""
     exec = DeterministicSerialExecutor()
 
     with expansion_invocation(
@@ -280,6 +264,26 @@ def _run(expansion, *args):
     if not outputs:
         raise ValueError("No output produced by the function")
     return outputs[0]
+
+
+def test_branch_bodies_match_legacy():
+    """Branch bodies are plain flows: their recorded nets must be
+    graph-for-graph identical to the legacy branch flows."""
+    legacy_then, legacy_else = _legacy_branches(textwrap.dedent(IF_ELSE))
+    composite = _our_composite(_capturing_lower(textwrap.dedent(IF_ELSE)))
+
+    assert _serialize(composite.true_case) == _serialize(legacy_then)
+    assert _serialize(composite.false_case) == _serialize(legacy_else)
+
+
+def test_branch_local_variable_matches_legacy():
+    """Same, for a variable declared inside the branches only: the bundle
+    comes from the recursive collection walk, so both sides carry y."""
+    legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BRANCH_LOCAL))
+    composite = _our_composite(_capturing_lower(textwrap.dedent(BRANCH_LOCAL)))
+
+    assert _serialize(composite.true_case) == _serialize(legacy_then)
+    assert _serialize(composite.false_case) == _serialize(legacy_else)
 
 
 @pytest.mark.parametrize(
@@ -311,25 +315,11 @@ def _run(expansion, *args):
 def test_differential_execution(source, args, expected):
     """The same program through the legacy compiler and through the new
     lowering must produce identical results."""
-    legacy = _run(_legacy_flow(source), *args)
-    lowering = _new_lowering(source)
-    ours = _run(lowering.flow, *args)
+    legacy = _run_legacy(_legacy_flow(source), *args)
+    ours = _new_fn(source)(*args)
 
     assert legacy == expected
     assert ours == expected
-
-
-def test_mixed_implicit_none_tail():
-    """A mixed if with NO trailing return: the implicit-None tail is
-    absorbed into the fall-through branch.
-
-    Deliberate oracle divergence (§6: the IR is the spec): legacy produces
-    NO output on the fall-through path here — its wire_continuation
-    starves when the continuation is the implicit-None tail — so the
-    expected values are asserted directly."""
-    lowering = _new_lowering(textwrap.dedent(MIXED_IMPLICIT_NONE))
-    assert _run(lowering.flow, 5) == 1
-    assert _run(lowering.flow, -5) is None
 
 
 def test_nested_both_return_differential():
@@ -341,22 +331,30 @@ def test_nested_both_return_differential():
     composite sits between it and the branch return — so legacy cannot
     serve as the oracle here and the expected values are asserted
     directly."""
-    lowering = _new_lowering(textwrap.dedent(NESTED_BOTH_RETURN))
-    assert _run(lowering.flow, 1, 1) == 1
-    assert _run(lowering.flow, 1, -1) == 2
-    assert _run(lowering.flow, -1, 5) == 3
+    ours = _new_fn(textwrap.dedent(NESTED_BOTH_RETURN))
+    assert ours(1, 1) == 1
+    assert ours(1, -1) == 2
+    assert ours(-1, 5) == 3
+
+
+def test_mixed_implicit_none_tail():
+    """A mixed if with NO trailing return: the implicit-None tail is
+    absorbed into the fall-through branch.
+
+    Deliberate oracle divergence (§6: the IR is the spec): legacy produces
+    NO output on the fall-through path here — its wire_continuation
+    starves when the continuation is the implicit-None tail — so the
+    expected values are asserted directly."""
+    ours = _new_fn(textwrap.dedent(MIXED_IMPLICIT_NONE))
+    assert ours(5) == 1
+    assert ours(-5) is None
 
 
 def test_branch_bodies_match_legacy_both_return():
     """Slice 2: returning branch bodies are pair-identical to legacy's
     (both skip the finish tail when the body closed)."""
     legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BOTH_RETURN))
-    composite = _our_composite(_new_lowering(textwrap.dedent(BOTH_RETURN)))
+    composite = _our_composite(_capturing_lower(textwrap.dedent(BOTH_RETURN)))
 
     assert _serialize(composite.true_case) == _serialize(legacy_then)
     assert _serialize(composite.false_case) == _serialize(legacy_else)
-
-
-# break/continue outside loops never reach lowering: the frontend
-# rejects them at build time (IrStructureError), so there is no
-# lowering-level refusal left to test after slice 2b.

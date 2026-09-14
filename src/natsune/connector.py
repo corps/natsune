@@ -172,7 +172,7 @@ def serialize_port(port: Port, wires_cache: dict[Wire, str], reverse: bool) -> s
     elif isinstance(port, CombPort):
         front = port.label
     elif isinstance(port, Graft):
-        front = "graft" if port.agent is None else f"graft:{port.agent}"
+        front = "graft"
     elif isinstance(port, WirePort):
         wire_str = serialize_wire(port.wires[0], wires_cache, reverse)
         if reverse:

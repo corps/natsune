@@ -7,11 +7,14 @@ from natsune.backend.agents import (
     callee_invocation,
 )
 from natsune.backend.control_branch_flow import ControlBranchFlow
-from natsune.backend.protocol import Backend
+from natsune.backend.protocol import Backend, LoweredUnit
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import (
     IfThenElseStatement,
     VariablesFlow,
+    SerialOr,
+    SerialAnd,
+    CloseAfterContingent,
 )
 from natsune.frontend.ir import IrBody, IrFunction
 from natsune.frontend.ir.nodes import (
@@ -35,7 +38,8 @@ from natsune.frontend.ir.nodes import (
     IrWhile,
 )
 from natsune.invocations import closer
-from natsune.ports import Expansion, Graft
+from natsune.legacy import LegacyInetInterface
+from natsune.ports import Expansion, Graft, Port, WirePort, Target, Wire
 from natsune.registers import (
     FromRegister,
     as_constant_register,
@@ -57,37 +61,52 @@ class _FunctionLowering:
 
     def run(self) -> Any:
         flow = self.branch_flow(self.ir.body, default_return_none=True)
+
+        seen_agents = self.walk_agents(flow)
+
+        return self.backend.finish(
+            LoweredUnit(self.ir, flow.freeze(), tuple(seen_agents), self.ir.name)
+        )
+
+    def walk_agents(
+        self, flow: VariablesFlow
+    ) -> set[ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | SerialOr]:
+        targets: list[Target] = []
         seen_agents: set[AgentImpl] = set()
-        expansions: list[Expansion] = [
-            p.execute
-            for pair in flow.active_pairs
-            for p in pair
-            if isinstance(p, Graft)
-        ]
+        expansions: list[Expansion] = [flow]
 
         while expansions:
             expansion = expansions.pop()
             if isinstance(expansion, ExpansionBuilder):
                 if expansion not in seen_agents:
-                    expansions.extend(
-                        p.execute
-                        for pair in expansion.active_pairs
-                        for p in pair
-                        if isinstance(p, Graft)
-                    )
+                    targets.extend(p for pair in expansion.active_pairs for p in pair)
+                    targets.append(expansion.input_interface.interface)
+                    targets.append(expansion.output_interface.interface)
                     seen_agents.add(expansion)
             elif isinstance(expansion, IfThenElseStatement):
                 if expansion not in seen_agents:
                     expansions.extend((expansion.true_case, expansion.false_case))
+                    seen_agents.add(expansion)
+            elif isinstance(expansion, (SerialOr, SerialAnd, CloseAfterContingent)):
+                if expansion not in seen_agents:
                     seen_agents.add(expansion)
             else:
                 raise NotImplementedError(
                     f"Compiled graft agent {expansion} not implemented in lowering"
                 )
 
-        return self.backend.finish(
-            self.ir, flow.freeze(), [*seen_agents], name=self.ir.name
-        )
+            while targets:
+                target = targets.pop()
+
+                if isinstance(target, Graft):
+                    expansions.append(target.execute)
+
+                if isinstance(target, Port):
+                    targets.extend(target.wires)
+                elif isinstance(target, Wire):
+                    if target.target:
+                        targets.append(target.target)
+        return seen_agents
 
     def collect_variables(self) -> dict[str, Adapter]:
         """Params first, then locals in statement order — mirroring the old

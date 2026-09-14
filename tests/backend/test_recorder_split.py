@@ -1,75 +1,74 @@
-"""§5.1 steps 1–2: the recorder split. NetTemplateBuilder records data and
-knows nothing about executors; instantiate_template is the liberated
-closure; ExpansionBuilder/VariablesFlow delegate __call__ to it until
-grafts carry AgentRefs (step 3)."""
+"""§5.1 steps 1–2, post-restructure: ExpansionBuilder is the pure
+recorder; freeze() extracts a FrozenExpansion (a data-only template) and
+its __call__ (materialize_template) is the liberated closure that replays
+the recorded pairs into any connector. VariablesFlow delegates __call__
+through the same machinery."""
 
 from natsune.adapters import VA, Variables
-from natsune.backend.types import net_template_of
-from natsune.connector import (
-    ExpansionBuilder,
-    NetTemplateBuilder,
-    instantiate_template,
-    serialize_active_pairs,
-)
+from natsune.connector import ExpansionBuilder, serialize_active_pairs
 from natsune.compiler import inet
 from natsune.control_flow import VariablesFlow
 from natsune.ports import ConstantValuePort, Wire
 
 
-def _recorded(builder_cls):
-    b = builder_cls(VA, VA)
+def _recorded():
+    b = ExpansionBuilder(VA, VA)
     b.duplicate(ConstantValuePort(7))
     b.duplicate(ConstantValuePort(9))
     return b
 
 
-def test_recorder_has_no_closure():
-    assert not callable(NetTemplateBuilder(VA, VA))
-    # Expansion-compatible by delegation until grafts carry AgentRefs.
-    assert callable(ExpansionBuilder(VA, VA))
-    flow = VariablesFlow(variables=Variables({"a": VA}), return_adapter=VA)
-    assert callable(flow)
+def test_builder_records_data():
+    """The recorder is data-only: recording produces pairs, and the
+    frozen template carries exactly the recorded pairs."""
+    builder = _recorded()
+    frozen = builder.freeze()
+    assert frozen.active_pairs == tuple(builder.active_pairs)
+    assert frozen.input_adapter is VA
+    assert frozen.output_adapter is VA
 
 
-def test_instantiate_template_matches_method_delegation():
-    template = _recorded(ExpansionBuilder)
-    a = NetTemplateBuilder(VA, VA)
-    instantiate_template(template, a, ConstantValuePort(1), [Wire(), Wire()])
-    b = NetTemplateBuilder(VA, VA)
-    template(b, ConstantValuePort(1), [Wire(), Wire()])
+def test_frozen_expansion_replays_into_any_connector():
+    frozen = _recorded().freeze()
+    a = ExpansionBuilder(VA, VA)
+    frozen(a, ConstantValuePort(1), [Wire(), Wire()])
+    b = ExpansionBuilder(VA, VA)
+    frozen(b, ConstantValuePort(1), [Wire(), Wire()])
     assert serialize_active_pairs(a.active_pairs, {}) == serialize_active_pairs(
         b.active_pairs, {}
     )
 
 
-def test_instantiate_copies_without_consuming_source():
-    template = _recorded(NetTemplateBuilder)
-    target = NetTemplateBuilder(VA, VA)
-    instantiate_template(template, target, ConstantValuePort(1), [Wire(), Wire()])
-    assert len(target.active_pairs) == len(template.active_pairs) > 0
+def test_freeze_does_not_consume_the_source():
+    builder = _recorded()
+    frozen = builder.freeze()
+    target = ExpansionBuilder(VA, VA)
+    frozen(target, ConstantValuePort(1), [Wire(), Wire()])
+    assert len(target.active_pairs) == len(builder.active_pairs) > 0
 
-    # The source is untouched: instantiating again produces the same shape.
-    again = NetTemplateBuilder(VA, VA)
-    instantiate_template(template, again, ConstantValuePort(1), [Wire(), Wire()])
+    # The source is untouched: freezing and replaying again produces the
+    # same shape.
+    again = builder.freeze()
+    other = ExpansionBuilder(VA, VA)
+    again(other, ConstantValuePort(1), [Wire(), Wire()])
     assert serialize_active_pairs(target.active_pairs, {}) == serialize_active_pairs(
-        again.active_pairs, {}
+        other.active_pairs, {}
     )
 
 
-def test_net_template_of_extracts_data():
-    template = _recorded(NetTemplateBuilder)
-    nt = net_template_of(template)
-    assert nt.input_adapter is VA
-    assert nt.output_adapter is VA
-    assert nt.pairs == tuple(template.active_pairs)
+def test_flows_stay_callable_expansions():
+    """VariablesFlow remains an Expansion (dispatch-protocol conformance):
+    the Python runtime resolves it by calling the frozen replay."""
+    flow = VariablesFlow(variables=Variables({"a": VA}), return_adapter=VA)
+    assert callable(flow)
 
 
 # Runtime contract: a legacy compiled function executes through the
-# delegated closure (Graft -> VariablesFlow.__call__ -> instantiate_template).
+# frozen-closure machinery (Graft -> FrozenExpansion -> materialize_template).
 @inet()
 def _double(x: int) -> int:
     return x + x
 
 
-def test_legacy_call_runs_through_delegated_closure():
+def test_legacy_call_runs_through_the_frozen_closure():
     assert _double(21) == 42
