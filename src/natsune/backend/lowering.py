@@ -59,7 +59,7 @@ class _FunctionLowering:
         self.variables = self.collect_variables()
 
     def run(self) -> Any:
-        flow = self.branch_flow(self.ir.body, default_return_none=True)
+        flow = self.branch_flow(self.ir.body, exits=self.ir.exits)
 
         seen_agents = self.walk_agents(flow)
 
@@ -152,7 +152,7 @@ class _FunctionLowering:
         branch_flow: ControlBranchFlow,
         body: IrBody,
         *,
-        default_return_none: bool = False,
+        exits: Exits,
     ) -> None:
         flow = self.new_flow(branch_flow)
 
@@ -191,22 +191,23 @@ class _FunctionLowering:
                     "composite prototype"
                 )
 
-        if default_return_none:
-            send_value(
-                as_constant_register(None, flow),
-                flow.control_output.return_value.readin(),
-            )
-        else:
+        if exits & Exits.FALLTHROUGH:
             send_value(
                 flow.variables_readout(),
                 flow.control_output.finish_variables.readin(),
+            )
+        else:
+            assert exits & Exits.RETURN
+            send_value(
+                as_constant_register(None, flow),
+                flow.control_output.return_value.readin(),
             )
 
         flow.close()
 
     def lower_if(self, flow: VariablesFlow, stmt: IrIf) -> None:
-        true_flow = self.branch_flow(stmt.then_body, default_return_none=False)
-        false_flow = self.branch_flow(stmt.else_body, default_return_none=False)
+        true_flow = self.branch_flow(stmt.then_body, exits=stmt.then_body.exits)
+        false_flow = self.branch_flow(stmt.else_body, exits=stmt.else_body.exits)
         if_agent = IfThenElseStatement(true_case=true_flow, false_case=false_flow)
 
         with if_agent.invocation(flow) as if_invocation:
@@ -257,13 +258,11 @@ class _FunctionLowering:
         else:
             return branching_flow.apply_new_layer()
 
-    def branch_flow(self, body: IrBody, *, default_return_none: bool) -> VariablesFlow:
+    def branch_flow(self, body: IrBody, *, exits: Exits) -> VariablesFlow:
         with ControlBranchFlow(
-            self.new_flow(), body.variable_usage, body.exits
+            self.new_flow(), body.variable_usage, exits
         ) as branch_flow:
-            self.lower_statements(
-                branch_flow, body, default_return_none=default_return_none
-            )
+            self.lower_statements(branch_flow, body, exits=exits)
         return branch_flow.containing_flow
 
     def lower_assign(self, stmt: IrAssign, flow: VariablesFlow) -> None:

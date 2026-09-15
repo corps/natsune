@@ -255,7 +255,11 @@ class IrFunction(IrNode):
 
     @property
     def exits(self) -> Exits:
-        return self.body.exits
+        result = self.body.exits
+        if result & Exits.FALLTHROUGH:
+            result |= Exits.RETURN
+            result &= ~Exits.FALLTHROUGH
+        return result
 
 
 def iter_child_expressions(node: IrExpr | IrStmt) -> Iterator[IrExpr]:
