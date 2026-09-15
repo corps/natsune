@@ -158,6 +158,7 @@ class _FunctionLowering:
 
         for index, stmt in enumerate(body.statements):
             if isinstance(stmt, IrReturn):
+                assert body.closer is stmt
                 if stmt.value is None:
                     # Old bare return: evaluate_from_expression(None)
                     send_value(
@@ -191,17 +192,18 @@ class _FunctionLowering:
                     "composite prototype"
                 )
 
-        if exits & Exits.FALLTHROUGH:
-            send_value(
-                flow.variables_readout(),
-                flow.control_output.finish_variables.readin(),
-            )
-        else:
-            assert exits & Exits.RETURN
-            send_value(
-                as_constant_register(None, flow),
-                flow.control_output.return_value.readin(),
-            )
+        if body.closer is None:
+            if exits & Exits.FALLTHROUGH:
+                send_value(
+                    flow.variables_readout(),
+                    flow.control_output.finish_variables.readin(),
+                )
+            else:
+                assert exits & Exits.RETURN
+                send_value(
+                    as_constant_register(None, flow),
+                    flow.control_output.return_value.readin(),
+                )
 
         flow.close()
 

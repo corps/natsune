@@ -4,17 +4,24 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Callable, Collection
 
-from natsune.adapters import Adapter
+from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.backend.agents import AgentImpl, callee_invocation
 from natsune.backend.protocol import LoweredUnit
 from natsune.compiler import construct_locals, eval_expression
 from natsune.connector import Connector, FrozenExpansion
 from natsune.executor import Executor, ThreadPoolExecutor
 from natsune.frontend import IrFunction
-from natsune.invocations import filter_invocation, merge_invocation, send_parameters
+from natsune.invocations import (
+    catch,
+    filter_invocation,
+    merge_invocation,
+    send_parameters,
+)
+from natsune.ports import Erasure, Graft
 from natsune.registers import (
     FromRegister,
     as_constant_register,
+    as_to_register,
     borrow_registers,
     send_value,
     serialize_values,
@@ -102,13 +109,21 @@ def as_callable(
             end_event.set()
 
         to_register, from_register = filter_invocation(output_callback, exec_to_use)
-        from_register.close()
+        send_value(
+            from_register,
+            as_to_register(Graft(catch(output_callback), []), VA, exec_to_use),
+        )
         send_value(output, to_register)
 
         exec_to_use.run(end_event)
 
         if not outputs:
             raise ValueError("No output produced by the function")
+
+        if isinstance(outputs[0], Erasure):
+            if isinstance(outputs[0].value, Exception):
+                raise outputs[0].value
+            raise RuntimeError("Unexpected runtime error: " + str(outputs[0].value))
 
         return outputs[0]
 

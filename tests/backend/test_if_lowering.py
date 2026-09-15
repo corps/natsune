@@ -27,7 +27,7 @@ from natsune.adapters import Variables, adapter_from_type
 from natsune.backend.python_backend import PythonBackend
 from natsune.backend.lowering import lower_function
 from natsune.compiler import InetBranchCompiler, InetFunctionCompiler
-from natsune.connector import serialize_active_pairs
+from natsune.connector import Graft, serialize_active_pairs
 from natsune.control_flow import IfThenElseStatement, VariablesFlow
 from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.executor import DeterministicSerialExecutor
@@ -230,6 +230,24 @@ def _our_composite(unit) -> IfThenElseStatement:
     return next(a for a in unit.agents if isinstance(a, IfThenElseStatement))
 
 
+def _branch_children(unit) -> list[VariablesFlow]:
+    """The statement flows behind the composite's branches, in then/else
+    order. Under the restructured lowering a branch body is a containing
+    ControlBranchFlow whose statements lower into a sequenced child flow;
+    the child is the statement-for-statement counterpart of legacy's
+    branch flow, and the pair-equality oracle lives at that level."""
+    composite = _our_composite(unit)
+    children = []
+    for case in (composite.true_case, composite.false_case):
+        for pair in case.active_pairs:
+            for port in pair:
+                if isinstance(port, Graft) and isinstance(
+                    port.execute, VariablesFlow
+                ):
+                    children.append(port.execute)
+    return children
+
+
 def _serialize(flow) -> list[str]:
     return serialize_active_pairs(list(flow.active_pairs), {})
 
@@ -268,22 +286,27 @@ def _run_legacy(expansion, *args):
 
 def test_branch_bodies_match_legacy():
     """Branch bodies are plain flows: their recorded nets must be
-    graph-for-graph identical to the legacy branch flows."""
+    graph-for-graph identical to the legacy branch flows. Under the
+    restructured lowering the comparison lives at the child statement
+    flow (the containing ControlBranchFlow's sequencing machinery is
+    new by design and carries no legacy counterpart)."""
     legacy_then, legacy_else = _legacy_branches(textwrap.dedent(IF_ELSE))
-    composite = _our_composite(_capturing_lower(textwrap.dedent(IF_ELSE)))
+    children = _branch_children(_capturing_lower(textwrap.dedent(IF_ELSE)))
 
-    assert _serialize(composite.true_case) == _serialize(legacy_then)
-    assert _serialize(composite.false_case) == _serialize(legacy_else)
+    assert len(children) == 2
+    assert _serialize(children[0]) == _serialize(legacy_then)
+    assert _serialize(children[1]) == _serialize(legacy_else)
 
 
 def test_branch_local_variable_matches_legacy():
     """Same, for a variable declared inside the branches only: the bundle
     comes from the recursive collection walk, so both sides carry y."""
     legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BRANCH_LOCAL))
-    composite = _our_composite(_capturing_lower(textwrap.dedent(BRANCH_LOCAL)))
+    children = _branch_children(_capturing_lower(textwrap.dedent(BRANCH_LOCAL)))
 
-    assert _serialize(composite.true_case) == _serialize(legacy_then)
-    assert _serialize(composite.false_case) == _serialize(legacy_else)
+    assert len(children) == 2
+    assert _serialize(children[0]) == _serialize(legacy_then)
+    assert _serialize(children[1]) == _serialize(legacy_else)
 
 
 @pytest.mark.parametrize(
@@ -351,10 +374,14 @@ def test_mixed_implicit_none_tail():
 
 
 def test_branch_bodies_match_legacy_both_return():
-    """Slice 2: returning branch bodies are pair-identical to legacy's
-    (both skip the finish tail when the body closed)."""
+    """Slice 2: closing branches pair-match legacy too — legacy's
+    optimizer dissolves a returning branch flow to an EMPTY net, and the
+    restructured lowering now dissolves the same way (the non-fall-
+    through tail's None-return write optimizes away). Closing branches
+    are additionally covered by differential execution."""
     legacy_then, legacy_else = _legacy_branches(textwrap.dedent(BOTH_RETURN))
-    composite = _our_composite(_capturing_lower(textwrap.dedent(BOTH_RETURN)))
+    children = _branch_children(_capturing_lower(textwrap.dedent(BOTH_RETURN)))
 
-    assert _serialize(composite.true_case) == _serialize(legacy_then)
-    assert _serialize(composite.false_case) == _serialize(legacy_else)
+    assert len(children) == 2
+    assert _serialize(children[0]) == _serialize(legacy_then) == []
+    assert _serialize(children[1]) == _serialize(legacy_else) == []

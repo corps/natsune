@@ -11,6 +11,7 @@ from karakuri.fielded import DataclassTyping
 from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.connector import Connector
 from natsune.ports import (
+    Erasure,
     Expansion,
     ExtMergeFuncPort,
     ExtSplitFuncPort,
@@ -105,6 +106,17 @@ def filter_invocation(
     (a, b), c = merge_invocation(lambda x, _: fn(x), connector)
     send_value(as_constant_register(None, connector), b)
     return a, c
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class catch(Expansion):
+    handler: Callable[[Erasure], None]
+
+    def __call__(
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        if isinstance(port, Erasure):
+            self.handler(port)
 
 
 def send_parameters(

@@ -25,6 +25,7 @@ from natsune.frontend.link import collect_call_links
 from natsune.frontend.signature import analyze_signature
 from natsune.frontend.source import extract_source
 from natsune.frontend.symbols import collect_symbols
+from natsune.ports import ExtMergeFuncPort
 from tests.frontend.helpers import build_ir_for
 
 _CASES = [
@@ -35,7 +36,10 @@ _CASES = [
     # assign dynamic to a local, read it back
     ("def g(a: int) -> int:\n    x = a + 1\n    return x * 2", (5,)),
     # augassign: fresh target, repeated rebinding
-    ("def h(a: int) -> int:\n    total = 0\n    total += a\n    total += 5\n    return total", (7,)),
+    (
+        "def h(a: int) -> int:\n    total = 0\n    total += a\n    total += 5\n    return total",
+        (7,),
+    ),
     # constants stay in the source; only the var is captured
     ("def k(a: int) -> int:\n    return -a", (9,)),
     # NOTE: `return -1` is deliberately NOT here — the IR constant-folds it
@@ -52,7 +56,10 @@ _CASES = [
     # right operand — text comes from the synthesized node, not an f-string
     ("def w(a: int) -> int:\n    x = 0\n    x += a + 1\n    return x", (4,)),
     # multiple statements, interleaved reads and writes
-    ("def t(a: int, b: int) -> int:\n    x = a + b\n    y = x + a\n    return y + b", (2, 3)),
+    (
+        "def t(a: int, b: int) -> int:\n    x = a + b\n    y = x + a\n    return y + b",
+        (2, 3),
+    ),
 ]
 
 
@@ -83,10 +90,11 @@ def _legacy_flow(source: str):
     return compiler.compiled
 
 
-def _new_fn(source: str):
+def _new_fn(source: str, name: str | None = None):
     """The new lowering, through the backend: lower_function returns the
-    finished artifact (a callable for the Python backend)."""
-    ir, sink = build_ir_for(source)
+    finished artifact (a callable for the Python backend). Multi-function
+    snippets need ``name`` to select the entry function."""
+    ir, sink = build_ir_for(source, name=name)
     assert not sink.diagnostics
     return lower_function(ir, PythonBackend())
 
@@ -220,22 +228,70 @@ def _legacy_caller_callable(caller: str, source: str):
     return legacy.compiled
 
 
+def _linked_ir(source: str, caller: str, filename: str = "call_case.py"):
+    """Build the IR for a multi-function snippet with the callee LINKED:
+    the callee is legacy-compiled and __inet__-attached first (exactly
+    what @inet does), so collect_call_links resolves the call to
+    IrCallInet instead of the eval fallback. build_ir_for execs a fresh
+    namespace and cannot see the attachment, so the pipeline runs
+    manually here."""
+    ns = _exec_source(source, filename)
+    callee_name = next(
+        n for n, v in ns.items() if n != caller and inspect.isfunction(v)
+    )
+    callee_compiler = InetFunctionCompiler(ns[callee_name], ns, filename)
+    callee_compiler.compile()
+    setattr(ns[callee_name], "__inet__", callee_compiler)
+
+    src = extract_source(ns[caller], globals=ns, filename=filename)
+    signature = analyze_signature(src, DiagnosticSink())
+    symbols = collect_symbols(src, signature, DiagnosticSink())
+    links = collect_call_links(src.func_def.body, ns)
+    sink = DiagnosticSink()
+    ir = build_ir(src, signature, symbols, links, sink)
+    assert not sink.diagnostics
+    return ir
+
+
 @pytest.mark.parametrize("caller,source,args", _CALL_CASES)
-def test_call_cases_match_legacy_execution(caller: str, source: str, args: tuple) -> None:
-    expected = _python_fn(source)[caller](*args)
+def test_call_cases_match_legacy_execution(
+    caller: str, source: str, args: tuple
+) -> None:
+    expected = _exec_source(source, "call_case.py")[caller](*args)
     assert _run_legacy(_legacy_caller_callable(caller, source), *args) == expected
-    assert _new_fn(source)(*args) == expected
+
+    ir = _linked_ir(source, caller)
+    from natsune.frontend.ir.nodes import IrCallInet
+
+    assert isinstance(ir.body.statements[0].value, IrCallInet), (
+        "the call must link to the legacy callee, not fall back to eval"
+    )
+    assert lower_function(ir, PythonBackend())(*args) == expected
 
 
-def test_folded_unary_const_lowers_without_agents():
+def test_call_case_one() -> None:
+    """Same as the first parametrized call case, single-function-entry
+    form: the callee must be linked (see _linked_ir) or the call degrades
+    to the eval fallback and the runtime NameErrors through the catch."""
+    caller, source, args = _CALL_CASES[0]
+    fn = lower_function(_linked_ir(source, caller), PythonBackend())
+    assert fn(*args) == 3  # f(2) = inc(2) = 3 — the parametrized twin above derives this
+
+
+def test_folded_unary_const_lowers_without_eval_machinery():
     # Recorded golden-net divergence, re-formed for the restructure. The
     # IR folds `-1` to IrConst (mirroring CPython's own optimizer), so the
-    # lowered main flow wires a bare constant: the post-hoc agent catalog —
-    # walked from the recorded graph — finds no agent machinery at all.
-    # The IR is the spec — old behavior is reference, not law (§6).
+    # recorded graph wires a bare constant: no dynamic eval machinery
+    # (ExtMergeFuncPort, the eval-expression merge) appears anywhere in
+    # the main flow or the post-hoc agent catalog's recorded flows. The
+    # IR is the spec — old behavior is reference, not law (§6).
     source = "def m(a: int) -> int:\n    return -1"
     unit = _capturing_lower(source)
-    assert unit.agents == ()
+    flows = [unit.main] + [a for a in unit.agents if hasattr(a, "active_pairs")]
+    for flow in flows:
+        for pair in flow.active_pairs:
+            for port in pair:
+                assert not isinstance(port, ExtMergeFuncPort)
     assert _new_fn(source)(5) == -1
 
 
