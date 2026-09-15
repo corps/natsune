@@ -6,9 +6,8 @@ from the protocol until §8.1 settles the artifact question; lowering never
 needed it — templates record into themselves.
 """
 
-import dataclasses
-
 import ast
+import dataclasses
 from collections.abc import Mapping
 from typing import Any, Collection, Protocol, runtime_checkable
 

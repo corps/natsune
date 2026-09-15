@@ -2,10 +2,10 @@ from typing import Sequence
 
 from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
 from natsune.control_flow import (
-    IfThenElseStatement,
-    SerialOr,
-    SerialAnd,
     CloseAfterContingent,
+    IfThenElseStatement,
+    SerialAnd,
+    SerialOr,
 )
 from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.invocations import Invocation, closer, pack_from, pack_into

@@ -32,10 +32,14 @@ class ControlBranchFlow:
                 {
                     k: (
                         FlowRegisterUsage(flow_write=True)
-                        if v == "write"
-                        else FlowRegisterUsage(flow_read=True)
+                        if self.variables_usage.get(k) == "write"
+                        else (
+                            FlowRegisterUsage(flow_read=True)
+                            if self.variables_usage.get(k) == "read"
+                            else FlowRegisterUsage()
+                        )
                     )
-                    for k, v in self.variables_usage.items()
+                    for k in self.containing_flow.variables.variables.keys()
                 },
                 False,
                 False,
@@ -113,10 +117,14 @@ class ControlBranchFlow:
                     {
                         k: (
                             FlowRegisterUsage(flow_write=True)
-                            if v == "write"
-                            else FlowRegisterUsage(flow_read=True)
+                            if self.variables_usage.get(k) == "write"
+                            else (
+                                FlowRegisterUsage(flow_read=True)
+                                if self.variables_usage.get(k) == "read"
+                                else FlowRegisterUsage()
+                            )
                         )
-                        for k, v in self.variables_usage.items()
+                        for k in self.containing_flow.variables.variables.keys()
                     },
                     False,
                     False,
@@ -147,3 +155,16 @@ class ControlBranchFlow:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    def apply_new_layer(self) -> VariablesFlow:
+        result = VariablesFlow(
+            variables=self.containing_flow.variables,
+            return_adapter=self.containing_flow.return_adapter,
+        )
+        with result.invocation(self.containing_flow, internal=True) as invocation:
+            send_value(
+                self.cur_control.finish_variables.readout(),
+                invocation.port.variables.readin(),
+            )
+            self.apply_continuation(invocation.wire)
+        return result

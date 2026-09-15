@@ -10,11 +10,11 @@ from natsune.backend.control_branch_flow import ControlBranchFlow
 from natsune.backend.protocol import Backend, LoweredUnit
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import (
-    IfThenElseStatement,
-    VariablesFlow,
-    SerialOr,
-    SerialAnd,
     CloseAfterContingent,
+    IfThenElseStatement,
+    SerialAnd,
+    SerialOr,
+    VariablesFlow,
 )
 from natsune.frontend.ir import IrBody, IrFunction
 from natsune.frontend.ir.nodes import (
@@ -38,8 +38,7 @@ from natsune.frontend.ir.nodes import (
     IrWhile,
 )
 from natsune.invocations import closer
-from natsune.legacy import LegacyInetInterface
-from natsune.ports import Expansion, Graft, Port, WirePort, Target, Wire
+from natsune.ports import Expansion, Graft, Port, Target, Wire
 from natsune.registers import (
     FromRegister,
     as_constant_register,
@@ -68,9 +67,7 @@ class _FunctionLowering:
             LoweredUnit(self.ir, flow.freeze(), tuple(seen_agents), self.ir.name)
         )
 
-    def walk_agents(
-        self, flow: VariablesFlow
-    ) -> set[ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | SerialOr]:
+    def walk_agents(self, flow: VariablesFlow) -> set[AgentImpl]:
         targets: list[Target] = []
         seen_agents: set[AgentImpl] = set()
         expansions: list[Expansion] = [flow]
@@ -106,22 +103,10 @@ class _FunctionLowering:
                 elif isinstance(target, Wire):
                     if target.target:
                         targets.append(target.target)
+
         return seen_agents
 
     def collect_variables(self) -> dict[str, Adapter]:
-        """Params first, then locals in statement order — mirroring the old
-        compiler's collection pass (interface position is order-bearing).
-
-        The walk is recursive, like the old InetVariablesEvaluator: branch
-        and loop bodies contribute their targets at the enclosing
-        statement's position (then before else, a for-loop's target before
-        its body), and tuple targets contribute their element names
-        left-to-right (the frontend stamped each element's inferred Par
-        adapter into the IrTargetName). Dynamic targets declare nothing —
-        attribute/subscript lvalues route through the exec fallback, and
-        the names inside their captures are reads, not locals.
-        """
-
         variables: dict[str, Adapter] = dict(self.ir.params)
         self.collect_from_statements(self.ir.body.statements, variables)
         return variables
@@ -169,11 +154,6 @@ class _FunctionLowering:
         *,
         default_return_none: bool = False,
     ) -> None:
-        """
-        Lowers the given body from the entry_flow provided, mapping in variables from the entry_flow that match the body's
-        actual usage, and returning a flow that represents the last sequenced flow, after variables have been reintegrated
-        from the entry_flow.
-        """
         flow = self.new_flow(branch_flow)
 
         for index, stmt in enumerate(body.statements):
@@ -211,17 +191,18 @@ class _FunctionLowering:
                     "composite prototype"
                 )
 
-        if body.exits & Exits.FALLTHROUGH:
-            if default_return_none:
-                send_value(
-                    as_constant_register(None, flow),
-                    flow.control_output.return_value.readin(),
-                )
-            else:
-                send_value(
-                    flow.variables_readout(),
-                    flow.control_output.finish_variables.readin(),
-                )
+        if default_return_none:
+            send_value(
+                as_constant_register(None, flow),
+                flow.control_output.return_value.readin(),
+            )
+        else:
+            send_value(
+                flow.variables_readout(),
+                flow.control_output.finish_variables.readin(),
+            )
+
+        flow.close()
 
     def lower_if(self, flow: VariablesFlow, stmt: IrIf) -> None:
         true_flow = self.branch_flow(stmt.then_body, default_return_none=False)
@@ -263,25 +244,18 @@ class _FunctionLowering:
                 flow.control_output.continue_variables.readin(),
             )
 
+        flow.close()
+
     def new_flow(
         self, branching_flow: ControlBranchFlow | None = None
     ) -> VariablesFlow:
-        result = VariablesFlow(
-            variables=Variables(self.variables),
-            return_adapter=self.ir.return_adapter,
-        )
-
-        if branching_flow is not None:
-            with result.invocation(
-                branching_flow.containing_flow, internal=True
-            ) as invocation:
-                send_value(
-                    branching_flow.cur_control.finish_variables.readout(),
-                    invocation.port.variables.readin(),
-                )
-                branching_flow.apply_continuation(invocation.wire)
-
-        return result
+        if branching_flow is None:
+            return VariablesFlow(
+                variables=Variables(self.variables),
+                return_adapter=self.ir.return_adapter,
+            )
+        else:
+            return branching_flow.apply_new_layer()
 
     def branch_flow(self, body: IrBody, *, default_return_none: bool) -> VariablesFlow:
         with ControlBranchFlow(

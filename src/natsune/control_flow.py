@@ -538,10 +538,10 @@ class VariablesFlow(ExpansionBuilder):
 
         readouts.append(self.exceptions.readout())
         for k, r in self.variable_registers.items():
-            if not flow_map or flow_map.usage[k].flow_write:
+            if flow_map is None or flow_map.usage[k].flow_write:
                 g, _ = r.extend()
                 readouts.append(as_from_register(g, r.adapter, r.connector))
-            elif flow_map and flow_map.usage[k].flow_read:
+            elif flow_map is not None and flow_map.usage[k].flow_read:
                 readouts.append(r.readout())
             else:
                 readouts.append(as_from_register(Erasure(), r.adapter, r.connector))
