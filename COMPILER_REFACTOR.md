@@ -35,12 +35,13 @@ oracle discipline, and the next steps.
      `FlowVariableMap` → `FlowMap`; register-pair types codegen'd into
      `control_flow_generated.py`; `LegacyInetInterface` extracted to
      `legacy.py`; `IrFunction.exits` normalizes fall-through ⇒ RETURN.
-- **Tests: 287 passing** — 174 frontend + 64 backend + 49 legacy.
+- **Tests: 309 passing** — 174 frontend + 86 backend + 49 legacy.
   Snapshots: `make snapshots-check` (19).
 - **Verified working** (differential vs legacy + Python semantics):
   straight-line bodies, dynamics/augassign, ifs (fall-through, all-return,
-  mixed, nested, `is_it_even` verbatim), implicit-None tails, and inet
-  calls through legacy-linked callees.
+  mixed, nested, `is_it_even` verbatim), implicit-None tails, loops
+  (while/for: break, continue, orelse, nesting, trailing regions), and
+  inet calls through legacy-linked callees.
 
 ## 2. The runtime stack
 
@@ -188,27 +189,36 @@ in-memory net objects wrapped as a callable.
   2. mixed if with implicit-None tail — legacy produces no output on the
      fall-through path; ours returns None;
   3. folded unary constants — net-level only (the IR folds `-1` to
-     `IrConst`; no eval machinery is recorded); behaviorally equal.
+     `IrConst`; no eval machinery is recorded); behaviorally equal;
+  4. if-mediated loop break — legacy ignores the break and runs the loop
+     to its bound; ours breaks correctly;
+  5. nested-loop break, implicit-None after a loop, flag-variable while
+     loops (mutation inside if/else) — legacy produces no output; ours
+     is correct.
 - **Not inherited from legacy**: the callee/caller variable-name
-  coincidence constraint (`FlowVariableMap.update`), and the two
-  starvations above.
+  coincidence constraint (`FlowVariableMap.update`), the two
+  if-starvations above, and the loop break/continue starvations above.
 
 ## 6. Next steps
 
-### 6.1 Loops (`IrWhile`/`IrFor`) — the next lowering slice
+### 6.1 Loops (`IrWhile`/`IrFor`) — LANDED
 
-Continue/break control slots become live. Under the new model the
-trailing-region question should be tractable: statements after a loop
-sequence as a fresh layer off `cur_control.finish`, and the loop's
-finish (= exhaustion) is exactly what should feed it — the sequencing
-medium already distinguishes "loop exhausted" from "loop broke/returned"
-if the Loop composite's slots are forwarded like the if composite's.
-Design work remaining: the body flow's control outputs route into the
-Loop composite's body-side slots (continue = re-test, break = break slot,
-return = return slot); `lower_statements` must stop treating
-BREAK/CONTINUE as unlowerable; the loop's test/iter plumbing mirrors
-`lower_if`'s test wiring. Legacy's `Loop` usage in `compiler.py`
-(parse_statement_body's For/While branch) is the behavioral reference.
+Landed as `lower_loop` (backend/lowering.py): body/orelse lower via
+`branch_flow`; the iteration flow is `deconstruct_iteration_flow`
+(builtin `iter()` through the eval-filter gadget, `try_iter` (backend/
+agents.py) pulls the next element, an `IfThenElse` selects
+deconstruct-vs-exhaust; the deconstruct writes the target via
+`to_target` — name targets only for now) or `test_iteration_flow` (the
+test evaluated per iteration, its value as the re-test). Both mirror
+legacy's `parse_deconstruct_iter`/`parse_test`. `lower_statements`
+lowers IrBreak/IrContinue (the body's closer sends its bundle into the
+corresponding control output) and the IrIf BREAK/CONTINUE gate is gone —
+if composites forward the slots unconditionally and
+`ControlBranchFlow.close()` routes them out. Two structural fixes rode
+along (§8): law-4 gating in `ControlBranchFlow.close()` (shortcut,
+never readout) and the full-live layer bundle. Remaining loop work:
+tuple/dynamic loop targets (land with the composite prototype, alongside
+`to_target`).
 
 ### 6.2 Agent labeling (post-hoc) — downstream, incomplete
 
@@ -221,14 +231,14 @@ recorded graph in the compiler proper, not in lowering.
 
 ### 6.3 Cutover checklist (accumulated TODOs)
 
-- `FlowMap` removal: `ControlBranchFlow` carries two TODOs — its
-  `variables_usage` mapping should take the name→usage dict directly and
-  `mapped_variables_readin`/`variables_readout` should drop the
-  legacy-shaped map.
+- `FlowMap` removal: ControlBranchFlow no longer uses it at the layer
+  boundary (layers receive the full live bundle; `variables_usage` is
+  now constructor-unused — drop the field with the FlowMap import
+  cutover). `VariablesFlow.variables_readout(flow_map)` itself keeps the
+  legacy-shaped parameter until then.
 - File positioning: `VariablesFlow` and `ControlBranchFlow` are
   conceptually lowering constructs; reconsider their home when the old
   compiler dies (control_branch_flow.py TODO).
-- `IrBreak`/`IrContinue` lowering lands with loops (§6.1).
 - New-lowered callee linking (call a restructured function from another)
   — today only legacy callees link.
 - Re-point the snapshot oracle at all of `tests/frontend/programs.py`
@@ -252,10 +262,12 @@ open.
 
 ## 7. Open questions (remaining)
 
-1. **Loop trailing-region details** — beyond §6.1's sketch: break-slot
-   wiring into `cur_control.break`, orelse sequencing, and whether
-   `apply_continuation`'s borrow/join handles the Loop composite's slots
-   unchanged.
+1. **Immaterial constants in recursive composites** — a constant
+   `while True:` test re-fires without sequencing and spins forever, in
+   legacy and the new lowering alike (dynamic tests and flag-variable
+   tests sequence correctly). The Loop composite (or the runtime) needs
+   a dispatch story for always-available values; until then, write loop
+   tests as flag/dynamic conditions.
 2. **Constants for the emitter** — `Any`-typed `ConstantValuePort` vs
    serializable constants; purely an emitter question (§6.4).
 3. **`IrStructureError` → `DiagnosticSink`** — analysis-style
@@ -287,3 +299,17 @@ open.
   starve in legacy's `wire_continuation` (no output on the affected
   paths); both lower correctly here. The callee/caller variable-name
   coincidence constraint is not inherited.
+- **The loop slice's ControlBranchFlow fixes** (§6.1): close() previously
+  shortcut dead control slots AND THEN read them out — reading out a
+  shortcut slot fires an annihilation value, which the Loop composite
+  consumed as an iteration completion, so break recursed forever (the
+  constant-test variant of this is shared with legacy, §7.1). close()
+  now wires each control path only when `exits` says it can fire (law 4,
+  literal). Separately, the layer input erased usage-neutral variables,
+  poisoning the layer's cells for continue/break bundles (which forward
+  verbatim); the boundary now borrows copies for read/neutral (neutral
+  classifies as read) so every path carries live values — the usage-map
+  classification is gone from ControlBranchFlow, advancing the
+  FlowMap-removal TODO. The read-passthrough unit contract was re-pinned
+  as verbatim forwarding (real lowering never writes a read-classified
+  register, so observed behavior is unchanged).

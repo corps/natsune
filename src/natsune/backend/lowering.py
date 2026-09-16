@@ -5,24 +5,30 @@ from natsune.adapters import VA, Adapter, Variables
 from natsune.backend.agents import (
     AgentImpl,
     callee_invocation,
+    try_iter,
 )
 from natsune.backend.control_branch_flow import ControlBranchFlow
 from natsune.backend.protocol import Backend, LoweredUnit
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import (
     CloseAfterContingent,
+    IfThenElse,
     IfThenElseStatement,
+    Loop,
     SerialAnd,
     SerialOr,
     VariablesFlow,
 )
+from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.frontend.ir import IrBody, IrFunction
 from natsune.frontend.ir.nodes import (
     Exits,
     IrAssign,
     IrAugAssign,
+    IrBreak,
     IrCallInet,
     IrConst,
+    IrContinue,
     IrDynamic,
     IrExpr,
     IrExprStmt,
@@ -37,7 +43,14 @@ from natsune.frontend.ir.nodes import (
     IrVar,
     IrWhile,
 )
-from natsune.invocations import closer
+from natsune.invocations import (
+    closer,
+    filter_invocation,
+    pack_from,
+    pack_into,
+    send_parameter,
+    split_invocation,
+)
 from natsune.ports import Expansion, Graft, Port, Target, Wire
 from natsune.registers import (
     FromRegister,
@@ -84,6 +97,15 @@ class _FunctionLowering:
                 if expansion not in seen_agents:
                     expansions.extend((expansion.true_case, expansion.false_case))
                     seen_agents.add(expansion)
+            elif isinstance(expansion, (IfThenElse, Loop)):
+                if expansion not in seen_agents:
+                    seen_agents.add(expansion)
+                    if isinstance(expansion, Loop):
+                        expansions.extend(
+                            (expansion.iteration, expansion.body, expansion.orelse)
+                        )
+                    else:
+                        expansions.extend((expansion.true_case, expansion.false_case))
             elif isinstance(expansion, (SerialOr, SerialAnd, CloseAfterContingent)):
                 if expansion not in seen_agents:
                     seen_agents.add(expansion)
@@ -171,15 +193,23 @@ class _FunctionLowering:
                         flow.control_output.return_value.readin(),
                     )
             elif isinstance(stmt, IrIf):
-                then_exits = stmt.then_body.exits
-                else_exits = stmt.else_body.exits
-                union = then_exits | else_exits
-                if union & (Exits.BREAK | Exits.CONTINUE):
-                    raise NotImplementedError(
-                        "break/continue land with the loop composite (§7.2c)"
-                    )
                 self.lower_if(flow, stmt)
                 flow = self.new_flow(branch_flow)
+            elif isinstance(stmt, (IrFor, IrWhile)):
+                self.lower_loop(flow, stmt)
+                flow = self.new_flow(branch_flow)
+            elif isinstance(stmt, IrBreak):
+                assert body.closer is stmt
+                send_value(
+                    flow.variables_readout(),
+                    flow.control_output.break_variables.readin(),
+                )
+            elif isinstance(stmt, IrContinue):
+                assert body.closer is stmt
+                send_value(
+                    flow.variables_readout(),
+                    flow.control_output.continue_variables.readin(),
+                )
             elif isinstance(stmt, IrAssign):
                 self.lower_assign(stmt, flow)
             elif isinstance(stmt, IrAugAssign):
@@ -248,6 +278,150 @@ class _FunctionLowering:
             )
 
         flow.close()
+
+    def lower_loop(self, flow: VariablesFlow, stmt: IrFor | IrWhile) -> None:
+        """Lower IrWhile/IrFor through the Loop composite (§6.1).
+
+        The iteration flow is the per-iteration re-test: for a For it
+        pulls the next element off the iterator and deconstructs it into
+        the target; for a While it evaluates the test. The composite's
+        finish slot (= exhaustion, including body break) is what sequences
+        the trailing region — the next layer starts off cur_control.finish,
+        so "loop exhausted" is exactly what feeds it. All four result
+        slots forward unconditionally (the §3.2 rule, loops included);
+        consumption/shortcut stays exits-driven in ControlBranchFlow.
+        """
+        body_flow = self.branch_flow(stmt.body, exits=stmt.body.exits)
+        orelse_flow = self.branch_flow(stmt.orelse, exits=stmt.orelse.exits)
+
+        loop = Loop(
+            (
+                self.deconstruct_iteration_flow(stmt.target)
+                if isinstance(stmt, IrFor)
+                else self.test_iteration_flow(stmt.test)
+            ),
+            body_flow,
+            orelse_flow,
+        )
+
+        with loop.invocation(flow) as loop_invocation:
+            if isinstance(stmt, IrFor):
+                # iter(<iterable>) — the builtin, through the eval-filter
+                # gadget (mirrors legacy compiler.py:857–860).
+                send_value(
+                    send_parameter(
+                        filter_invocation(iter, flow),
+                        self.from_expr(stmt.iter, flow),
+                    ),
+                    loop_invocation.port.value.readin(),
+                )
+            send_value(
+                flow.variables_readout(),
+                loop_invocation.port.variables.readin(),
+            )
+
+            send_value(
+                loop_invocation.wire.finish_variables.readout(),
+                flow.control_output.finish_variables.readin(),
+            )
+            send_value(
+                loop_invocation.wire.break_variables.readout(),
+                flow.control_output.break_variables.readin(),
+            )
+            send_value(
+                loop_invocation.wire.return_value.readout(),
+                flow.control_output.return_value.readin(),
+            )
+            send_value(
+                loop_invocation.wire.continue_variables.readout(),
+                flow.control_output.continue_variables.readin(),
+            )
+
+        flow.close()
+
+    def deconstruct_iteration_flow(self, target: IrTarget) -> VariablesFlow:
+        """The For loop's iteration flow: pull the next element and
+        deconstruct it into the target, reporting (element-matched) as the
+        re-test. Mirrors legacy parse_deconstruct_iter (compiler.py:534).
+        """
+        with VariablesFlow(
+            variables=Variables(self.variables), return_adapter=VA
+        ) as true_case:
+            send_value(
+                true_case.flow_input.value.readout(),
+                self.to_target(target, true_case),
+            )
+            send_value(
+                as_constant_register(True, true_case),
+                true_case.control_output.return_value.readin(),
+            )
+            send_value(
+                true_case.variables_readout(),
+                true_case.control_output.finish_variables.readin(),
+            )
+
+        with VariablesFlow(
+            variables=Variables(self.variables), return_adapter=VA
+        ) as false_case:
+            send_value(
+                as_constant_register(False, false_case),
+                false_case.control_output.return_value.readin(),
+            )
+            send_value(
+                false_case.variables_readout(),
+                false_case.control_output.finish_variables.readin(),
+            )
+
+        with VariablesFlow(
+            variables=Variables(self.variables), return_adapter=VA
+        ) as flow:
+            input_variables = flow.variables_readout()
+            input_iter = flow.flow_input.value.readout()
+
+            try_iter_in, (next_value, should_continue) = split_invocation(
+                try_iter, flow
+            )
+            send_value(input_iter, try_iter_in)
+
+            with IfThenElse(true_case, false_case).invocation(flow) as conditional:
+                send_value(should_continue, conditional.port.readin())
+
+                with closer(
+                    pack_into(conditional.wire.context, FlowInputInto)
+                ) as context:
+                    send_value(next_value, context.value.readin())
+                    send_value(input_variables, context.variables.readin())
+
+                with closer(
+                    pack_from(conditional.wire.result, FlowControlInto)
+                ) as result:
+                    send_value(
+                        result.return_value.readout(),
+                        flow.control_output.return_value.readin(),
+                    )
+                    send_value(
+                        result.finish_variables.readout(),
+                        flow.control_output.finish_variables.readin(),
+                    )
+
+        return flow
+
+    def test_iteration_flow(self, test: IrExpr) -> VariablesFlow:
+        """The While loop's iteration flow: evaluate the test per
+        iteration; its value is the re-test. Mirrors legacy parse_test
+        (compiler.py:730)."""
+        with VariablesFlow(
+            variables=Variables(self.variables), return_adapter=VA
+        ) as flow:
+            send_value(
+                self.from_expr(test, flow),
+                flow.control_output.return_value.readin(),
+            )
+            send_value(
+                flow.variables_readout(),
+                flow.control_output.finish_variables.readin(),
+            )
+        return flow
 
     def new_flow(
         self, branching_flow: ControlBranchFlow | None = None

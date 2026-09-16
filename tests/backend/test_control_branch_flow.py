@@ -1,4 +1,4 @@
-from typing import Collection, cast, Any
+from typing import Any, Collection, cast
 
 import pytest
 
@@ -7,8 +7,8 @@ from natsune.backend.control_branch_flow import ControlBranchFlow
 from natsune.calculus import Calculus
 from natsune.control_flow import VariablesFlow
 from natsune.frontend import IrFunction
-from natsune.frontend.ir import Exits, VariableUsage, IrBody
-from natsune.registers import send_value, as_constant_register
+from natsune.frontend.ir import Exits, IrBody, VariableUsage
+from natsune.registers import as_constant_register, send_value
 
 
 def create_flow(
@@ -106,7 +106,13 @@ def test_exits_prempty_close() -> None:
         {"b": "write"},
     ],
 )
-def test_variables_usage_read_passthrough(usage: dict) -> None:
+def test_layer_bundle_forwards_verbatim(usage: dict) -> None:
+    """The layer's finish bundle forwards verbatim at close(), whatever
+    the boundary usage classification — the layer receives the full live
+    bundle (see ControlBranchFlow.__post_init__). Real lowering never
+    writes a read-classified register (the IR proves the body never
+    writes it, so the forwarded value equals the original there); this
+    test writes one deliberately to pin the verbatim rule."""
     flow = create_flow(("a", "b"), variables_usage=usage)
     layer = flow.apply_new_layer()
 
@@ -121,7 +127,7 @@ def test_variables_usage_read_passthrough(usage: dict) -> None:
     flow.close()
 
     c = _send_variables(flow, (None, 1, 2))
-    assert c.reduce_to_value(0) == (None, 1, 30)
+    assert c.reduce_to_value(0) == (None, 20, 30)
 
 
 def test_return_values() -> None:

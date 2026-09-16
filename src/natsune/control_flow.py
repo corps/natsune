@@ -693,7 +693,7 @@ class CloseAfterContingent(ExpansionWithAdapters):
             executor.connect(port, next(wire_iter))
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Loop(ExpansionWithAdapters):
     iteration: VariablesFlow
     body: VariablesFlow

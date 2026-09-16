@@ -1,9 +1,11 @@
-from typing import Sequence
+from typing import Any, Iterator, Sequence
 
 from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
 from natsune.control_flow import (
     CloseAfterContingent,
+    IfThenElse,
     IfThenElseStatement,
+    Loop,
     SerialAnd,
     SerialOr,
 )
@@ -18,7 +20,16 @@ from natsune.registers import (
     ToRegister,
 )
 
-type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | SerialOr | SerialAnd | CloseAfterContingent
+type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent
+
+
+def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
+    """Pull one element off `i`: (element, True), or (None, False) at
+    exhaustion. The Loop composite's iteration-flow primitive."""
+    try:
+        return next(i), True
+    except StopIteration:
+        return None, False
 
 
 def callee_invocation(
