@@ -13,7 +13,10 @@ from natsune.adapters import (
 )
 from natsune.connector import Connector
 from natsune.ports import (
+    CombPort,
     ConstantValuePort,
+    Erasure,
+    Expansion,
     Graft,
     Port,
     Target,
@@ -40,6 +43,7 @@ __all__ = [
     "as_value_register",
     "FromInterfaceRegister",
     "ToInterfaceRegister",
+    "CurriedProcess",
 ]
 
 register_inferences: list[MappingInference] = []
@@ -522,3 +526,121 @@ def borrow_registers(
         invocation.wire.result.readout().close()
 
     return value_readout
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class CurriedProcess(Expansion):
+    # In theory, the tuple search could be parameterized and generalized so that it isn't fixed on
+    # literally CombPort + tup, but we're going to keep it simple.
+    # Two state automata -- find tuple, check arms
+    state: Literal["find_tuple", "check_arms"] = "find_tuple"
+
+    def __copy__(self) -> Self:
+        return self
+
+    @classmethod
+    def serialize(
+        cls, connector: Connector, source: FromRegister, dest: ToRegister
+    ) -> None:
+        assert isinstance(dest.adapter, ParValueAdapter)
+        assert isinstance(dest, _ToRegister)
+        x1, x2 = Wire.as_interface()
+        y1, y2 = Wire.as_interface()
+        sink = as_to_register(x1, dest.adapter, connector)
+        send_value(source, sink)
+        cls.find_tuple(connector, x2, y1, y2, dest.port)
+
+    @classmethod
+    def find_tuple(
+        cls,
+        connector: Connector,
+        tuple_head: Target,
+        acc_head: Target,
+        acc_tail: Target,
+        invoker: Target,
+    ) -> None:
+        connector.connect(
+            Graft(
+                CurriedProcess("find_tuple"),
+                [
+                    connector.as_wire(acc_head),
+                    connector.as_wire(acc_tail),
+                    connector.as_wire(invoker),
+                ],
+            ),
+            tuple_head,
+        )
+
+    @classmethod
+    def check_arms(
+        cls,
+        connector: Connector,
+        head: Target,
+        tail: Target,
+        acc_head: Target,
+        acc_tail_left: Target,
+        acc_tail_right: Target,
+        invoker: Target,
+    ) -> None:
+        connector.connect(
+            Graft(
+                CurriedProcess("check_arms"),
+                [
+                    connector.as_wire(tail),
+                    connector.as_wire(acc_head),
+                    connector.as_wire(acc_tail_left),
+                    connector.as_wire(acc_tail_right),
+                    connector.as_wire(invoker),
+                ],
+            ),
+            head,
+        )
+
+    def __call__(
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        if isinstance(port, Erasure):
+            if port.value is not None:
+                for wire in wires:
+                    executor.annihilate(wire, port)
+                return
+
+            if self.state == "find_tuple":
+                acc_head, acc_tail, invoker = wires
+
+                executor.connect(acc_head, invoker)
+                executor.annihilate(acc_tail)
+                return
+
+        if self.state == "find_tuple":
+            acc_head, acc_tail, invoker = wires
+
+            if isinstance(port, CombPort) and port.label == "x":
+                l, r = executor.tuplate(acc_tail)
+                self.check_arms(
+                    executor,
+                    head=port.wires[0],
+                    tail=port.wires[1],
+                    acc_head=acc_head,
+                    acc_tail_left=l,
+                    acc_tail_right=r,
+                    invoker=invoker,
+                )
+                return
+
+            failure = Erasure(
+                ValueError(
+                    "Invalid tuple in curried process, corrupted net: " + str(port)
+                )
+            )
+            for wire in wires:
+                executor.annihilate(wire, failure)
+            for wire in port.wires:
+                executor.annihilate(wire, failure)
+
+            return
+
+        tail, acc_head, acc_tail_left, acc_tail_right, invoker = wires
+
+        executor.connect(acc_tail_left, port)
+        self.find_tuple(executor, tail, acc_head, acc_tail_right, invoker)

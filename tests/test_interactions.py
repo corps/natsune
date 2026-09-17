@@ -12,56 +12,56 @@ def c() -> Calculus:
 def test_tuple_of_values(c: Calculus) -> None:
     c[0] = c.tup(c[1], c[2])
     c[c.tup(c.v(1), c.v(2))] = c.tup(c[1], c[2])
-    assert list(c.readout(0)) == [2, 1]
+    assert c.readout(0) == [2, 1]
 
 
 def test_dup(c: Calculus) -> None:
     c[0] = c.tup(c[1], c[2])
     c[c.v(3)] = c.dup(c[1], c[2])
-    assert list(c.readout(0)) == [3, 3]
+    assert c.readout(0) == [3, 3]
 
 
 def test_dup_of_tup(c: Calculus) -> None:
     c[0] = c.tup(c[1], c[2])
     c[c.tup(c.v(3), c.v(5))] = c.dup(c[1], c[2])
-    assert list(c.readout(0)) == [3, 5, 3, 5]
+    assert c.readout(0) == [3, 5, 3, 5]
 
 
 def test_dup_of_tup_erasure(c: Calculus) -> None:
     c[0] = c.tup(c[1], c[2])
     c[c.tup(c.v(3), c.e())] = c.dup(c[1], c[2])
-    assert list(c.readout(0)) == [3, 3]
+    assert c.readout(0) == [3, 3]
 
 
 def test_merge_fn_out_of_order(c: Calculus) -> None:
     c[c.v(1)] = c.merge(lambda x, y: (x, y), c[2], c[0])
-    assert list(c.readout(0)) == []
+    assert c.readout(0) == []
 
     c[2] = c.v(2)
-    assert list(c.continue_readout()) == [(1, 2)]
+    assert c.continue_readout() == [(1, 2)]
 
 
 def test_merge_fn_order(c: Calculus) -> None:
     c[c.v(1)] = c.merge(lambda x, y: (x, y), c[2], c[0])
     c[2] = c.v(2)
-    assert list(c.readout(0)) == [(1, 2)]
+    assert c.readout(0) == [(1, 2)]
 
 
 def test_split_fn(c: Calculus) -> None:
     c[c.v(9)] = c.split(lambda x: (x, 8), c[2], c[0])
-    assert list(c.readout(c.tup(c[2], c[0]))) == [8, 9]
+    assert c.readout(c.tup(c[2], c[0])) == [8, 9]
 
 
 def test_amb(c: Calculus) -> None:
     c.amb(c.v(1), c.v(2), c[1], c[2])
     c[1] = c.merge(lambda x, y: (x, y), c[2], c[0])
-    assert list(c.readout(0)) == [(1, 2)]
+    assert c.readout(0) == [(1, 2)]
 
 
 def test_amb_just_one(c: Calculus) -> None:
     c.amb(c.v(1), c[3], c[1], c.e())
     c[1] = c.merge(lambda x, _: x, c.v(9), c[0])
-    assert list(c.readout(0)) == [1]
+    assert c.readout(0) == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +137,9 @@ def test_readout_drains_whole_net_and_is_not_independent(c: Calculus) -> None:
     separate Calculi (or drain first and walk the graph) when independence
     matters."""
     c[c.dup(c[100], c[200])] = _tup_tree(c, 0, 4)
-    first = list(c.readout(100))
+    first = c.readout(100)
     assert not c.executor.active_pairs  # whole net was drained
-    second = list(c.readout(200))
+    second = c.readout(200)
     assert sorted(first) == [0, 1, 2, 3]
     assert sorted(second) == [0, 1, 2, 3]
 
@@ -150,7 +150,7 @@ def test_readout_drains_whole_net_and_is_not_independent(c: Calculus) -> None:
     fresh[fresh.dup(fresh[100], fresh[200])] = _tup_tree(fresh, 0, 4)
     # Same output, same values, different yield order: readout yields in
     # executor stack (LIFO) order, not any canonical tree order.
-    assert sorted(list(fresh.readout(200))) == sorted(second)
+    assert sorted(fresh.readout(200)) == sorted(second)
     # ... and readout is destructive: the Grafts replace the output subtree,
     # so nothing is walkable below the interface afterwards.
     assert _fringe(fresh, 200) == []

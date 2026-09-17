@@ -1,6 +1,6 @@
 import dataclasses
 from functools import cached_property
-from typing import Any, Callable, Literal, Mapping, Self, Sequence
+from typing import Any, Callable, Self, Sequence
 
 from natsune.adapters import (
     RA_VA,
@@ -612,7 +612,12 @@ class VariablesFlow(ExpansionBuilder):
         if isinstance(invoker, VariablesFlow):
             invoker.flow_map.update(self.flow_map)
 
-        return expansion_invocation(self, invoker, FlowInputInto, FlowControlInto)
+        return expansion_invocation(
+            self,
+            invoker,
+            FlowInputInto,
+            FlowControlInto,
+        )
 
     def close(self) -> None:
         for register in self.variable_registers.values():

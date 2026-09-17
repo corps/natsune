@@ -36,20 +36,20 @@ def test_weakening_discard(c: Calculus) -> None:
         send_value(invocation.wire.result.readout(), c.to_key(0))
 
     assert c.serialize_active_pairs() != []
-    assert list(c.readout(0)) == []
+    assert c.readout(0) == []
     assert c.serialize_active_pairs() == ["-<graft", "graft"]
 
 
 def test_gated_and_sequence(c: Calculus) -> None:
     result = c.from_key(0) & c.from_key(1)
     send_value(result, c.to_key(2))
-    assert list(c.readout(2)) == []
+    assert c.readout(2) == []
 
     send_value(c.const(1), c.to_key(1))
-    assert list(c.continue_readout()) == []
+    assert c.continue_readout() == []
 
     send_value(c.const(0), c.to_key(0))
-    assert list(c.continue_readout()) == [(0, 1)]
+    assert c.continue_readout() == [(0, 1)]
 
 
 def test_if_then_else(c: Calculus) -> None:

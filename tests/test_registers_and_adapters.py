@@ -9,6 +9,7 @@ from natsune.adapters import (
     InverseAdapter,
     ParValueAdapter,
     Adapter,
+    VA,
 )
 from natsune.calculus import Calculus
 from natsune.control_flow import VariablesFlow
@@ -23,7 +24,7 @@ from natsune.invocations import (
     send_parameters,
 )
 from natsune.optimizer import optimize
-from natsune.ports import ValuePort, Port, Wire
+from natsune.ports import ValuePort, Port, Wire, Erasure
 from natsune.registers import (
     serialize_values,
     send_value,
@@ -37,6 +38,7 @@ from natsune.registers import (
     FromInterfaceRegister,
     ToInterfaceRegister,
     borrow_registers,
+    CurriedProcess,
 )
 
 
@@ -49,7 +51,7 @@ def test_serialize_values(c: Calculus) -> None:
     inputs, output = serialize_values(c.executor, 3)
     send_values([c.const(5), c.const(3), c.const(2)], inputs)
     send_value(output, c.to_key(0))
-    assert list(c.readout(0)) == [(5, 3, 2)]
+    assert c.readout(0) == [(5, 3, 2)]
 
 
 def test_parallelize_value(c: Calculus) -> None:
@@ -61,25 +63,25 @@ def test_parallelize_value(c: Calculus) -> None:
         "value = fnM(None, fnS(-<[0], fnS(w1, fnS(w2, Z))))",
         "[0]",
     ]
-    assert list(c.readout(0)) == [9]
+    assert c.readout(0) == [9]
     send_value(outputs[1], c.to_key(1))
-    assert list(c.readout(1)) == [4]
+    assert c.readout(1) == [4]
     send_value(outputs[2], c.to_key(2))
-    assert list(c.readout(2)) == [3]
+    assert c.readout(2) == [3]
 
 
 def test_interface_register(c: Calculus) -> None:
     register = FromInterfaceRegister(ValueAdapter(), c.executor)
     send_value(register.readout(), c.to_key(0))
-    assert list(c.readout(0)) == []
+    assert c.readout(0) == []
 
     send_value(c.const(40), register.interface_readin())
-    assert list(c.continue_readout()) == [40]
+    assert c.continue_readout() == [40]
 
     register2 = ToInterfaceRegister(ValueAdapter(), c.executor)
     send_value(c.const(11), register2.readin())
     send_value(c.from_key(33), register2.interface_readin())
-    assert list(c.readout(33)) == [11]
+    assert c.readout(33) == [11]
 
 
 def test_interface_register_with_multiple_accesses(c: Calculus) -> None:
@@ -87,16 +89,16 @@ def test_interface_register_with_multiple_accesses(c: Calculus) -> None:
     send_value(register.readout(), c.to_key(0))
     send_value(register.readout(), c.to_key(1))
     send_value(register.readout(), c.to_key(3))
-    assert list(c.readout(0)) == []
+    assert c.readout(0) == []
 
     send_value(c.const(40), register.interface_readin())
-    assert list(c.continue_readout()) == [40]
+    assert c.continue_readout() == [40]
 
     register = ToInterfaceRegister(ValueAdapter(), c.executor)
     send_value(c.const(11), register.readin())
     send_value(c.const(52), register.readin())
     send_value(c.from_key(33), register.interface_readin())
-    assert list(c.readout(33)) == [11]
+    assert c.readout(33) == [11]
 
 
 def test_interface_register_split_from(c: Calculus) -> None:
@@ -109,8 +111,8 @@ def test_interface_register_split_from(c: Calculus) -> None:
     send_value(parts[0].readout(), c.to_key(0))
     send_value(parts[1].readout(), c.to_key(1))
 
-    assert list(c.readout(0)) == [1]
-    assert list(c.readout(1)) == [2]
+    assert c.readout(0) == [1]
+    assert c.readout(1) == [2]
 
 
 def test_from_register_split(c: Calculus) -> None:
@@ -123,8 +125,8 @@ def test_from_register_split(c: Calculus) -> None:
     send_value(parts[0], c.to_key(0))
     send_value(parts[1], c.to_key(1))
 
-    assert list(c.readout(0)) == [1]
-    assert list(c.readout(1)) == [2]
+    assert c.readout(0) == [1]
+    assert c.readout(1) == [2]
 
 
 def test_to_register_split(c: Calculus) -> None:
@@ -139,7 +141,7 @@ def test_to_register_split(c: Calculus) -> None:
         c.to_key(0),
     )
 
-    assert list(c.readout(0)) == [(1, 2)]
+    assert c.readout(0) == [(1, 2)]
 
 
 def test_variables_flow_invocation(c: Calculus) -> None:
@@ -160,7 +162,7 @@ def test_variables_flow_invocation(c: Calculus) -> None:
     with flow.invocation(c.executor, internal=True) as invocation:
         send_value(invocation.wire.return_value.readout(), c.to_key(0))
         send_value(c.const(10), invocation.port.value.readin())
-    assert list(c.readout(0)) == [10]
+    assert c.readout(0) == [10]
 
 
 class TestExpansion(ExpansionWithAdapters):
@@ -190,14 +192,14 @@ def test_expansion_invocation(c: Calculus) -> None:
     ) as invocation:
         send_value(c.const(10), invocation.port.readin())
         send_value(invocation.wire.readout(), c.to_key(0))
-        assert list(c.readout(0)) == [10]
+        assert c.readout(0) == [10]
 
 
 def test_flow_register(c: Calculus) -> None:
     register = FlowRegister(ValueAdapter(), c.executor)
     send_value(c.const(10), register.readin())
     send_value(register.readout(), c.to_key(0))
-    assert list(c.readout(0)) == [10]
+    assert c.readout(0) == [10]
 
     send_value(
         send_parameter(
@@ -209,7 +211,7 @@ def test_flow_register(c: Calculus) -> None:
     send_value(register.readout(), c.to_key(1))
     register.close()
 
-    assert list(c.readout(1)) == [20]
+    assert c.readout(1) == [20]
 
 
 def test_join_registers_are_parallel(c: Calculus) -> None:
@@ -219,8 +221,8 @@ def test_join_registers_are_parallel(c: Calculus) -> None:
     send_value(from_register, to_register)
     send_value(c.const(10), c.to_key(2))
 
-    assert list(c.readout(0)) == [10]
-    assert list(c.readout(1)) == []
+    assert c.readout(0) == [10]
+    assert c.readout(1) == []
 
 
 def test_reference_adapter(c: Calculus) -> None:
@@ -237,8 +239,8 @@ def test_reference_adapter(c: Calculus) -> None:
     ref2.close()
     ref1.close()
 
-    assert list(c.readout(0)) == [20]
-    assert list(c.readout(1)) == [20]
+    assert c.readout(0) == [20]
+    assert c.readout(1) == [20]
 
 
 def test_inverse_adapter_with_close(c: Calculus) -> None:
@@ -253,7 +255,7 @@ def test_inverse_adapter_with_close(c: Calculus) -> None:
     inv2.close()
 
     send_value(value.readout(), c.to_key(0))
-    assert list(c.readout(0)) == [1]
+    assert c.readout(0) == [1]
 
 
 def test_inverse_compound_adapter(c: Calculus) -> None:
@@ -276,7 +278,7 @@ def test_inverse_compound_adapter(c: Calculus) -> None:
     ref2.close()
     inv1.close()
 
-    assert list(c.readout(0)) == [10]
+    assert c.readout(0) == [10]
 
 
 def test_borrow_registers(c: Calculus) -> None:
@@ -295,8 +297,8 @@ def test_borrow_registers(c: Calculus) -> None:
     )
 
     send_values([results[0], results[2]], [c.to_key(0), c.to_key(2)])
-    assert list(c.readout(0)) == [10]
-    assert list(c.readout(2)) == [(1, 2)]
+    assert c.readout(0) == [10]
+    assert c.readout(2) == [(1, 2)]
 
     send_parameter(filter_invocation(lambda x: x.append(1), c.executor), results[1])
 
@@ -304,12 +306,12 @@ def test_borrow_registers(c: Calculus) -> None:
         [value_r.readout(), ref_r.readout(), par_r.readout()],
         [c.to_key(3), c.to_key(4), c.to_key(5)],
     )
-    assert list(c.readout(3)) == [10]
-    assert list(c.readout(4)) == []
-    assert list(c.readout(5)) == [(1, 2)]
+    assert c.readout(3) == [10]
+    assert c.readout(4) == []
+    assert c.readout(5) == [(1, 2)]
 
     send_value(c.const(1), r.interface_readin())
-    assert list(c.continue_readout()) == [[1]]
+    assert c.continue_readout() == [[1]]
 
 
 def test_borrow_registers_inverse(c: Calculus) -> None:
@@ -327,10 +329,53 @@ def test_borrow_registers_inverse(c: Calculus) -> None:
     )
 
     send_value(result, c.to_key(0))
-    assert list(c.readout(0)) == []
+    assert c.readout(0) == []
 
     send_value(c.const(1), r.interface_readin())
-    assert list(c.continue_readout()) == []
+    assert c.continue_readout() == []
 
     send_value(c.const(1), inv_r.readin())
-    assert list(c.continue_readout()) == [([], 1)]
+    assert c.continue_readout() == [([], 1)]
+
+
+def test_serializes_tuple(c: Calculus) -> None:
+    adapter = ParValueAdapter([ValueAdapter(), ValueAdapter(), ValueAdapter()])
+    CurriedProcess.serialize(c.executor, c.from_key(0, adapter), c.to_key(1, adapter))
+
+    assert c.readout(1) == []
+    with c.executor.sequenced_tuplate_from(c[0]) as wires_iter:
+        wires1 = next(wires_iter)
+
+        assert c.continue_readout() == []
+
+        c[next(wires_iter)] = ValuePort(2)
+        assert c.continue_readout() == []
+
+        c[wires1] = ValuePort(1)
+        assert c.continue_readout() == []
+
+        last_wire = next(wires_iter)
+
+    assert c.continue_readout() == []
+    c[last_wire] = ValuePort(3)
+
+    assert c.continue_readout() == [3, 2, 1]
+
+
+def test_serializes_tuple_from_value(c: Calculus) -> None:
+    adapter = ParValueAdapter([ValueAdapter(), ValueAdapter(), ValueAdapter()])
+    CurriedProcess.serialize(c.executor, c.from_key(0, VA), c.to_key(1, adapter))
+
+    assert c.readout(1) == []
+    send_value(c.const((1, 2, 3)), c.to_key(0))
+    assert c.continue_readout() == [3, 2, 1]
+
+
+def test_serializes_with_annihilated_leaf(c: Calculus) -> None:
+    adapter = ParValueAdapter([ValueAdapter(), ValueAdapter(), ValueAdapter()])
+    CurriedProcess.serialize(c.executor, c.from_key(0, adapter), c.to_key(1, adapter))
+
+    with c.executor.sequenced_tuplate_from(c[0]) as wires_iter:
+        c[next(wires_iter)] = Erasure("Test Error")
+
+    c.assert_erased(1, "Test Error")

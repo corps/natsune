@@ -20,6 +20,7 @@ from natsune.ports import (
     Wire,
 )
 from natsune.registers import (
+    CurriedProcess,
     FromInterfaceRegister,
     FromRegister,
     InterfaceRegister,

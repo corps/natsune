@@ -1,6 +1,6 @@
 import dataclasses
 from collections import defaultdict
-from typing import Any, Callable, Iterator, Literal, Self, Sequence
+from typing import Any, Callable, Literal, Self, Sequence
 
 from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.connector import Connector, serialize_active_pairs
@@ -76,18 +76,20 @@ class Calculus:
             return self._wires[port_id]
         return self._wires[key]
 
-    def readout(self, key: int | Target) -> Iterator[Any]:
+    def readout(self, key: int | Target) -> list[Any]:
         self[key] = Graft(self.tracer)
-        yield from self.continue_readout()
+        return self.continue_readout()
 
-    def continue_readout(self) -> Iterator[Any]:
+    def continue_readout(self) -> list[Any]:
+        result: list[Port] = []
         while self.executor.active_pairs:
             self.executor.process_pair()
-            yield from self.tracer.buffer
+            result.extend(self.tracer.buffer)
             self.tracer.buffer.clear()
+        return result
 
     def reduce(self, target: int | Target) -> Port | None:
-        list(self.continue_readout())
+        self.continue_readout()
         result = self[target].target
         while isinstance(result, WirePort):
             result = result.wires[0].target
@@ -100,7 +102,7 @@ class Calculus:
 
     def assert_erased(self, target: int | Target, inner: Any = None) -> None:
         p = self.reduce(target)
-        assert p == Erasure(inner)
+        assert Erasure(inner) == p
 
     def assert_open(self, target: int | Target, inner: Any = None) -> None:
         p = self.reduce(target)
