@@ -1,9 +1,17 @@
 import dataclasses
 import sys
 from contextlib import AbstractContextManager
-from typing import Any, Callable, Iterator, Protocol, Sequence, cast, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Protocol,
+    Sequence,
+    cast,
+    runtime_checkable,
+)
 
-from karakuri.annotations import Annotation
+from karakuri.annotations import Annotation, Hole
 from karakuri.call_mapping import CallMapping
 from karakuri.codegen_buffer import generate
 from karakuri.fielded import DataclassTyping
@@ -201,7 +209,7 @@ def _map_into(f: tuple[str, Annotation]) -> tuple[str, Annotation]:
     raise TypeError(f"Unexpected type {annotation.source}")
 
 
-def _map_from(f: tuple[str, Annotation]) -> tuple[str, Annotation]:
+def _map_from(f: tuple[str, Annotation]) -> tuple[str, Annotation] | None:
     name, annotation = f
     if issubclass(annotation.source, LHS):
         return name, Annotation.from_type_expression(FromInterfaceRegister)
@@ -227,7 +235,11 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
     assert dataclasses.is_dataclass(struct)
     args: dict = {}
 
-    for field, register in zip(dataclasses.fields(struct), to_register.split()):
+    serialize = bool(getattr(struct, "serialize", False))
+
+    for field, register in zip(
+        dataclasses.fields(struct), to_register.split(serialize=serialize)
+    ):
         if Annotation.from_type_expression(
             field.type
         ) <= Annotation.from_type_expression(ToInterfaceRegister):
@@ -307,7 +319,7 @@ def generate_register_pair_types(t: type):
     generate(
         f"{t.__name__}From",
         DataclassTyping(
-            parameters=mapping.parameters.non_variadic_parameters.map(_map_from)
+            parameters=mapping.parameters.non_variadic_parameters.filter_map(_map_from)
         ),
         sys._getframe(1).f_globals,
     )

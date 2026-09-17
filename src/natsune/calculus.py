@@ -106,7 +106,7 @@ class Calculus:
 
     def assert_open(self, target: int | Target, inner: Any = None) -> None:
         p = self.reduce(target)
-        assert p is None
+        assert p is None, p
 
     def optimize(self, level: Literal[1, 2, 3] = 3) -> None:
         optimize(self.executor, self.executor.active_pairs, level=level)

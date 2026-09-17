@@ -1,6 +1,6 @@
 import dataclasses
 from functools import cached_property
-from typing import Any, Callable, Self, Sequence
+from typing import Any, Callable, Self, Sequence, ClassVar
 
 from natsune.adapters import (
     RA_VA,

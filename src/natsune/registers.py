@@ -282,6 +282,17 @@ class ToInterfaceRegister(InterfaceRegister):
         self.connector.annihilate(given)
         return _ToRegister(taken, self.adapter, self.connector)
 
+    def split(self, serialize: bool = False) -> Sequence[Self]:
+        if serialize:
+            taken, given = self.extend()
+            CurriedProcess.serialize(
+                self.connector,
+                as_from_register(given, self.adapter, self.connector),
+                as_to_register(taken, self.adapter, self.connector),
+            )
+
+        return super().split()
+
 
 @dataclasses.dataclass
 class FlowRegisterUsage:

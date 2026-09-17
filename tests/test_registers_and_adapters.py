@@ -24,7 +24,7 @@ from natsune.invocations import (
     send_parameters,
 )
 from natsune.optimizer import optimize
-from natsune.ports import ValuePort, Port, Wire, Erasure
+from natsune.ports import ValuePort, Port, Wire, Erasure, CombPort, Graft
 from natsune.registers import (
     serialize_values,
     send_value,
@@ -113,6 +113,31 @@ def test_interface_register_split_from(c: Calculus) -> None:
 
     assert c.readout(0) == [1]
     assert c.readout(1) == [2]
+
+
+def test_interface_register_split_into(c: Calculus) -> None:
+    register1 = ToInterfaceRegister(
+        ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor
+    )
+    register2 = ToInterfaceRegister(
+        ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor
+    )
+    parts1 = register1.split()
+    parts2 = register2.split(serialize=True)
+
+    send_value(c.from_key(0, register1.adapter), register1.interface_readin())
+    send_value(c.from_key(1, register2.adapter), register2.interface_readin())
+
+    assert isinstance(c.reduce(0), CombPort)
+    send_value(c.const(1), parts1[0].readin())
+    send_value(c.const(2), parts1[1].readin())
+    assert c.readout(0) == [2, 1]
+
+    c.assert_open(1)
+    send_value(c.const(1), parts2[0].readin())
+    send_value(c.const(2), parts2[1].readin())
+    send_value(c.from_key(1, register2.adapter), c.to_key(2))
+    assert c.reduce_to_value(2) == (1, 2)
 
 
 def test_from_register_split(c: Calculus) -> None:

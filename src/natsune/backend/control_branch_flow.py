@@ -82,43 +82,32 @@ class ControlBranchFlow:
         self.cur_control.return_value |= continuation.return_value.readout()
 
     def close(self) -> None:
-        # Net law 4: can't-fire slots are shortcut, NEVER readout — a slot
-        # shortcut per `exits` must not be wired onward (reading out a
-        # shortcut slot fires an annihilation value, which the Loop
-        # composite would consume as an iteration completion and recurse
-        # forever). Each control path is wired only when `exits` says it
-        # can fire. The bundles forward raw: layers receive the full live
-        # bundle (see __post_init__), so every control path carries live
-        # values for every variable.
         if not (self.exits & Exits.FALLTHROUGH):
             self.cur_control.finish_variables.shortcut()
-        else:
-            send_value(
-                self.cur_control.finish_variables.readout(),
-                self.containing_flow.control_output.finish_variables.readin(),
-            )
         if not (self.exits & Exits.RETURN):
             self.cur_control.return_value.shortcut()
-        else:
-            send_value(
-                self.cur_control.return_value.readout(),
-                self.containing_flow.control_output.return_value.readin(),
-            )
         if not (self.exits & Exits.CONTINUE):
             self.cur_control.continue_variables.shortcut()
-        else:
-            send_value(
-                self.cur_control.continue_variables.readout(),
-                self.containing_flow.control_output.continue_variables.readin(),
-            )
-
         if not (self.exits & Exits.BREAK):
             self.cur_control.break_variables.shortcut()
-        else:
-            send_value(
-                self.cur_control.break_variables.readout(),
-                self.containing_flow.control_output.break_variables.readin(),
-            )
+
+        send_value(
+            self.cur_control.finish_variables.readout(),
+            self.containing_flow.control_output.finish_variables.readin(),
+        )
+        send_value(
+            self.cur_control.return_value.readout(),
+            self.containing_flow.control_output.return_value.readin(),
+        )
+        send_value(
+            self.cur_control.continue_variables.readout(),
+            self.containing_flow.control_output.continue_variables.readin(),
+        )
+
+        send_value(
+            self.cur_control.break_variables.readout(),
+            self.containing_flow.control_output.break_variables.readin(),
+        )
 
         self.containing_flow.close()
 
