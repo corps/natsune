@@ -243,6 +243,19 @@ def flag_break(a: int) -> int:
     return total
 
 
+# aspirational -- we should be able to get this working without starvation by using serialization in just the right places.
+def while_true_with_break(a: int) -> int:
+    total = 0
+    i = 0
+    while True:
+        if i >= a:
+            break
+        else:
+            total += i
+            i += 1
+    return total
+
+
 # --- differential matrix (legacy is a valid oracle for these) -------------
 
 
@@ -307,6 +320,14 @@ def test_flag_loop_legacy_starves():
     legacy's output; ours terminates with the correct sum."""
     program = Program(flag_break)
     assert program.call(5) == 10
+    assert program.lower()(5) == 10
+
+
+@pytest.mark.skip(
+    reason="Need to fix saturation issue by improving the way serialization works"
+)
+def test_while_true_break():
+    program = Program(while_true_with_break)
     assert program.lower()(5) == 10
 
 
