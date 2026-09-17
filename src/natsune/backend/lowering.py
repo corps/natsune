@@ -12,6 +12,8 @@ from natsune.backend.protocol import Backend, LoweredUnit
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import (
     CloseAfterContingent,
+    FlowControlInto,
+    FlowInputInto,
     IfThenElse,
     IfThenElseStatement,
     Loop,
@@ -19,7 +21,6 @@ from natsune.control_flow import (
     SerialOr,
     VariablesFlow,
 )
-from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.frontend.ir import IrBody, IrFunction
 from natsune.frontend.ir.nodes import (
     Exits,
