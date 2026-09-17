@@ -23,7 +23,7 @@ from typing import Any
 from natsune.backend.lowering import lower_function
 from natsune.backend.python_backend import PythonBackend
 from natsune.compiler import InetFunctionCompiler
-from natsune.control_flow_generated import FlowControlInto, FlowInputInto
+from natsune.control_flow import FlowControlInto, FlowInputInto
 from natsune.executor import DeterministicSerialExecutor
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.ir import IrFunction, build_ir

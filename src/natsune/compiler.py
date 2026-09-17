@@ -24,15 +24,13 @@ from natsune.connector import Connector
 from natsune.control_flow import (
     ConcurrentValueMerge,
     ExceptionSink,
+    FlowControlInto,
+    FlowInputInto,
     FlowMap,
     IfThenElse,
     IfThenElseStatement,
     Loop,
     VariablesFlow,
-)
-from natsune.control_flow_generated import (
-    FlowControlInto,
-    FlowInputInto,
 )
 from natsune.executor import DeterministicSerialExecutor, Executor
 from natsune.invocations import (

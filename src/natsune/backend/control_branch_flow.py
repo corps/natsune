@@ -1,8 +1,7 @@
 import dataclasses
 from typing import Mapping
 
-from natsune.control_flow import VariablesFlow
-from natsune.control_flow_generated import FlowControlInto
+from natsune.control_flow import FlowControlInto, VariablesFlow
 from natsune.frontend.ir import Exits, VariableUsage
 from natsune.ports import Erasure, Wire
 from natsune.registers import (

@@ -3,13 +3,14 @@ from typing import Any, Iterator, Sequence
 from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
 from natsune.control_flow import (
     CloseAfterContingent,
+    FlowControlInto,
+    FlowInputInto,
     IfThenElse,
     IfThenElseStatement,
     Loop,
     SerialAnd,
     SerialOr,
 )
-from natsune.control_flow_generated import FlowControlInto, FlowInputInto
 from natsune.invocations import Invocation, closer, pack_from, pack_into
 from natsune.legacy import LegacyInetInterface
 from natsune.ports import Graft, Wire

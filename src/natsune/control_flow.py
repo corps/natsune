@@ -1,6 +1,6 @@
 import dataclasses
 from functools import cached_property
-from typing import Any, Callable, Self, Sequence, ClassVar
+from typing import Any, Callable, ClassVar, Self, Sequence
 
 from natsune.adapters import (
     RA_VA,
@@ -16,26 +16,14 @@ from natsune.connector import (
     new_wires_cache,
     serialize_port,
 )
-from natsune.control_flow_generated import (
-    FlowControlFrom,
-    FlowControlInto,
-    FlowInputFrom,
-    FlowInputInto,
-    IfThenElseOutputFrom,
-    IfThenElseOutputInto,
-    MergeOutputFrom,
-    MergeOutputInto,
-    ParallelMergeInputInto,
-)
 from natsune.invocations import (
-    LHS,
-    RHS,
     ExpansionWithAdapters,
     Invocation,
+    _pack_from,
+    _pack_into,
     closer,
     expansion_invocation,
     filter_invocation,
-    generate_register_pair_types,
     merge_invocation,
     pack_from,
     pack_into,
@@ -105,53 +93,92 @@ class AmbiguousInvocation:
     o_second_value: FromRegister
 
 
-@dataclasses.dataclass
-class FlowInput:
-    variables: LHS
-    value: LHS
+def flow_input_adapter(variables: Variables) -> Adapter:
+    return ParValueAdapter(
+        [
+            variables.adapter,
+            VA,
+        ]
+    )
+
+
+@dataclasses.dataclass(slots=True)
+class FlowInputInto:
+    variables: ToInterfaceRegister
+    value: ToInterfaceRegister
 
     @classmethod
-    def adapter(cls, variables: Variables) -> Adapter:
-        return ParValueAdapter(
-            [
-                variables.adapter,
-                VA,
-            ]
-        )
+    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
+        return _pack_into(to_register, cls)
 
 
-generate_register_pair_types(FlowInput)
-
-
-@dataclasses.dataclass
-class FlowControl:
-    return_value: RHS
-    continue_variables: RHS
-    break_variables: RHS
-    finish_variables: RHS
+@dataclasses.dataclass(slots=True)
+class FlowInputFrom:
+    variables: FromInterfaceRegister
+    value: FromInterfaceRegister
 
     @classmethod
-    def adapter(cls, return_adapter: Adapter, variables: Variables) -> Adapter:
-        return ParValueAdapter(
-            [
-                return_adapter,
-                variables.adapter,
-                variables.adapter,
-                variables.adapter,
-            ]
-        )
+    def pack_from(cls, from_register: FromInterfaceRegister) -> Self:
+        return _pack_from(from_register, cls)
 
 
-generate_register_pair_types(FlowControl)
+def flow_control_adapter(return_adapter: Adapter, variables: Variables) -> Adapter:
+    return ParValueAdapter(
+        [
+            return_adapter,
+            variables.adapter,
+            variables.adapter,
+            variables.adapter,
+        ]
+    )
+
+
+@dataclasses.dataclass(slots=True)
+class FlowControlInto:
+    return_value: FromInterfaceRegister
+    continue_variables: FromInterfaceRegister
+    break_variables: FromInterfaceRegister
+    finish_variables: FromInterfaceRegister
+
+    @classmethod
+    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
+        return _pack_into(to_register, cls)
+
+
+@dataclasses.dataclass(slots=True)
+class FlowControlFrom:
+    return_value: ToInterfaceRegister
+    continue_variables: ToInterfaceRegister
+    break_variables: ToInterfaceRegister
+    finish_variables: ToInterfaceRegister
+
+    @classmethod
+    def pack_from(cls, from_register: FromInterfaceRegister) -> Self:
+        return _pack_from(from_register, cls)
+
 
 IfThenElseInputInto = ToInterfaceRegister
 IfThenElseInputFrom = FromInterfaceRegister
 
 
-@dataclasses.dataclass
-class IfThenElseOutput:
-    context: LHS
-    result: RHS
+@dataclasses.dataclass(slots=True)
+class IfThenElseOutputInto:
+    context: ToInterfaceRegister
+    result: FromInterfaceRegister
+
+    @classmethod
+    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
+        return _pack_into(to_register, cls)
+
+
+@dataclasses.dataclass(slots=True)
+class IfThenElseOutputFrom:
+    context: FromInterfaceRegister
+    result: ToInterfaceRegister
+
+    @classmethod
+    def pack_from(cls, from_register: FromInterfaceRegister) -> Self:
+        return _pack_from(from_register, cls)
 
 
 @dataclasses.dataclass(slots=True)
@@ -159,33 +186,57 @@ class IfThenElseStatementOutputInto:
     context: FlowInputInto
     result: FlowControlInto
 
+    @classmethod
+    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
+        return _pack_into(to_register, cls)
 
-generate_register_pair_types(IfThenElseOutput)
 
 MergeInputTo = ToInterfaceRegister
 MergeInputFrom = FromInterfaceRegister
 
 
-@dataclasses.dataclass
-class MergeOutput:
-    second_value: LHS
-    result: RHS
+@dataclasses.dataclass(slots=True)
+class MergeOutputInto:
+    second_value: ToInterfaceRegister
+    result: FromInterfaceRegister
+
+    @classmethod
+    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
+        return _pack_into(to_register, cls)
 
 
-generate_register_pair_types(MergeOutput)
+@dataclasses.dataclass(slots=True)
+class MergeOutputFrom:
+    second_value: FromInterfaceRegister
+    result: ToInterfaceRegister
+
+    @classmethod
+    def pack_from(cls, from_register: FromInterfaceRegister) -> Self:
+        return _pack_from(from_register, cls)
 
 
-@dataclasses.dataclass
-class ParallelMergeInput:
-    first_value: LHS
-    second_value: LHS
+@dataclasses.dataclass(slots=True)
+class ParallelMergeInputInto:
+    first_value: ToInterfaceRegister
+    second_value: ToInterfaceRegister
+
+    @classmethod
+    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
+        return _pack_into(to_register, cls)
+
+
+@dataclasses.dataclass(slots=True)
+class ParallelMergeInputFrom:
+    first_value: FromInterfaceRegister
+    second_value: FromInterfaceRegister
+
+    @classmethod
+    def pack_from(cls, from_register: FromInterfaceRegister) -> Self:
+        return _pack_from(from_register, cls)
 
 
 ParallelMergeOutputTo = FromInterfaceRegister
 ParallelMergeOutputFrom = ToInterfaceRegister
-
-
-generate_register_pair_types(ParallelMergeInput)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -515,8 +566,8 @@ class VariablesFlow(ExpansionBuilder):
         return id(self)
 
     def __post_init__(self) -> None:
-        self.input_adapter = FlowInput.adapter(self.variables)
-        self.output_adapter = FlowControl.adapter(self.return_adapter, self.variables)
+        self.input_adapter = flow_input_adapter(self.variables)
+        self.output_adapter = flow_control_adapter(self.return_adapter, self.variables)
 
         input_variables = iter(self.flow_input.variables.split())
 
@@ -710,11 +761,11 @@ class Loop(ExpansionWithAdapters):
 
     @cached_property
     def input_adapter(self) -> Adapter:
-        return FlowInput.adapter(self.body.variables)
+        return flow_input_adapter(self.body.variables)
 
     @cached_property
     def output_adapter(self) -> Adapter:
-        return FlowControl.adapter(self.body.return_adapter, self.body.variables)
+        return flow_control_adapter(self.body.return_adapter, self.body.variables)
 
     def invocation(
         self, invoker: Connector

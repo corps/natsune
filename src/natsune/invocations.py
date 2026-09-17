@@ -1,5 +1,4 @@
 import dataclasses
-import sys
 from contextlib import AbstractContextManager
 from typing import (
     Any,
@@ -11,12 +10,9 @@ from typing import (
     runtime_checkable,
 )
 
-from karakuri.annotations import Annotation, Hole
-from karakuri.call_mapping import CallMapping
-from karakuri.codegen_buffer import generate
-from karakuri.fielded import DataclassTyping
+from karakuri.annotations import Annotation
 
-from natsune.adapters import VA, Adapter, ValueAdapter
+from natsune.adapters import VA, Adapter
 from natsune.connector import Connector
 from natsune.ports import (
     Erasure,
@@ -28,7 +24,6 @@ from natsune.ports import (
     Wire,
 )
 from natsune.registers import (
-    CurriedProcess,
     FromInterfaceRegister,
     FromRegister,
     InterfaceRegister,
@@ -194,31 +189,14 @@ class Invocation[P, W]:
         closer(self.wire).close()
 
 
-class LHS: ...
-
-
-class RHS: ...
-
-
-def _map_into(f: tuple[str, Annotation]) -> tuple[str, Annotation]:
-    name, annotation = f
-    if issubclass(annotation.source, LHS):
-        return name, Annotation.from_type_expression(ToInterfaceRegister)
-    if issubclass(annotation.source, RHS):
-        return name, Annotation.from_type_expression(FromInterfaceRegister)
-    raise TypeError(f"Unexpected type {annotation.source}")
-
-
-def _map_from(f: tuple[str, Annotation]) -> tuple[str, Annotation] | None:
-    name, annotation = f
-    if issubclass(annotation.source, LHS):
-        return name, Annotation.from_type_expression(FromInterfaceRegister)
-    if issubclass(annotation.source, RHS):
-        return name, Annotation.from_type_expression(ToInterfaceRegister)
-    raise TypeError(f"Unexpected type {annotation.source}")
-
-
 def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
+    method = getattr(struct, "pack_into", None)
+    if method is not None:
+        return method(to_register)
+    return _pack_into(to_register, struct)
+
+
+def _pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
     if issubclass(struct, ToInterfaceRegister):
         return cast(T, to_register)
     elif issubclass(struct, FromInterfaceRegister):
@@ -264,6 +242,13 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
 
 
 def pack_from[T](from_register: FromInterfaceRegister, struct: type[T]) -> T:
+    method = getattr(struct, "pack_from", None)
+    if method is not None:
+        return method(from_register)
+    return _pack_from(from_register, struct)
+
+
+def _pack_from[T](from_register: FromInterfaceRegister, struct: type[T]) -> T:
     if issubclass(struct, ToInterfaceRegister):
         return cast(
             T,
@@ -302,24 +287,3 @@ def pack_from[T](from_register: FromInterfaceRegister, struct: type[T]) -> T:
             )
 
     return struct(**args)
-
-
-def generate_register_pair_types(t: type):
-    mapping = CallMapping.maybe_from_structure(t)
-    assert mapping
-
-    generate(
-        f"{t.__name__}Into",
-        DataclassTyping(
-            parameters=mapping.parameters.non_variadic_parameters.map(_map_into)
-        ),
-        sys._getframe(1).f_globals,
-    )
-
-    generate(
-        f"{t.__name__}From",
-        DataclassTyping(
-            parameters=mapping.parameters.non_variadic_parameters.filter_map(_map_from)
-        ),
-        sys._getframe(1).f_globals,
-    )

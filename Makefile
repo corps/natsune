@@ -1,6 +1,3 @@
-codegen:
-	KARAKURI_GENERATION=1 nix develop -c python -c "import natsune.control_flow; from karakuri.codegen_buffer import write_generated_types; write_generated_types()"
-
 # Compare rendered IRs against stored snapshots (tests/frontend/snapshots/).
 snapshots-check:
 	uv run pytest tests/frontend/test_snapshots.py
