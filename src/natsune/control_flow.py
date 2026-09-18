@@ -109,8 +109,18 @@ class FlowInputInto:
     value: ToInterfaceRegister
 
     @classmethod
-    def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
-        return _pack_into(to_register, cls)
+    def pack_into(cls, to_register: ToInterfaceRegister) -> FlowInputInto:
+        assert isinstance(to_register.adapter, ParValueAdapter)
+        variables_adapter, value_adapter = to_register.adapter.concurrent_items
+        variables = ToInterfaceRegister(variables_adapter, to_register.connector)
+        value = ToInterfaceRegister(value_adapter, to_register.connector)
+
+        send_value(
+            (~variables.interface_readin() & ~value.interface_readin()),
+            to_register.readin(),
+        )
+
+        return FlowInputInto(variables, value)
 
 
 @dataclasses.dataclass(slots=True)

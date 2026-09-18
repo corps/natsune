@@ -4,6 +4,7 @@ from typing import (
     Any,
     Callable,
     Iterator,
+    Literal,
     Protocol,
     Sequence,
     cast,
@@ -197,7 +198,8 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
 
 
 def _pack_into[T](
-    to_register: ToInterfaceRegister, struct: type[T], serialize: bool = False
+    to_register: ToInterfaceRegister,
+    struct: type[T],
 ) -> T:
     if issubclass(struct, ToInterfaceRegister):
         return cast(T, to_register)
@@ -215,9 +217,7 @@ def _pack_into[T](
     assert dataclasses.is_dataclass(struct)
     args: dict = {}
 
-    for field, register in zip(
-        dataclasses.fields(struct), to_register.split(serialize=serialize)
-    ):
+    for field, register in zip(dataclasses.fields(struct), to_register.split()):
         if Annotation.from_type_expression(
             field.type
         ) <= Annotation.from_type_expression(ToInterfaceRegister):

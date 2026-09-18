@@ -23,6 +23,7 @@ dynamic condition — the flag variant is exercised below.
 import pytest
 
 from natsune.control_flow import Loop
+from natsune.special_forms import Ref
 from tests.backend.helpers import Program, capturing_lower, program_ids, run_legacy
 
 # --- case programs -------------------------------------------------------
@@ -243,8 +244,15 @@ def flag_break(a: int) -> int:
     return total
 
 
-# aspirational -- we should be able to get this working without starvation by using serialization in just the right places.
-def while_true_with_break(a: int) -> int:
+def while_true_break(a: int) -> int:
+    total = 0
+    while True:
+        total += a
+        break
+    return total
+
+
+def while_true_if_break(a: int) -> int:
     total = 0
     i = 0
     while True:
@@ -323,10 +331,14 @@ def test_flag_loop_legacy_starves():
     assert program.lower()(5) == 10
 
 
-@pytest.mark.skip(reason="a")
-def test_while_true_break():
-    program = Program(while_true_with_break)
+def test_while_true_if_break():
+    program = Program(while_true_if_break)
     assert program.lower()(5) == 10
+
+
+def test_while_true_break():
+    program = Program(while_true_break)
+    assert program.lower()(5) == 5
 
 
 # --- introspection ---------------------------------------------------------

@@ -15,14 +15,13 @@ from natsune.invocations import Invocation, closer, pack_from, pack_into
 from natsune.legacy import LegacyInetInterface
 from natsune.ports import Graft, Wire
 from natsune.registers import (
-    CurriedProcess,
     FromInterfaceRegister,
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
 )
 
-type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent | CurriedProcess
+type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent
 
 
 def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:

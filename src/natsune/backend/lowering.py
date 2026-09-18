@@ -54,7 +54,6 @@ from natsune.invocations import (
 )
 from natsune.ports import Expansion, Graft, Port, Target, Wire
 from natsune.registers import (
-    CurriedProcess,
     FromRegister,
     as_constant_register,
     as_from_register,
@@ -108,9 +107,7 @@ class _FunctionLowering:
                         )
                     else:
                         expansions.extend((expansion.true_case, expansion.false_case))
-            elif isinstance(
-                expansion, (SerialOr, SerialAnd, CloseAfterContingent, CurriedProcess)
-            ):
+            elif isinstance(expansion, (SerialOr, SerialAnd, CloseAfterContingent)):
                 if expansion not in seen_agents:
                     seen_agents.add(expansion)
             else:

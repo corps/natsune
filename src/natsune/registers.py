@@ -86,6 +86,7 @@ class ToRegister(Protocol):
     def connector(self) -> Connector: ...
     def split(self) -> Sequence[ToRegister]: ...
     def __invert__(self) -> FromRegister: ...
+    def to_interface(self) -> ToInterfaceRegister: ...
 
 
 def as_constant_register(value: Any, connector: Connector) -> FromRegister:
@@ -146,7 +147,6 @@ class _FromRegister:
     def __or__(self, other: FromRegister) -> FromRegister:
         from natsune.control_flow import SerialOr
 
-        # TODO: Tagged Adapter Variant handling, but largely this can be ignored with unsafe Any usage.
         assert self.adapter == other.adapter
 
         with SerialOr(other.adapter).invocation(self.connector) as selection:
@@ -200,7 +200,7 @@ class _FromRegister:
         assert isinstance(in2, _ToRegister)
 
         from_, to_ = (
-            self.unsafe() & ~in1.unsafe() | other.unsafe() & ~in2.unsafe()
+            (self.unsafe() & ~in1.unsafe()) | (other.unsafe() & ~in2.unsafe())
         ).split()
         send_value(from_, ~to_)
         return out1, out2
@@ -242,6 +242,11 @@ class _ToRegister:
 
     def unsafe(self) -> ToRegister:
         return _ToRegister(self.port, UA, self.connector)
+
+    def to_interface(self) -> ToInterfaceRegister:
+        result = ToInterfaceRegister(self.adapter, self.connector)
+        self.connector.connect(self.port, result.interface)
+        return result
 
 
 @dataclasses.dataclass(slots=True)
@@ -315,17 +320,6 @@ class ToInterfaceRegister(InterfaceRegister):
         taken, given = self.extend()
         self.connector.annihilate(given)
         return _ToRegister(taken, self.adapter, self.connector)
-
-    def split(self, serialize: bool = False) -> Sequence[Self]:
-        if serialize:
-            taken, given = self.extend()
-            CurriedProcess.serialize(
-                self.connector,
-                as_from_register(given, self.adapter, self.connector),
-                as_to_register(taken, self.adapter, self.connector),
-            )
-
-        return super().split()
 
 
 @dataclasses.dataclass
@@ -581,13 +575,18 @@ class CurriedProcess(Expansion):
     # literally CombPort + tup, but we're going to keep it simple.
     # Two state automata -- find tuple, check arms
     state: Literal["find_tuple", "check_arms"] = "find_tuple"
+    with_contraction: bool = False
 
     def __copy__(self) -> Self:
         return self
 
     @classmethod
     def serialize(
-        cls, connector: Connector, source: FromRegister, dest: ToRegister
+        cls,
+        connector: Connector,
+        source: FromRegister,
+        dest: ToRegister,
+        with_contraction: bool = False,
     ) -> None:
         assert isinstance(dest.adapter, ParValueAdapter)
         assert isinstance(dest, _ToRegister)
@@ -595,11 +594,12 @@ class CurriedProcess(Expansion):
         y1, y2 = Wire.as_interface()
         sink = as_to_register(x1, dest.adapter, connector)
         send_value(source, sink)
-        cls.find_tuple(connector, x2, y1, y2, dest.port)
+        CurriedProcess("find_tuple", with_contraction=with_contraction).find_tuple(
+            connector, x2, y1, y2, dest.port
+        )
 
-    @classmethod
     def find_tuple(
-        cls,
+        self,
         connector: Connector,
         tuple_head: Target,
         acc_head: Target,
@@ -608,7 +608,7 @@ class CurriedProcess(Expansion):
     ) -> None:
         connector.connect(
             Graft(
-                CurriedProcess("find_tuple"),
+                CurriedProcess("find_tuple", self.with_contraction),
                 [
                     connector.as_wire(acc_head),
                     connector.as_wire(acc_tail),
@@ -618,9 +618,8 @@ class CurriedProcess(Expansion):
             tuple_head,
         )
 
-    @classmethod
     def check_arms(
-        cls,
+        self,
         connector: Connector,
         head: Target,
         tail: Target,
@@ -631,7 +630,7 @@ class CurriedProcess(Expansion):
     ) -> None:
         connector.connect(
             Graft(
-                CurriedProcess("check_arms"),
+                CurriedProcess("check_arms", self.with_contraction),
                 [
                     connector.as_wire(tail),
                     connector.as_wire(acc_head),
@@ -657,6 +656,11 @@ class CurriedProcess(Expansion):
 
                 executor.connect(acc_head, invoker)
                 executor.annihilate(acc_tail)
+                return
+
+            if self.state == "check_arms" and self.with_contraction:
+                for wire in wires:
+                    executor.annihilate(wire, port)
                 return
 
         if self.state == "find_tuple":
