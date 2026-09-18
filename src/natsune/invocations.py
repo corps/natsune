@@ -196,7 +196,9 @@ def pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
     return _pack_into(to_register, struct)
 
 
-def _pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
+def _pack_into[T](
+    to_register: ToInterfaceRegister, struct: type[T], serialize: bool = False
+) -> T:
     if issubclass(struct, ToInterfaceRegister):
         return cast(T, to_register)
     elif issubclass(struct, FromInterfaceRegister):
@@ -212,8 +214,6 @@ def _pack_into[T](to_register: ToInterfaceRegister, struct: type[T]) -> T:
 
     assert dataclasses.is_dataclass(struct)
     args: dict = {}
-
-    serialize = bool(getattr(struct, "serialize", False))
 
     for field, register in zip(
         dataclasses.fields(struct), to_register.split(serialize=serialize)

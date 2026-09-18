@@ -5,6 +5,7 @@ from typing import (
     Any,
     ClassVar,
     Iterator,
+    Literal,
     MutableMapping,
     Protocol,
     Sequence,
@@ -23,7 +24,21 @@ class LinearWiringType(IntEnum):
     INVERSE = 2
 
 
-type AdapterWiringType = LinearWiringType | tuple[AdapterWiringType, ...]
+type AdapterWiringType = LinearWiringType | tuple[AdapterWiringType, ...] | Literal[
+    "Unknown"
+]
+
+
+def to_accepts_from(a: AdapterWiringType, b: AdapterWiringType) -> bool:
+    if a == "Unknown":
+        return True
+    if isinstance(a, LinearWiringType):
+        if isinstance(b, LinearWiringType):
+            return a == b
+    if isinstance(a, tuple):
+        if isinstance(b, tuple):
+            return all(to_accepts_from(x, y) for x, y in zip(a, b))
+    return False
 
 
 def read_independently(t: AdapterWiringType) -> bool:
@@ -100,6 +115,39 @@ class ValueAdapter(Adapter):
 
     def adapter_wiring_type(self) -> AdapterWiringType:
         return LinearWiringType.VALUE
+
+
+# An adapter type that provides no semantics for adaptation, but is capable of opaquely receiving
+# inputs.
+@dataclasses.dataclass(frozen=True, slots=True)
+class UnknownAdapter(Adapter):
+    def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
+        raise NotImplementedError
+
+    def close(self, target: Target, connector: Connector) -> None:
+        raise NotImplementedError
+
+    def produce_egression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
+    ) -> Port:
+        raise NotImplementedError
+
+    def produce_ingression(
+        self, taken: Wire, given: Wire, connector: Connector, share: bool = False
+    ) -> Port:
+        raise NotImplementedError
+
+    def unpack(self, target: Target, connector: Connector) -> Target:
+        raise NotImplementedError
+
+    def repack(self, target: Target, connector: Connector) -> Target:
+        raise NotImplementedError
+
+    def __iter__(self) -> Iterator[Adapter]:
+        yield self
+
+    def adapter_wiring_type(self) -> AdapterWiringType:
+        return "Unknown"
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -311,10 +359,9 @@ class InverseAdapter(Adapter):
         return LinearWiringType.INVERSE
 
 
-# Global singleton instances
-# These are stateless frozen dataclasses, so a single instance can be reused everywhere
 VA = ValueAdapter()
 RA_VA = ReferenceAdapter(VA)
+UA = UnknownAdapter()
 
 
 @dataclasses.dataclass

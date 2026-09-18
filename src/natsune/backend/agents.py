@@ -15,13 +15,14 @@ from natsune.invocations import Invocation, closer, pack_from, pack_into
 from natsune.legacy import LegacyInetInterface
 from natsune.ports import Graft, Wire
 from natsune.registers import (
+    CurriedProcess,
     FromInterfaceRegister,
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
 )
 
-type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent
+type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent | CurriedProcess
 
 
 def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
@@ -34,7 +35,9 @@ def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
 
 
 def callee_invocation(
-    agent: FrozenExpansion | AgentImpl, arity: int, connector: Connector
+    agent: FrozenExpansion | ExpansionBuilder | LegacyInetInterface,
+    arity: int,
+    connector: Connector,
 ) -> tuple[Sequence[ToRegister], FromRegister]:
     if isinstance(agent, LegacyInetInterface):
         input_adapter = agent.compiled.input_adapter

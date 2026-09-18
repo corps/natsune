@@ -323,9 +323,7 @@ def test_flag_loop_legacy_starves():
     assert program.lower()(5) == 10
 
 
-@pytest.mark.skip(
-    reason="Need to fix saturation issue by improving the way serialization works"
-)
+@pytest.mark.skip(reason="a")
 def test_while_true_break():
     program = Program(while_true_with_break)
     assert program.lower()(5) == 10

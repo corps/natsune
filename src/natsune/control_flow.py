@@ -49,6 +49,7 @@ from natsune.registers import (
     ToInterfaceRegister,
     ToRegister,
     as_from_register,
+    as_live_registers,
     as_to_register,
     borrow_registers,
     send_value,
@@ -804,6 +805,11 @@ class Loop(ExpansionWithAdapters):
                 )
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
+
+            body_return, body_break_variables = body_return.choice(body_break_variables)
+            body_break_variables, body_finish_variables = body_break_variables.choice(
+                body_finish_variables
+            )
 
             recurse_variables, recurse_iter = (
                 body_finish_variables & input_iter

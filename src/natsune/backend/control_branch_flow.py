@@ -1,11 +1,16 @@
 import dataclasses
 from typing import Mapping
 
-from natsune.control_flow import FlowControlInto, VariablesFlow
+from natsune.control_flow import (
+    FlowControlInto,
+    VariablesFlow,
+)
 from natsune.frontend.ir import Exits, VariableUsage
 from natsune.ports import Erasure, Wire
 from natsune.registers import (
+    FromRegister,
     as_from_register,
+    as_live_registers,
     as_to_register,
     send_value,
 )
@@ -43,42 +48,22 @@ class ControlBranchFlow:
         )
 
     def apply_continuation(self, continuation: FlowControlInto) -> None:
-        x1, x2 = Wire.as_interface()
-        flow_continue_in = as_to_register(
-            x1, self.containing_flow.variables.adapter, self.containing_flow
+        flow_return_out, flow_continue_out = continuation.return_value.readout().choice(
+            continuation.continue_variables.readout()
         )
-        flow_continue_out = as_from_register(
-            x2, self.containing_flow.variables.adapter, self.containing_flow
-        )
+        (
+            flow_continue_out,
+            flow_break_out,
+        ) = flow_continue_out.choice(continuation.break_variables.readout())
 
-        y1, y2 = Wire.as_interface()
-        flow_break_in = as_to_register(
-            y1, self.containing_flow.variables.adapter, self.containing_flow
+        flow_break_out, flow_finish_out = flow_break_out.choice(
+            continuation.finish_variables.readout()
         )
-        flow_break_out = as_from_register(
-            y2, self.containing_flow.variables.adapter, self.containing_flow
-        )
-
-        z1, z2 = Wire.as_interface()
-        flow_finish_in = as_to_register(
-            z1, self.containing_flow.variables.adapter, self.containing_flow
-        )
-        flow_finish_out = as_from_register(
-            z2, self.containing_flow.variables.adapter, self.containing_flow
-        )
-
-        control_out, control_in_ = (
-            (continuation.continue_variables.readout() & ~flow_continue_in)
-            | (continuation.break_variables.readout() & ~flow_break_in)
-            | (continuation.finish_variables.readout() + ~flow_finish_in)
-        ).split()
-
-        send_value(control_out, ~control_in_)
 
         self.cur_control.finish_variables = flow_finish_out.to_interface()
         self.cur_control.continue_variables |= flow_continue_out
         self.cur_control.break_variables |= flow_break_out
-        self.cur_control.return_value |= continuation.return_value.readout()
+        self.cur_control.return_value |= flow_return_out
 
     def close(self) -> None:
         if not (self.exits & Exits.FALLTHROUGH):

@@ -5,11 +5,14 @@ from karakuri.inference.mapping_inference import MappingInference
 
 from natsune.adapters import (
     RA_VA,
+    UA,
     VA,
     Adapter,
     ParValueAdapter,
     ReferenceAdapter,
+    UnknownAdapter,
     ValueAdapter,
+    to_accepts_from,
 )
 from natsune.connector import Connector
 from natsune.ports import (
@@ -41,6 +44,7 @@ __all__ = [
     "serialize_values",
     "as_constant_register",
     "as_value_register",
+    "as_live_registers",
     "FromInterfaceRegister",
     "ToInterfaceRegister",
     "CurriedProcess",
@@ -67,6 +71,7 @@ class FromRegister(Protocol):
     def __and__(self, other: FromRegister) -> FromRegister: ...
     def __add__(self, other: FromRegister) -> FromRegister: ...
     def __invert__(self) -> ToRegister: ...
+    def choice(self, other: FromRegister) -> tuple[FromRegister, FromRegister]: ...
     def trace(self, label: str) -> FromRegister: ...
     def to_interface(self) -> FromInterfaceRegister: ...
 
@@ -97,6 +102,12 @@ def as_from_register(target: Target, adapter: Adapter, c: Connector) -> FromRegi
 
 def as_to_register(target: Target, adapter: Adapter, c: Connector) -> ToRegister:
     return _ToRegister(target, adapter, c)
+
+
+def as_live_registers(
+    wire: Wire, adapter: Adapter, c: Connector
+) -> tuple[ToRegister, FromRegister]:
+    return as_to_register(wire, adapter, c), as_from_register(wire, adapter, c)
 
 
 # Registers are one-time usage targets that control a port through an adapter.
@@ -134,6 +145,9 @@ class _FromRegister:
 
     def __or__(self, other: FromRegister) -> FromRegister:
         from natsune.control_flow import SerialOr
+
+        # TODO: Tagged Adapter Variant handling, but largely this can be ignored with unsafe Any usage.
+        assert self.adapter == other.adapter
 
         with SerialOr(other.adapter).invocation(self.connector) as selection:
             send_value(self, selection.port.readin())
@@ -177,6 +191,23 @@ class _FromRegister:
     def __invert__(self) -> ToRegister:
         return _ToRegister(self.port, self.adapter, self.connector)
 
+    def choice(self, other: FromRegister) -> tuple[FromRegister, FromRegister]:
+        in1, out1 = as_live_registers(Wire(), self.adapter, self.connector)
+        in2, out2 = as_live_registers(Wire(), other.adapter, other.connector)
+
+        assert isinstance(other, _FromRegister)
+        assert isinstance(in1, _ToRegister)
+        assert isinstance(in2, _ToRegister)
+
+        from_, to_ = (
+            self.unsafe() & ~in1.unsafe() | other.unsafe() & ~in2.unsafe()
+        ).split()
+        send_value(from_, ~to_)
+        return out1, out2
+
+    def unsafe(self) -> FromRegister:
+        return _FromRegister(self.port, UA, self.connector)
+
 
 @dataclasses.dataclass(slots=True)
 class _ToRegister:
@@ -208,6 +239,9 @@ class _ToRegister:
 
     def __invert__(self) -> FromRegister:
         return _FromRegister(self.port, self.adapter, self.connector)
+
+    def unsafe(self) -> ToRegister:
+        return _ToRegister(self.port, UA, self.connector)
 
 
 @dataclasses.dataclass(slots=True)
@@ -381,7 +415,9 @@ def send_value(from_register: FromRegister, to_register: ToRegister) -> None:
 
     i = -1
     for i in range(min(len(from_parts), len(to_parts))):
-        if from_parts[i].adapter_wiring_type() != to_parts[i].adapter_wiring_type():
+        if not to_accepts_from(
+            to_parts[i].adapter_wiring_type(), from_parts[i].adapter_wiring_type()
+        ):
             break
     else:
         i += 1
