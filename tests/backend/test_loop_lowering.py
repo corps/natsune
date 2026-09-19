@@ -345,18 +345,20 @@ def test_loop_agent_is_cataloged():
     assert any(flow is loop.orelse for flow in unit.agents)
 
 
-# --- consolidation skips (old suite's infinite-value programs) -------------
+# --- consolidation (old suite's infinite-value programs) -------------------
 # The old suite's non-terminating loops, copied from test_compiler.py.
 # All of them ride the constant `while True:` shared limitation above;
-# Par/IrBoolOp blockers are stacked on top of it (the value-side IrTuple
-# and target-side composite gaps live in test_par_lowering.py). Legacy is
-# driven through ThreadPoolExecutor — the old suite ran these under
+# and_or additionally needs IrBoolOp lowering. (Their Par blockers are
+# gone — IrTuple/composite-target lowering landed, see
+# test_par_lowering.py.)
+#
+# The two build pins below RUN: both compilers accept the programs, and
+# the bodies deliberately never call them — EXECUTION is the shared
+# limitation. The two skips genuinely need to execute, and stay marked
+# so unskipping cannot wedge the suite. Legacy runs under
+# ThreadPoolExecutor — the old suite ran these under
 # @inet(executor=ThreadPoolExecutor()), and the finite parts of their
 # output only overtake the spinning branches under threads.
-#
-# None of these bodies executes a non-terminating program: the hang-case
-# bodies are build-only, and the others fail fast on the composite/IrTuple
-# gaps — unskipping must not wedge the suite.
 
 
 def infinite_value() -> int:
@@ -393,30 +395,31 @@ def and_or_with_finites_and_infinites() -> list:
     return paths
 
 
-def test_infinite_value_builds_but_never_returns():
+def test_infinite_value_compiles_everywhere():
+    """Old suite: infinite_value() feeds and_or's finites-and-infinites
+    algebra. Both compilers accept the program; the call itself hangs
+    BOTH implementations (constant-while, module docstring), so the body
+    is deliberately build-only."""
     program = Program(infinite_value)
     program.compile_legacy()
     program.lower()
 
 
-@pytest.mark.skip(
-    reason="IrTuple lowering is not in scope (the Par return literal); "
-    "and even compiled, the direct call hangs BOTH implementations — "
-    "the caller-side drop is the only terminating shape"
-)
-def test_ignored_infinite_loop_compiles():
-    """Old suite never called this directly either — only through
-    drops_infinite_loop. Legacy compiles it; the new lowering refuses it
-    at build (IrTuple)."""
+def test_ignored_infinite_loop_compiles_everywhere():
+    """The old suite never called this directly either — only through
+    drops_infinite_loop (a caller-side drop is the only terminating
+    shape: the direct call hangs BOTH implementations). Compiling is the
+    testable half, and both compilers do it."""
     program = Program(ignored_infinite_loop)
     program.compile_legacy()
     program.lower()
 
 
 @pytest.mark.skip(
-    reason="composite targets land with composites (the `a, b = "
-    "ignored_infinite_loop()` unpack) — legacy already returns 10 under "
-    "threads"
+    reason="constant `while True:` re-fires without sequencing in BOTH "
+    "implementations (the callee's loop; see module docstring) — the call "
+    "hangs legacy and the new lowering alike; the Par unpack itself is "
+    "supported since IrTargetTuple lowering landed"
 )
 def test_drops_infinite_loop_differential():
     """The finite Par element overtakes the spinning branch under

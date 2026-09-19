@@ -41,6 +41,7 @@ from natsune.frontend.ir.nodes import (
     IrTargetDynamic,
     IrTargetName,
     IrTargetTuple,
+    IrTuple,
     IrVar,
     IrWhile,
 )
@@ -57,6 +58,8 @@ from natsune.registers import (
     FromRegister,
     as_constant_register,
     as_from_register,
+    join_from_registers,
+    join_to_registers,
     send_value,
 )
 
@@ -513,13 +516,13 @@ class _FunctionLowering:
     def from_expr(self, expr: IrExpr, flow: VariablesFlow) -> FromRegister:
         if isinstance(expr, IrConst):
             return as_constant_register(expr.value, flow)
-        if isinstance(expr, IrVar):
+        elif isinstance(expr, IrVar):
             if expr.is_global:
                 raise NotImplementedError(
                     "global reads need the exec-context globals hook (§4(2))"
                 )
             return flow.variable_registers[expr.name].readout()
-        if isinstance(expr, IrDynamic):
+        elif isinstance(expr, IrDynamic):
             used: dict[str, FromRegister] = {}
             for name, sub in expr.captures:
                 if isinstance(sub, IrVar) and sub.is_global:
@@ -528,7 +531,7 @@ class _FunctionLowering:
             return self.backend.materialize_dynamic(
                 expr.ast_node, expr.source_text, used, expr.adapter, flow
             )
-        if isinstance(expr, IrCallInet):
+        elif isinstance(expr, IrCallInet):
             # Mirror old compiler.py:405–425: resolve the callee, wire args
             # left-to-right, return the output register. Arity/keywords are
             # frontend-validated (§3.3); the zip is strict anyway.
@@ -543,16 +546,39 @@ class _FunctionLowering:
             # presence in the body decides the gate (legacy: the identity
             # when False, an ExceptionSink invocation when True).
             return output
-        raise NotImplementedError(f"{type(expr).__name__} lowering is not in scope")
+        elif isinstance(expr, IrTuple):
+            # Par construction, mirroring old compiler.py's
+            # evaluate_from_expression ast.Tuple branch: the tuple's
+            # adapter derives from the ELEMENT registers (not the
+            # frontend-inferred annotation), the elements fan out into
+            # the Par's split, and the interface's far side is the value.
+            return join_from_registers(
+                [self.from_expr(element, flow) for element in expr.elements],
+                flow,
+            )
+        else:
+            assert_never(expr)
 
     def to_target(self, target: IrTarget, flow: VariablesFlow):
         if isinstance(target, IrTargetName):
             if target.is_global:
                 raise NotImplementedError("global assignment is refused (§10.10)")
             return flow.variable_registers[target.name].readin()
-        elif isinstance(target, IrTargetDynamic):
-            raise NotImplementedError("dynamic targets land with composites")
         elif isinstance(target, IrTargetTuple):
-            raise NotImplementedError("composite targets land with composites")
+            # Par deconstruction, mirroring old compiler.py's
+            # evaluate_to_expression ast.Tuple branch: the element
+            # targets' readins join into a Par-typed ToRegister, and
+            # send_value fans the incoming Par out through its split.
+            # Element adapters come from the bundle (the frontend marks
+            # unpack targets with the value Par's concurrent items), so
+            # a matching-shape Par wires port-for-port.
+            return join_to_registers(
+                [self.to_target(element, flow) for element in target.elements],
+                flow,
+            )
+        elif isinstance(target, IrTargetDynamic):
+            raise NotImplementedError(
+                "dynamic (attribute/subscript) targets are still out of scope"
+            )
         else:
             assert_never(target)
