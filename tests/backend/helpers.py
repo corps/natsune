@@ -157,10 +157,13 @@ def capturing_lower(program: Program):
     return backend.artifact
 
 
-def run_legacy(expansion, *args):
+def run_legacy(expansion, *args, executor=None):
     """Drive a legacy-compiled flow with concrete args through a
-    deterministic executor (mirrors the inet decorator's runtime)."""
-    exec = DeterministicSerialExecutor()
+    deterministic executor (mirrors the inet decorator's default
+    runtime); pass an executor to mirror @inet(executor=...) cases —
+    the old suite's infinite-value programs only terminate their output
+    under ThreadPoolExecutor."""
+    exec = executor if executor is not None else DeterministicSerialExecutor()
 
     with expansion_invocation(
         expansion, exec, FlowInputInto, FlowControlInto

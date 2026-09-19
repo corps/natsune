@@ -103,6 +103,16 @@ def interleaved_locals(a: int, b: int) -> int:
     return y + b
 
 
+# the old suite's basic: constant locals, augassign on a constant, and
+# effect statements over both dynamics and bare constants
+def basic(b: int) -> int:
+    a = 10
+    a = a + b
+    print(a)
+    print(123)
+    return a
+
+
 # --- call cases (callee linked through __inet__) --------------------------
 
 
@@ -197,6 +207,7 @@ _CASES = [
     (Program(chained_locals), (1,)),
     (Program(augassign_nested_value), (4,)),
     (Program(interleaved_locals), (2, 3)),
+    (Program(basic), (29,)),
 ]
 
 _CALL_PROGRAMS = [

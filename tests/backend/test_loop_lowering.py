@@ -1,29 +1,8 @@
-"""§6.1: IrWhile/IrFor lowering through the Loop composite — the slice
-that brings IrBreak/IrContinue to life.
-
-Cases are real module-level functions (see tests/backend/helpers.py).
-The oracle is differential wherever legacy's loop machinery is itself
-correct; the pinned divergences below are the cases where legacy's
-break/continue handling starves or miscounts (§5: the IR is the spec —
-old behavior is reference, not law).
-
-The design under test: the Loop composite's finish slot (= exhaustion,
-with body break riding it) sequences the trailing region off
-cur_control.finish, and all four result slots forward unconditionally
-exactly like the if composite's (§3.2's rule, loops included) —
-consumption stays exits-driven in ControlBranchFlow.close().
-
-Known shared limitation (NOT pinned as a test — both implementations
-hang): a constant `while True:` test. An immaterial constant feeding
-the recursive composite re-fires without sequencing, in legacy and here
-alike; write the test as a variable (`flag = True; while flag:`) or a
-dynamic condition — the flag variant is exercised below.
-"""
-
 import pytest
 
 from natsune.control_flow import Loop
-from natsune.special_forms import Ref
+from natsune.executor import ThreadPoolExecutor
+from natsune.special_forms import Par, Ref
 from tests.backend.helpers import Program, capturing_lower, program_ids, run_legacy
 
 # --- case programs -------------------------------------------------------
@@ -37,6 +16,17 @@ def while_sum(start: int, end: int) -> int:
     while i < end:
         total += i
         i += 1
+    return total
+
+
+# two-arg range with effect statements interleaved in the body (the old
+# suite's sum_it_up)
+def sum_it_up(start: int, end: int) -> int:
+    total = 0
+    for i in range(start, end):
+        print(total)
+        print(i)
+        total += i
     return total
 
 
@@ -229,8 +219,6 @@ def loop_implicit_none(a: int) -> None:
     print(total)
 
 
-# flag-variable loop (the `while True:` workaround — see the module
-# docstring): the test is a variable read, mutated inside an if/else
 def flag_break(a: int) -> int:
     total = 0
     i = 0
@@ -272,6 +260,7 @@ _CASES = [
     # own Python function; legacy and the new lowering must both match it.
     (Program(while_sum), (2, 6)),
     (Program(for_sum), (5,)),
+    (Program(sum_it_up), (1, 10)),
     (Program(while_continue), (6,)),
     (Program(for_continue), (6,)),
     (Program(while_continue_closer), (5,)),
@@ -354,3 +343,99 @@ def test_loop_agent_is_cataloged():
     loop = loops[0]
     assert any(flow is loop.body for flow in unit.agents)
     assert any(flow is loop.orelse for flow in unit.agents)
+
+
+# --- consolidation skips (old suite's infinite-value programs) -------------
+# The old suite's non-terminating loops, copied from test_compiler.py.
+# All of them ride the constant `while True:` shared limitation above;
+# Par/IrBoolOp blockers are stacked on top of it (the value-side IrTuple
+# and target-side composite gaps live in test_par_lowering.py). Legacy is
+# driven through ThreadPoolExecutor — the old suite ran these under
+# @inet(executor=ThreadPoolExecutor()), and the finite parts of their
+# output only overtake the spinning branches under threads.
+#
+# None of these bodies executes a non-terminating program: the hang-case
+# bodies are build-only, and the others fail fast on the composite/IrTuple
+# gaps — unskipping must not wedge the suite.
+
+
+def infinite_value() -> int:
+    a = 0
+    while True:
+        a += 1
+    return a
+
+
+def ignored_infinite_loop() -> Par[int, int]:
+    b = 0
+    while True:
+        b += 1
+    return 10, b
+
+
+def drops_infinite_loop() -> int:
+    a, b = ignored_infinite_loop()
+    return a
+
+
+def and_or_with_finites_and_infinites() -> list:
+    a = infinite_value()
+    paths: Ref[list] = []
+
+    if a < 10 or True:
+        paths.append("Infinite Or")
+
+    if a < 10 and False:
+        paths.append("Infinite And")
+
+    paths.append(10 and 0)
+    paths.append(10 or 0)
+    return paths
+
+
+def test_infinite_value_builds_but_never_returns():
+    program = Program(infinite_value)
+    program.compile_legacy()
+    program.lower()
+
+
+@pytest.mark.skip(
+    reason="IrTuple lowering is not in scope (the Par return literal); "
+    "and even compiled, the direct call hangs BOTH implementations — "
+    "the caller-side drop is the only terminating shape"
+)
+def test_ignored_infinite_loop_compiles():
+    """Old suite never called this directly either — only through
+    drops_infinite_loop. Legacy compiles it; the new lowering refuses it
+    at build (IrTuple)."""
+    program = Program(ignored_infinite_loop)
+    program.compile_legacy()
+    program.lower()
+
+
+@pytest.mark.skip(
+    reason="composite targets land with composites (the `a, b = "
+    "ignored_infinite_loop()` unpack) — legacy already returns 10 under "
+    "threads"
+)
+def test_drops_infinite_loop_differential():
+    """The finite Par element overtakes the spinning branch under
+    threads: legacy returns 10 while the callee's `b` never lands."""
+    program = Program(drops_infinite_loop, ignored_infinite_loop)
+    legacy = program.compile_legacy().compiled
+    assert run_legacy(legacy, executor=ThreadPoolExecutor()) == 10
+    assert program.lower()() == 10
+
+
+@pytest.mark.skip(
+    reason="IrBoolOp lowering is not in scope (`a < 10 or True`), and "
+    "the infinite_value callee hangs the new lowering on the constant-"
+    "while limitation regardless — legacy already returns the old "
+    "suite's value under threads"
+)
+def test_and_or_finites_and_infinites_differential():
+    program = Program(and_or_with_finites_and_infinites, infinite_value)
+    legacy = program.compile_legacy().compiled
+    expected = ["Infinite Or", 0, 10]
+    assert run_legacy(legacy, executor=ThreadPoolExecutor()) == expected
+    assert program.lower()() == expected
