@@ -1,7 +1,7 @@
 import ast
 from typing import Any, assert_never
 
-from natsune.adapters import VA, Adapter, Variables
+from natsune.adapters import VA, Adapter, ParValueAdapter, Variables
 from natsune.backend.agents import (
     AgentImpl,
     callee_invocation,
@@ -21,7 +21,7 @@ from natsune.control_flow import (
     SerialOr,
     VariablesFlow,
 )
-from natsune.frontend.ir import IrBody, IrFunction
+from natsune.frontend.ir import IrBody, IrBoolOp, IrFunction, IrParIndex
 from natsune.frontend.ir.nodes import (
     Exits,
     IrAssign,
@@ -555,6 +555,30 @@ class _FunctionLowering:
             return join_from_registers(
                 [self.from_expr(element, flow) for element in expr.elements],
                 flow,
+            )
+        elif isinstance(expr, IrBoolOp):
+            raise NotImplementedError("boolean operations are not yet supported")
+        elif isinstance(expr, IrParIndex):
+            # Par element read, mirroring old compiler.py's
+            # evaluate_from_expression ast.Subscript branch: split the
+            # base's Par and keep the indexed element, closing the
+            # neighbors — a linearizing read of the whole cell, exactly
+            # what the usage cross-check's "Par reads linearize" pin
+            # documents (element-pass-through reads are the marked
+            # post-cutover relaxation, not this). The frontend only
+            # builds IrParIndex for constant in-range integer subscripts
+            # of Par-typed bases, so the guards below fire on net
+            # corruption, not on user input.
+            inner = self.from_expr(expr.base, flow)
+            assert isinstance(
+                inner.adapter, ParValueAdapter
+            ), f"Par index into non-Par register: {inner.adapter}"
+            for index, element in enumerate(inner.split()):
+                if index == expr.index:
+                    return element
+                element.close()
+            raise AssertionError(
+                f"Par index {expr.index} out of range for {inner.adapter}"
             )
         else:
             assert_never(expr)

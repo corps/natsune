@@ -27,6 +27,15 @@ divergences, both asserted directly (§6: the IR is the spec):
   The old suite only ever ran its Par-of-Inverse construction through a
   consumer that writes the inverse (test_par_of_inverse_write_back),
   which retro-propagates through the Par — the time-travel payoff.
+
+Since IrParIndex lowering landed, element reads work too: `p[i]` splits
+the base's Par and keeps the indexed element, closing the neighbors
+(old evaluate_from_expression ast.Subscript shape). That is a
+linearizing read of the whole cell — the usage cross-check's "Par reads
+linearize" pin documents it, and stays accurate; element-pass-through
+reads are the marked post-cutover relaxation, not this. The frontend
+only builds IrParIndex for constant in-range integer subscripts of
+Par-typed bases (tuple literals and linked-call results included).
 """
 
 import pytest
@@ -72,6 +81,50 @@ def nested_unpack(p: Par[int, Par[int, int]]) -> int:
     return a + b + c
 
 
+# element reads: index 1 and index 0 (the usage cross-check's `second` is
+# this exact first shape — usage-classified a write, now lowered)
+def second(p: Par[int, int]) -> int:
+    return p[1]
+
+
+def first(p: Par[int, int]) -> int:
+    return p[0]
+
+
+# two subscripts on ONE base: each is a separate linearizing read of the
+# variable's cell
+def both_elements(p: Par[int, int]) -> int:
+    return p[0] + p[1]
+
+
+# subscript of a tuple LITERAL: the base lowers through the IrTuple join
+# before splitting
+def literal_element(a: int) -> int:
+    return (a, a + 1)[1]
+
+
+# subscript of a nested tuple literal: split, then split again
+def nested_literal(a: int) -> int:
+    return (a, (a + 1, a + 2))[1][0]
+
+
+# subscript of a LINKED-CALL result: the base is the callee's output
+# register
+def pair_call(a: int) -> Par[int, int]:
+    return a + 1, a * 2
+
+
+def call_element(a: int) -> int:
+    return pair_call(a)[0]
+
+
+# subscript inside a dynamic capture: the eval context receives the
+# ELEMENT, not the whole Par
+def printed_element(p: Par[int, int]) -> int:
+    print(p[0])
+    return p[1]
+
+
 # Par-of-Inverse construction: `a = b + 10` snapshots the inverse read;
 # the return carries the still-live inverse cell out through the Par.
 # Only meaningful through a consumer that writes the inverse (below) —
@@ -102,15 +155,23 @@ def use_delayed_inverse() -> int:
         (Program(other_basic), (10,), (12, 40)),
         (Program(invoke_an_inet, other_basic), (), 12),
         (Program(unpack_rebind), ((4, 5),), 19),
+        (Program(second), ((4, 5),), 5),
+        (Program(first), ((4, 5),), 4),
+        (Program(both_elements), ((4, 5),), 9),
+        (Program(literal_element), (10,), 11),
+        (Program(nested_literal), (1,), 2),
+        (Program(call_element, pair_call), (3,), 4),
+        (Program(printed_element), ((4, 5),), 5),
         (Program(use_delayed_inverse, delayed_inverse), (), 40),
     ],
     ids=program_ids,
 )
 def test_par_matches_legacy_execution(program: Program, args: tuple, expected):
     """The Par surface: whole-value passthrough, tuple-literal returns,
-    call-result unpacking, unpack-then-rebind, and the inverse write-back
-    through a Par element — identically through legacy and the new
-    lowering."""
+    call-result unpacking, unpack-then-rebind, element reads (of vars,
+    tuple literals, nested literals, and linked-call results, repeated
+    reads included), and the inverse write-back through a Par element —
+    identically through legacy and the new lowering."""
     assert run_legacy(program.compile_legacy().compiled, *args) == expected
     assert program.lower()(*args) == expected
 

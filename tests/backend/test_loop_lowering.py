@@ -415,15 +415,7 @@ def test_ignored_infinite_loop_compiles_everywhere():
     program.lower()
 
 
-@pytest.mark.skip(
-    reason="constant `while True:` re-fires without sequencing in BOTH "
-    "implementations (the callee's loop; see module docstring) — the call "
-    "hangs legacy and the new lowering alike; the Par unpack itself is "
-    "supported since IrTargetTuple lowering landed"
-)
 def test_drops_infinite_loop_differential():
-    """The finite Par element overtakes the spinning branch under
-    threads: legacy returns 10 while the callee's `b` never lands."""
     program = Program(drops_infinite_loop, ignored_infinite_loop)
     legacy = program.compile_legacy().compiled
     assert run_legacy(legacy, executor=ThreadPoolExecutor()) == 10
