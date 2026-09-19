@@ -156,7 +156,10 @@ class _FunctionLowering:
             elif isinstance(stmt, IrWhile):
                 self.collect_from_statements(stmt.body.statements, variables)
                 self.collect_from_statements(stmt.orelse.statements, variables)
-            # IrReturn/IrBreak/IrContinue/IrExprStmt declare nothing.
+            elif isinstance(stmt, (IrReturn, IrBreak, IrContinue, IrExprStmt)):
+                continue
+            else:
+                assert_never(stmt)
 
     def collect_from_target(
         self, target: IrTarget, variables: dict[str, Adapter]
@@ -218,10 +221,7 @@ class _FunctionLowering:
             elif isinstance(stmt, IrExprStmt):
                 self.from_expr(stmt.value, flow).close()
             else:
-                raise NotImplementedError(
-                    f"{type(stmt).__name__} lowering lands with the "
-                    "composite prototype"
-                )
+                assert_never(stmt)
 
         if body.closer is None:
             if exits & Exits.FALLTHROUGH:
