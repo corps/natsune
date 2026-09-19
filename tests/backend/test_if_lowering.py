@@ -29,6 +29,7 @@ from natsune.adapters import Variables, adapter_from_type
 from natsune.compiler import InetBranchCompiler
 from natsune.connector import Graft, serialize_active_pairs
 from natsune.control_flow import IfThenElseStatement, VariablesFlow
+from natsune.ports import Port, Wire
 from tests.backend.helpers import Program, capturing_lower, program_ids, run_legacy
 
 # --- case programs -------------------------------------------------------
@@ -172,14 +173,30 @@ def _branch_children(unit) -> list[VariablesFlow]:
     order. Under the restructured lowering a branch body is a containing
     ControlBranchFlow whose statements lower into a sequenced child flow;
     the child is the statement-for-statement counterpart of legacy's
-    branch flow, and the pair-equality oracle lives at that level."""
+    branch flow, and the pair-equality oracle lives at that level.
+
+    The child graft is recovered by a transitive walk over the case's
+    wires (the sequencing machinery sits between the case interface and
+    the layer invocation, so the graft is not a top-level pair)."""
     composite = _our_composite(unit)
     children = []
     for case in (composite.true_case, composite.false_case):
-        for pair in case.active_pairs:
-            for port in pair:
-                if isinstance(port, Graft) and isinstance(port.execute, VariablesFlow):
-                    children.append(port.execute)
+        targets: list[Port | Wire] = [
+            port for pair in case.active_pairs for port in pair
+        ]
+        child = None
+        while targets:
+            target = targets.pop()
+            if isinstance(target, Graft):
+                if isinstance(target.execute, VariablesFlow):
+                    child = target.execute
+                    break
+            if isinstance(target, Port):
+                targets.extend(target.wires)
+            elif isinstance(target, Wire) and target.target is not None:
+                targets.append(target.target)
+        assert child is not None, "no statement flow behind the branch"
+        children.append(child)
     return children
 
 

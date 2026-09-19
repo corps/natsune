@@ -114,7 +114,7 @@ def delayed_inverse() -> Par[int, Inverse[int]]:
 
 
 @inet
-def test_delayed_inverse() -> int:
+def use_delayed_inverse() -> int:
     a, b = delayed_inverse()
     b = 30
 
@@ -180,6 +180,6 @@ def test_compiled_functions() -> None:
     assert simple_inverse_example() == [5, 5]
     assert simple_inverse_loop_example(10) == 30
     assert shift_list_by_smallest([4, 9, 1, 10]) == [3, 8, 0, 9]
-    assert test_delayed_inverse() == 40
+    assert use_delayed_inverse() == 40
     assert drops_infinite_loop() == 10
     assert and_or_with_finites_and_infinites() == ["Infinite Or", 0, 10]

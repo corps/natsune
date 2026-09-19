@@ -31,6 +31,7 @@ from natsune.registers import (
     send_values,
     parallelize_value,
     as_from_register,
+    as_to_register,
     as_constant_register,
     FlowRegister,
     join_to_registers,
@@ -123,7 +124,17 @@ def test_interface_register_split_into(c: Calculus) -> None:
         ParValueAdapter([ValueAdapter(), ValueAdapter()]), c.executor
     )
     parts1 = register1.split()
-    parts2 = register2.split(serialize=True)
+
+    # The serialize variant: a CurriedProcess sits between the interface
+    # and the split point, so the parts are fed sequentially through the
+    # tuple automaton instead of straight off the parallel tuplate.
+    taken, given = register2.extend()
+    CurriedProcess.serialize(
+        register2.connector,
+        as_from_register(given, register2.adapter, register2.connector),
+        as_to_register(taken, register2.adapter, register2.connector),
+    )
+    parts2 = register2.split()
 
     send_value(c.from_key(0, register1.adapter), register1.interface_readin())
     send_value(c.from_key(1, register2.adapter), register2.interface_readin())
@@ -185,12 +196,20 @@ def test_variables_flow_invocation(c: Calculus) -> None:
     )
     optimize(flow, flow.active_pairs)
     with flow.invocation(c.executor, internal=True) as invocation:
+        # The input packing merges the variables and value slots through a
+        # SerialAnd that fires on the variables bundle, so the invocation
+        # only forwards once the variables side arrives (as run_legacy
+        # does): drain the unused variable slots to let the layer through.
+        for slot in invocation.port.variables.readin().split():
+            slot.close()
         send_value(invocation.wire.return_value.readout(), c.to_key(0))
         send_value(c.const(10), invocation.port.value.readin())
     assert c.readout(0) == [10]
 
 
-class TestExpansion(ExpansionWithAdapters):
+# Not a pytest test case despite the historical name — an expansion agent
+# exercised by test_expansion_invocation below.
+class PassThroughExpansion(ExpansionWithAdapters):
     @property
     def input_adapter(self) -> Adapter:
         return ValueAdapter()
@@ -213,7 +232,7 @@ class TestExpansion(ExpansionWithAdapters):
 
 def test_expansion_invocation(c: Calculus) -> None:
     with expansion_invocation(
-        TestExpansion(), c.executor, ToInterfaceRegister, FromInterfaceRegister
+        PassThroughExpansion(), c.executor, ToInterfaceRegister, FromInterfaceRegister
     ) as invocation:
         send_value(c.const(10), invocation.port.readin())
         send_value(invocation.wire.readout(), c.to_key(0))
