@@ -28,10 +28,6 @@ class ControlBranchFlow:
     cur_control: FlowControlInto = dataclasses.field(init=False)
 
     def __post_init__(self):
-        # The layer receives the FULL live bundle (all-write extension): a
-        # usage-erased input would poison this layer's neutral cells, and
-        # every control path (finish/continue/break) forwards the bundle
-        # onward. Linear values move through layers without copying.
         finish_variables = self.containing_flow.variables_readout()
 
         self.cur_control = FlowControlInto(

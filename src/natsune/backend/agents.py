@@ -26,8 +26,6 @@ type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | 
 
 
 def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
-    """Pull one element off `i`: (element, True), or (None, False) at
-    exhaustion. The Loop composite's iteration-flow primitive."""
     try:
         return next(i), True
     except StopIteration:
@@ -59,9 +57,6 @@ def callee_invocation(
     connector.connect(graft, inputs.interface)
     connector.connect(graft.wires[0], outputs.interface)
 
-    # The closer's exit is load-bearing (the legacy path's `with` does this
-    # implicitly): it annihilates each interface register's dangling state
-    # wire-end, which the golden-net oracle is sensitive to.
     with closer(
         Invocation(
             pack_into(inputs, FlowInputInto), pack_from(outputs, FlowControlInto)
