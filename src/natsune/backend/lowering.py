@@ -56,6 +56,7 @@ from natsune.invocations import (
 from natsune.ports import Expansion, Graft, Port, Target, Wire
 from natsune.registers import (
     FromRegister,
+    ToRegister,
     as_constant_register,
     as_from_register,
     join_from_registers,
@@ -583,7 +584,7 @@ class _FunctionLowering:
         else:
             assert_never(expr)
 
-    def to_target(self, target: IrTarget, flow: VariablesFlow):
+    def to_target(self, target: IrTarget, flow: VariablesFlow) -> ToRegister:
         if isinstance(target, IrTargetName):
             if target.is_global:
                 raise NotImplementedError("global assignment is refused (§10.10)")
@@ -601,8 +602,13 @@ class _FunctionLowering:
                 flow,
             )
         elif isinstance(target, IrTargetDynamic):
-            raise NotImplementedError(
-                "dynamic (attribute/subscript) targets are still out of scope"
+            used: dict[str, FromRegister] = {}
+            for name, sub in target.captures:
+                if isinstance(sub, IrVar) and sub.is_global:
+                    continue  # stays in the source; resolves through globals
+                used[name] = self.from_expr(sub, flow)
+            return self.backend.materialize_dynamic_to(
+                target.ast_node, target.source_text, used, VA, flow
             )
         else:
             assert_never(target)

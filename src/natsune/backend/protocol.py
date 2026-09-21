@@ -15,7 +15,7 @@ from natsune.adapters import Adapter
 from natsune.backend.agents import AgentImpl
 from natsune.connector import Connector, FrozenExpansion
 from natsune.frontend import IrFunction
-from natsune.registers import FromRegister
+from natsune.registers import FromRegister, ToRegister
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -35,24 +35,16 @@ class Backend(Protocol):
         captures: Mapping[str, FromRegister],
         adapter: Adapter,
         connector: Connector,
-    ) -> FromRegister:
-        """Receives BOTH the original ast node and its unparsed text;
-        backends use whichever is easier (Python evals the text, an emitter
-        pattern-matches the node). Mirrors IrDynamic/IrTargetDynamic.ast_node;
-        synthesized augassign dynamics carry a synthesized BinOp.
+    ) -> FromRegister: ...
 
-        ``captures`` is the already-lowered form: IrDynamic.captures is
-        tuple[tuple[str, IrExpr], ...] at the IR, but lowering resolves each
-        IrExpr to a FromRegister before calling — the backend never sees
-        IrExpr. FromRegister (not Port) because the eval context needs
-        register identity: serialize_values/borrow_registers consume value
-        SOURCES (the legacy used_names was dict[str, FromRegister]).
-        ``connector`` is the ambient flow the merge wires into (captures
-        may be empty — constants stay in the source text).
-
-        Returns a FromRegister: dynamics are inlined eagerly, not deferred
-        grafts — matches the legacy shape."""
-        ...
+    def materialize_dynamic_to(
+        self,
+        node: ast.expr,
+        source_text: str,
+        captures: Mapping[str, FromRegister],
+        adapter: Adapter,
+        connector: Connector,
+    ) -> ToRegister: ...
 
     def finish(
         self,

@@ -7,7 +7,7 @@ from typing import Any, Callable, Collection
 from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.backend.agents import AgentImpl, callee_invocation
 from natsune.backend.protocol import LoweredUnit
-from natsune.compiler import construct_locals, eval_expression
+from natsune.compiler import construct_locals, eval_expression, exec_expression
 from natsune.connector import Connector, FrozenExpansion
 from natsune.executor import Executor, ThreadPoolExecutor
 from natsune.frontend import IrFunction
@@ -17,10 +17,12 @@ from natsune.invocations import (
     merge_invocation,
     send_parameters,
 )
-from natsune.ports import Erasure, Graft
+from natsune.ports import Erasure, Graft, Wire
 from natsune.registers import (
     FromRegister,
+    ToRegister,
     as_constant_register,
+    as_from_register,
     as_to_register,
     borrow_registers,
     send_value,
@@ -63,6 +65,46 @@ class PythonBackend:
         )
         send_value(context, context_in)
         return result_a
+
+    def materialize_dynamic_to(
+        self,
+        node: ast.expr,
+        source_text: str,
+        captures: Mapping[str, FromRegister],
+        adapter: Adapter,
+        connector: Connector,
+    ) -> ToRegister:
+        capture_token = "___from_capture___"
+
+        source_text = f"{source_text} = {capture_token}"
+        (text_in, context_in), result = merge_invocation(exec_expression, connector)
+        result_a, result_b = result.duplicate("share")
+        send_value(as_constant_register(source_text, connector), text_in)
+
+        x1, x2 = Wire.as_interface()
+        captures = {capture_token: as_from_register(x2, adapter, connector), **captures}
+
+        value_readout = borrow_registers([*captures.values()], result_b)
+        context = send_parameters(
+            serialize_values(connector, 2),
+            (
+                as_constant_register({}, connector),
+                send_parameters(
+                    merge_invocation(construct_locals, connector),
+                    (
+                        send_parameters(
+                            serialize_values(connector, len(captures)),
+                            value_readout,
+                        ),
+                        as_constant_register(tuple(captures.keys()), connector),
+                    ),
+                ),
+            ),
+        )
+        send_value(context, context_in)
+        # TODO: Revisit when we handle exceptions.
+        result_a.close()
+        return as_to_register(x1, adapter, connector)
 
     def finish(
         self,
