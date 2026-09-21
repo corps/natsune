@@ -1,4 +1,5 @@
 import ast
+import operator
 from typing import Any, assert_never
 
 from natsune.adapters import VA, Adapter, ParValueAdapter, Variables
@@ -12,6 +13,7 @@ from natsune.backend.protocol import Backend, LoweredUnit
 from natsune.connector import ExpansionBuilder
 from natsune.control_flow import (
     CloseAfterContingent,
+    ConcurrentValueMerge,
     FlowControlInto,
     FlowInputInto,
     IfThenElse,
@@ -65,6 +67,14 @@ from natsune.registers import (
 )
 
 
+def true_and(a: Any, b: Any) -> Any:
+    return a and b
+
+
+def true_or(a: Any, b: Any) -> Any:
+    return a or b
+
+
 def lower_function(ir: IrFunction, backend: Backend) -> Any:
     lowering = _FunctionLowering(ir, backend)
     return lowering.run()
@@ -111,7 +121,10 @@ class _FunctionLowering:
                         )
                     else:
                         expansions.extend((expansion.true_case, expansion.false_case))
-            elif isinstance(expansion, (SerialOr, SerialAnd, CloseAfterContingent)):
+            elif isinstance(
+                expansion,
+                (SerialOr, SerialAnd, CloseAfterContingent, ConcurrentValueMerge),
+            ):
                 if expansion not in seen_agents:
                     seen_agents.add(expansion)
             else:
@@ -565,7 +578,19 @@ class _FunctionLowering:
                 flow,
             )
         elif isinstance(expr, IrBoolOp):
-            raise NotImplementedError("boolean operations are not yet supported")
+            merger = true_and if expr.op == "and" else true_or
+            should_shortcircuit = operator.not_ if expr.op == "and" else operator.truth
+            acc = self.from_expr(expr.values[0], flow)
+            for n in expr.values[1:]:
+                with ConcurrentValueMerge(should_shortcircuit, merger).invocation(
+                    flow
+                ) as invocation:
+                    a, b = invocation.port.readin().split()
+                    send_value(acc, a)
+                    send_value(self.from_expr(n, flow), b)
+                    acc = invocation.wire.readout()
+
+            return acc
         elif isinstance(expr, IrParIndex):
             # Par element read, mirroring old compiler.py's
             # evaluate_from_expression ast.Subscript branch: split the

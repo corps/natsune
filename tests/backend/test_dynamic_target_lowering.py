@@ -264,7 +264,6 @@ def test_plain_local_target_mutation_is_not_linearized():
     assert lower_with(program, DeterministicSerialExecutor())() == {}
 
 
-@pytest.mark.skip(reason="Boolean ops not yet supported")
 def test_plain_local_repeated_targets():
     program = Program(plain_local_repeated_targets)
     assert program.call() == {"a": 1, "b": 2}

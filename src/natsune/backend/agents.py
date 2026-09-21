@@ -3,6 +3,7 @@ from typing import Any, Iterator, Sequence
 from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
 from natsune.control_flow import (
     CloseAfterContingent,
+    ConcurrentValueMerge,
     FlowControlInto,
     FlowInputInto,
     IfThenElse,
@@ -21,7 +22,7 @@ from natsune.registers import (
     ToRegister,
 )
 
-type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent
+type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent | ConcurrentValueMerge
 
 
 def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
