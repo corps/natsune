@@ -422,12 +422,6 @@ def test_drops_infinite_loop_differential():
     assert program.lower()() == 10
 
 
-@pytest.mark.skip(
-    reason="IrBoolOp lowering is not in scope (`a < 10 or True`), and "
-    "the infinite_value callee hangs the new lowering on the constant-"
-    "while limitation regardless — legacy already returns the old "
-    "suite's value under threads"
-)
 def test_and_or_finites_and_infinites_differential():
     program = Program(and_or_with_finites_and_infinites, infinite_value)
     legacy = program.compile_legacy().compiled

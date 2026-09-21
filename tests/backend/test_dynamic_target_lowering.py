@@ -115,8 +115,13 @@ def plain_local_dict_target() -> dict:
     return d
 
 
+class copyless_dict(dict):
+    def __copy__(self):
+        return self
+
+
 def plain_local_repeated_targets() -> dict:
-    d = {}
+    d = copyless_dict()
     d["a"] = 1
     d["b"] = 2
 
