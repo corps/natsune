@@ -106,6 +106,7 @@ def build_ir(
         params=params,
         return_adapter=signature.return_adapter,
         body=_build_body(source.func_def.body, builder),
+        globals=source.globals,
         position=builder.position_of(source.func_def),
     )
 

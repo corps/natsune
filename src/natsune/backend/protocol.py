@@ -33,18 +33,34 @@ class Backend(Protocol):
         node: ast.expr,
         source_text: str,
         captures: Mapping[str, FromRegister],
+        function_globals: Mapping[str, Any],
         adapter: Adapter,
         connector: Connector,
-    ) -> FromRegister: ...
+    ) -> FromRegister:
+        """Evaluate `source_text` with `captures` as its locals.
+
+        `function_globals` is the compiled function's global namespace
+        (IrFunction.globals): the names global references in the dynamic
+        resolve through. Backends not implemented in terms of Python
+        globals may still consult it to build their own view of the
+        globals context the function is intended to bear.
+        """
 
     def materialize_dynamic_to(
         self,
         node: ast.expr,
         source_text: str,
         captures: Mapping[str, FromRegister],
+        function_globals: Mapping[str, Any],
         adapter: Adapter,
         connector: Connector,
-    ) -> ToRegister: ...
+    ) -> ToRegister:
+        """Execute `source_text` as an assignment target: the value sent
+        to the returned ToRegister arrives as `___from_input___`.
+
+        `function_globals` is the compiled function's global namespace
+        (IrFunction.globals) — see materialize_dynamic.
+        """
 
     def finish(
         self,

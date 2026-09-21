@@ -297,10 +297,12 @@ def test_augassign_synthesizes_binop_node():
     captured: list[ast.expr] = []
 
     class SpyBackend(PythonBackend):
-        def materialize_dynamic(self, node, source_text, captures, adapter, connector):
+        def materialize_dynamic(
+            self, node, source_text, captures, function_globals, adapter, connector
+        ):
             captured.append(node)
             return super().materialize_dynamic(
-                node, source_text, captures, adapter, connector
+                node, source_text, captures, function_globals, adapter, connector
             )
 
     lower_function(build_ir_for_function(augassign_nested_value), SpyBackend())

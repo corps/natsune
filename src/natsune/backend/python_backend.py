@@ -39,6 +39,7 @@ class PythonBackend:
         node: ast.expr,
         source_text: str,
         captures: Mapping[str, FromRegister],
+        function_globals: Mapping[str, Any],
         adapter: Adapter,
         connector: Connector,
     ) -> FromRegister:
@@ -50,7 +51,11 @@ class PythonBackend:
         context = send_parameters(
             serialize_values(connector, 2),
             (
-                as_constant_register({}, connector),
+                # The function's global namespace: globals referenced by
+                # the dynamic resolve through it (legacy passed the
+                # compiled function's globals too). eval auto-injects
+                # builtins on top.
+                as_constant_register(function_globals, connector),
                 send_parameters(
                     merge_invocation(construct_locals, connector),
                     (
@@ -71,10 +76,11 @@ class PythonBackend:
         node: ast.expr,
         source_text: str,
         captures: Mapping[str, FromRegister],
+        function_globals: Mapping[str, Any],
         adapter: Adapter,
         connector: Connector,
     ) -> ToRegister:
-        capture_token = "___from_capture___"
+        capture_token = "___from_input___"
 
         source_text = f"{source_text} = {capture_token}"
         (text_in, context_in), result = merge_invocation(exec_expression, connector)
@@ -88,7 +94,9 @@ class PythonBackend:
         context = send_parameters(
             serialize_values(connector, 2),
             (
-                as_constant_register({}, connector),
+                # The function's global namespace — see
+                # materialize_dynamic.
+                as_constant_register(function_globals, connector),
                 send_parameters(
                     merge_invocation(construct_locals, connector),
                     (

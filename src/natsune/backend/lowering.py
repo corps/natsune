@@ -508,7 +508,9 @@ class _FunctionLowering:
         # never disagree.
         text = ast.unparse(node)
         send_value(
-            self.backend.materialize_dynamic(node, text, used, VA, flow),
+            self.backend.materialize_dynamic(
+                node, text, used, self.ir.globals, VA, flow
+            ),
             self.to_target(target, flow),
         )
 
@@ -530,7 +532,12 @@ class _FunctionLowering:
                     continue  # stays in the source; resolves through globals
                 used[name] = self.from_expr(sub, flow)
             return self.backend.materialize_dynamic(
-                expr.ast_node, expr.source_text, used, expr.adapter, flow
+                expr.ast_node,
+                expr.source_text,
+                used,
+                self.ir.globals,
+                expr.adapter,
+                flow,
             )
         elif isinstance(expr, IrCallInet):
             # Mirror old compiler.py:405–425: resolve the callee, wire args
@@ -608,7 +615,12 @@ class _FunctionLowering:
                     continue  # stays in the source; resolves through globals
                 used[name] = self.from_expr(sub, flow)
             return self.backend.materialize_dynamic_to(
-                target.ast_node, target.source_text, used, VA, flow
+                target.ast_node,
+                target.source_text,
+                used,
+                self.ir.globals,
+                VA,
+                flow,
             )
         else:
             assert_never(target)

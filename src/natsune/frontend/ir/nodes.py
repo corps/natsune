@@ -252,6 +252,16 @@ class IrFunction(IrNode):
     params: tuple[tuple[str, Adapter], ...] = ()
     return_adapter: Adapter = VA
     body: IrBody
+    # The function's global namespace — the module dict the source was
+    # compiled from, carried so backends can resolve global references
+    # inside dynamic exec fallbacks (or build their own view of the
+    # globals context the function is intended to bear). The LIVE mapping
+    # is kept (legacy semantics): names bound after compilation remain
+    # visible to dynamics executed later. Not part of equality/repr:
+    # it is a compile input, not IR structure.
+    globals: Mapping[str, Any] = dataclasses.field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     @property
     def exits(self) -> Exits:
