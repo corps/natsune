@@ -5,7 +5,7 @@ import pytest
 from natsune.backend.python_backend import PythonBackend
 from natsune.executor import DeterministicSerialExecutor, Executor, ThreadPoolExecutor
 from natsune.special_forms import Ref
-from tests.backend.helpers import Program, program_ids, run_legacy
+from tests.backend.helpers import Program, program_ids
 
 
 def ref_list_appends() -> list:
@@ -183,9 +183,8 @@ BOTH_EXECUTORS = [
     ],
     ids=program_ids,
 )
-def test_ref_dynamics_match_legacy_execution(program: Program, args: tuple, expected):
+def test_ref_dynamics_execution(program: Program, args: tuple, expected):
     assert program.call(*args) == expected
-    assert run_legacy(program.compile_legacy().compiled, *args) == expected
     assert program.lower()(*args) == expected
 
 
@@ -222,12 +221,6 @@ def test_ref_mixed_capture_linearizes_ref_but_copies_value():
     assert program.call(caller_list, [10, 20]) is caller_list
     assert caller_list == [2]
 
-    legacy_list = []
-    assert run_legacy(program.compile_legacy().compiled, legacy_list, [10, 20]) is (
-        legacy_list
-    )
-    assert legacy_list == [2]
-
     new_list = []
     assert program.lower()(new_list, [10, 20]) is new_list
     assert new_list == [2]
@@ -245,11 +238,6 @@ def test_ref_param_read_after_sees_completed_exec():
         assert program.call(*plain_args) is plain_args[0]
         assert plain_args[0] == expected
 
-        legacy_args = ([],) if expected == [1] else ({},)
-        out = run_legacy(program.compile_legacy().compiled, *legacy_args)
-        assert out is legacy_args[0]
-        assert legacy_args[0] == expected
-
         new_args = ([],) if expected == [1] else ({},)
         out = program.lower()(*new_args)
         assert out is new_args[0]
@@ -259,7 +247,6 @@ def test_ref_param_read_after_sees_completed_exec():
 def test_ref_augassign_write_back_diverges_from_plain_python():
     program = Program(use_ref_augassign, ref_augassign_callee)
     assert program.call() == 20
-    assert run_legacy(program.compile_legacy().compiled) == 30
     assert program.lower()() == 30
 
 
@@ -286,18 +273,12 @@ def test_plain_local_repeated_targets():
 def test_plain_param_target_mutation_does_not_escape(program: Program):
     d = {}
     args = (d, "k", 5) if program.name == "plain_param_keyed_insert" else (d,)
-    run_legacy(program.compile_legacy().compiled, *args)
+    program.lower(PythonBackend(executor=DeterministicSerialExecutor()))(*args)
     assert d == {}
-
-    d2 = {}
-    new_args = (d2, "k", 5) if program.name == "plain_param_keyed_insert" else (d2,)
-    program.lower(PythonBackend(executor=DeterministicSerialExecutor()))(*new_args)
-    assert d2 == {}
 
 
 def test_ref_target_calling_a_global():
     program = Program(ref_target_calls_global)
-    assert run_legacy(program.compile_legacy().compiled) == {"k": 2}
     assert program.lower()() == {"k": 2}
 
 

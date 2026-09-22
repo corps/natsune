@@ -1,36 +1,28 @@
-"""§7.2b: IrIf lowering under the per-branch scheme, reconciled to the
-restructured lowering (statement-per-flow sequencing, ControlBranchFlow,
-post-hoc agent catalog).
+"""§7.2b: IrIf lowering under the per-branch scheme (statement-per-flow
+sequencing, ControlBranchFlow, post-hoc agent catalog).
 
 Cases are real module-level functions (see tests/backend/helpers.py):
-the same object drives the plain program, the legacy compiler, and the
-new lowering.
+the same object drives the plain program and the lowering.
 
-- Legacy remains the behavioral oracle wherever it works: the same
-  program through the legacy compiler and through the new lowering must
-  produce identical results (two legacy divergences are pinned below and
-  asserted directly against expected values, §6: the IR is the spec).
+- Execution is asserted against pinned expected values — historically
+  the legacy compiler's output where it agreed with the source, and the
+  source's own semantics where it diverged (§6: the IR is the spec). The
+  pre-cutover differential harness is gone; the pins remain.
 - Composite introspection recovers the LoweredUnit through a
   finish-capturing backend (the unit is internal to lower_function);
-  branch bodies remain plain flows, so they stay pair-comparable with
-  the legacy branch flows (reconstructed via InetBranchCompiler, since
-  the compiled parent net inlines branch bodies).
+  branch statement flows are recovered from the composite for the
+  empty-net dissolution pin.
 - The old tagged-graft serialization test is retired: agent labeling is
   post-hoc now (the catalog is walked from the recorded graph), so there
   are no intermediate graft tags to assert.
 """
 
-import ast
-import inspect
-
 import pytest
 
-from natsune.adapters import Variables, adapter_from_type
-from natsune.compiler import InetBranchCompiler
 from natsune.connector import Graft, serialize_active_pairs
 from natsune.control_flow import IfThenElseStatement, VariablesFlow
 from natsune.ports import Port, Wire
-from tests.backend.helpers import Program, capturing_lower, program_ids, run_legacy
+from tests.backend.helpers import Program, capturing_lower, program_ids
 
 # --- case programs -------------------------------------------------------
 # Each function below is a program under test; the comment above it says
@@ -145,24 +137,6 @@ def mixed_nested(a: int, b: int) -> int:
 # --- plumbing ------------------------------------------------------------
 
 
-def _legacy_branches(fn):
-    """Reconstruct the legacy branch flows exactly as the If branch does
-    (compiler.py:884-885)."""
-    compiler = Program(fn).compile_legacy()
-
-    module = ast.parse(inspect.getsource(fn))
-    if_stmt = next(n for n in ast.walk(module) if isinstance(n, ast.If))
-    branches = []
-    for body in (if_stmt.body, if_stmt.orelse):
-        flow = VariablesFlow(
-            variables=Variables(compiler.variables),
-            return_adapter=adapter_from_type(compiler.return_annot),
-        )
-        InetBranchCompiler(compiler, flow, False).parse_statement_body(body)
-        branches.append(flow)
-    return branches
-
-
 def _our_composite(unit) -> IfThenElseStatement:
     """The lowered if composite, from the post-hoc agent catalog."""
     return next(a for a in unit.agents if isinstance(a, IfThenElseStatement))
@@ -207,29 +181,16 @@ def _serialize(flow) -> list[str]:
 # --- tests ---------------------------------------------------------------
 
 
-def test_branch_bodies_match_legacy():
-    """Branch bodies are plain flows: their recorded nets must be
-    graph-for-graph identical to the legacy branch flows. Under the
-    restructured lowering the comparison lives at the child statement
-    flow (the containing ControlBranchFlow's sequencing machinery is
-    new by design and carries no legacy counterpart)."""
-    legacy_then, legacy_else = _legacy_branches(if_else)
-    children = _branch_children(capturing_lower(Program(if_else)))
+def test_closing_branches_dissolve_to_empty_nets():
+    """Slice 2: closing (all-branches-return) branches dissolve to EMPTY
+    nets — the non-fall-through tail's None-return write optimizes away.
+    Covered behaviorally by the execution matrix below; this pins the
+    shape."""
+    children = _branch_children(capturing_lower(Program(both_return)))
 
     assert len(children) == 2
-    assert _serialize(children[0]) == _serialize(legacy_then)
-    assert _serialize(children[1]) == _serialize(legacy_else)
-
-
-def test_branch_local_variable_matches_legacy():
-    """Same, for a variable declared inside the branches only: the bundle
-    comes from the recursive collection walk, so both sides carry y."""
-    legacy_then, legacy_else = _legacy_branches(branch_local)
-    children = _branch_children(capturing_lower(Program(branch_local)))
-
-    assert len(children) == 2
-    assert _serialize(children[0]) == _serialize(legacy_then)
-    assert _serialize(children[1]) == _serialize(legacy_else)
+    assert _serialize(children[0]) == []
+    assert _serialize(children[1]) == []
 
 
 @pytest.mark.parametrize(
@@ -260,12 +221,10 @@ def test_branch_local_variable_matches_legacy():
     ids=program_ids,
 )
 def test_differential_execution(program, args, expected):
-    """The same program through the legacy compiler and through the new
-    lowering must produce identical results."""
-    legacy = run_legacy(program.compile_legacy().compiled, *args)
+    """Execution against pinned expected values — historically the legacy
+    output where it agreed with the source, now simply the spec."""
     ours = program.lower()(*args)
 
-    assert legacy == expected
     assert ours == expected
 
 
@@ -295,17 +254,3 @@ def test_mixed_implicit_none_tail():
     ours = Program(mixed_implicit_none).lower()
     assert ours(5) == 1
     assert ours(-5) is None
-
-
-def test_branch_bodies_match_legacy_both_return():
-    """Slice 2: closing branches pair-match legacy too — legacy's
-    optimizer dissolves a returning branch flow to an EMPTY net, and the
-    restructured lowering now dissolves the same way (the non-fall-
-    through tail's None-return write optimizes away). Closing branches
-    are additionally covered by differential execution."""
-    legacy_then, legacy_else = _legacy_branches(both_return)
-    children = _branch_children(capturing_lower(Program(both_return)))
-
-    assert len(children) == 2
-    assert _serialize(children[0]) == _serialize(legacy_then) == []
-    assert _serialize(children[1]) == _serialize(legacy_else) == []

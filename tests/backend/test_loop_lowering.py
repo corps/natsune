@@ -1,9 +1,8 @@
 import pytest
 
 from natsune.control_flow import Loop
-from natsune.executor import ThreadPoolExecutor
 from natsune.special_forms import Par, Ref
-from tests.backend.helpers import Program, capturing_lower, program_ids, run_legacy
+from tests.backend.helpers import Program, capturing_lower, program_ids
 
 # --- case programs -------------------------------------------------------
 # Each function below is a program under test; the comment above it says
@@ -252,12 +251,12 @@ def while_true_if_break(a: int) -> int:
     return total
 
 
-# --- differential matrix (legacy is a valid oracle for these) -------------
+# --- execution matrix ------------------------------------------------------
 
 
 _CASES = [
     # (program, args) — the expected value comes from calling the case's
-    # own Python function; legacy and the new lowering must both match it.
+    # own Python function; the lowering must match it.
     (Program(while_sum), (2, 6)),
     (Program(for_sum), (5,)),
     (Program(sum_it_up), (1, 10)),
@@ -281,17 +280,16 @@ _CASES = [
 
 
 @pytest.mark.parametrize("program,args", _CASES, ids=program_ids)
-def test_matches_legacy_execution(program: Program, args: tuple) -> None:
+def test_matches_source_execution(program: Program, args: tuple) -> None:
     expected = program.call(*args)
-    assert run_legacy(program.compile_legacy().compiled, *args) == expected
     assert program.lower()(*args) == expected
 
 
 # --- pinned divergences (§5: the IR is the spec) --------------------------
-# Legacy's loop break/continue handling starves or miscounts on these;
-# the new lowering is asserted against the source's own Python semantics
-# directly, and each docstring records legacy's actual behavior as the
-# reason the case is not in the differential matrix.
+# The pre-cutover legacy compiler's loop break/continue handling starved
+# or miscounted on these; the lowering is asserted against the source's
+# own Python semantics directly, and each docstring records the legacy
+# behavior as the reason the case is not in the execution matrix.
 
 
 def test_break_inside_if_legacy_miscount():
@@ -347,18 +345,10 @@ def test_loop_agent_is_cataloged():
 
 # --- consolidation (old suite's infinite-value programs) -------------------
 # The old suite's non-terminating loops, copied from test_compiler.py.
-# All of them ride the constant `while True:` shared limitation above;
-# and_or additionally needs IrBoolOp lowering. (Their Par blockers are
-# gone — IrTuple/composite-target lowering landed, see
-# test_par_lowering.py.)
-#
-# The two build pins below RUN: both compilers accept the programs, and
-# the bodies deliberately never call them — EXECUTION is the shared
-# limitation. The two skips genuinely need to execute, and stay marked
-# so unskipping cannot wedge the suite. Legacy runs under
-# ThreadPoolExecutor — the old suite ran these under
-# @inet(executor=ThreadPoolExecutor()), and the finite parts of their
-# output only overtake the spinning branches under threads.
+# The bodies deliberately never call the infinite functions directly —
+# EXECUTION is the shared limitation (a constant-while never resolves its
+# output). and_or rides the contingent-gate machinery: the finite side of
+# the Or/And decides, the never-arriving side is dropped.
 
 
 def infinite_value() -> int:
@@ -397,45 +387,37 @@ def and_or_with_finites_and_infinites() -> list:
 
 def test_infinite_value_compiles_everywhere():
     """Old suite: infinite_value() feeds and_or's finites-and-infinites
-    algebra. Both compilers accept the program; the call itself hangs
-    BOTH implementations (constant-while, module docstring), so the body
-    is deliberately build-only."""
+    algebra. The call itself hangs (constant-while, module docstring),
+    so the body is deliberately build-only."""
     program = Program(infinite_value)
-    program.compile_legacy()
     program.lower()
 
 
 def test_ignored_infinite_loop_compiles_everywhere():
     """The old suite never called this directly either — only through
     drops_infinite_loop (a caller-side drop is the only terminating
-    shape: the direct call hangs BOTH implementations). Compiling is the
-    testable half, and both compilers do it."""
+    shape: the direct call hangs). Compiling is the testable half."""
     program = Program(ignored_infinite_loop)
-    program.compile_legacy()
     program.lower()
 
 
 def test_drops_infinite_loop_differential():
     program = Program(drops_infinite_loop, ignored_infinite_loop)
-    legacy = program.compile_legacy().compiled
-    assert run_legacy(legacy, executor=ThreadPoolExecutor()) == 10
-    # Cutover gap (CUTOVER.md §5): with the callee now NEW-compiled, the
-    # trailing return after its `while True` sequences strictly off the
-    # loop's finish slot and starves. Legacy's wire_continuation ran the
-    # trailing region immediately via an erasure superposition
-    # (`finish + ~readin` through a split/involution); reproducing that
-    # topology in ControlBranchFlow's choice-chain sequencing is the
-    # recorded follow-up. The legacy half above keeps the expected value
-    # pinned until then.
+    # Cutover gap (CUTOVER.md §5): the callee's trailing return after its
+    # `while True` sequences strictly off the loop's finish slot and
+    # starves. Legacy's wire_continuation ran the trailing region
+    # immediately via an erasure superposition (`finish + ~readin`
+    # through a split/involution); reproducing that topology in
+    # ControlBranchFlow's choice-chain sequencing is the recorded
+    # follow-up. Expected value pinned here until then: 10.
     pytest.xfail(
         "lowering: loop-continuation erasure superposition not yet "
         "reproduced — trailing code after a never-firing loop starves"
     )
+    assert program.lower()() == 10
 
 
 def test_and_or_finites_and_infinites_differential():
     program = Program(and_or_with_finites_and_infinites, infinite_value)
-    legacy = program.compile_legacy().compiled
     expected = ["Infinite Or", 0, 10]
-    assert run_legacy(legacy, executor=ThreadPoolExecutor()) == expected
     assert program.lower()() == expected

@@ -6,8 +6,8 @@ through the same machinery."""
 
 from natsune.adapters import VA, Variables
 from natsune.connector import ExpansionBuilder, serialize_active_pairs
-from natsune.inet import inet
 from natsune.control_flow import VariablesFlow
+from natsune.inet import inet
 from natsune.ports import ConstantValuePort, Wire
 
 

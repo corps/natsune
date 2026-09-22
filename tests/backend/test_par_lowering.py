@@ -17,8 +17,9 @@ directions:
   Par's concurrent-item adapters and rejects arity mismatches
   ("Tuple assignment targets do not match the value's Par size").
 
-The oracle is differential wherever legacy works. Two pinned
-divergences, both asserted directly (§6: the IR is the spec):
+The oracle is the source's own Python semantics. Two pinned divergences
+from the pre-cutover legacy compiler, asserted directly (§6: the IR is
+the spec):
 
 - nested unpacking (`a, (b, c) = p`) starves legacy's output entirely;
 - a function whose Inverse read is never completed by a write is an
@@ -42,7 +43,7 @@ import pytest
 
 from natsune.frontend.ir.nodes import IrAssign, IrCallInet
 from natsune.special_forms import Inverse, Par
-from tests.backend.helpers import Program, program_ids, run_legacy
+from tests.backend.helpers import Program, program_ids
 
 # --- case programs -------------------------------------------------------
 # Each function below is a program under test; the comment above it says
@@ -166,18 +167,16 @@ def use_delayed_inverse() -> int:
     ],
     ids=program_ids,
 )
-def test_par_matches_legacy_execution(program: Program, args: tuple, expected):
+def test_par_execution(program: Program, args: tuple, expected):
     """The Par surface: whole-value passthrough, tuple-literal returns,
     call-result unpacking, unpack-then-rebind, element reads (of vars,
     tuple literals, nested literals, and linked-call results, repeated
-    reads included), and the inverse write-back through a Par element —
-    identically through legacy and the new lowering."""
-    assert run_legacy(program.compile_legacy().compiled, *args) == expected
+    reads included), and the inverse write-back through a Par element."""
     assert program.lower()(*args) == expected
 
 
 def test_par_unpack_call_links_the_callee():
-    """The unpacked call must link to the legacy callee, not fall back to
+    """The unpacked call must link to the marked callee, not fall back to
     eval (the oracle file's call-case invariant, on a tuple target)."""
     program = Program(invoke_an_inet, other_basic)
     ir = program.build_ir()
@@ -200,14 +199,11 @@ def test_nested_unpack():
 def test_par_of_inverse_construction_is_incomplete_alone():
     """`delayed_inverse` reads the inverse `b` and returns the live cell
     without ever writing it: the read has no completing write anywhere in
-    the net, so the computation never finishes. Neither implementation
-    produces output for the direct call — legacy starves (no output
-    event), ours resolves the return slot to its neutral control cell
-    (RuntimeError). The construction is meaningful only through a
-    consumer that writes the inverse, which test_par_matches_legacy
-    execution pins at 40 via use_delayed_inverse."""
+    the net, so the computation never finishes. The direct call produces
+    no usable output — the lowering resolves the return slot to its
+    neutral control cell (RuntimeError). The construction is meaningful
+    only through a consumer that writes the inverse, which
+    test_par_execution pins at 40 via use_delayed_inverse."""
     program = Program(delayed_inverse)
-    with pytest.raises(ValueError):
-        run_legacy(program.compile_legacy().compiled)
     with pytest.raises(RuntimeError):
         program.lower()()

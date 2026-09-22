@@ -1,19 +1,18 @@
-"""The oracle (§6), re-formed for the restructured lowering: the legacy
-compiler and the new lowering must agree with the source's own Python
+"""The oracle (§6): the lowering must agree with the source's own Python
 semantics on the supported straight-line subset.
 
 Cases are real module-level functions (see tests/backend/helpers.py):
-the expected value comes from calling the case's own function; legacy
-and the new lowering must both match it. Multi-function cases pair a
-caller with its callees in a `Program`, which compiles and attaches the
-callees before the caller is compiled or linked.
+the expected value comes from calling the case's own function, and the
+lowering must match it. Multi-function cases pair a caller with its
+callees in a `Program`, which attaches the callees before the caller is
+compiled or linked.
 
-Exact net-shape equality against legacy is retired BY DESIGN: the new
-lowering sequences one VariablesFlow per statement list and catalogs
-agents after lowering (change 1 of the restructure), so recorded nets
-intentionally differ from legacy's single-flow shape. Behavioral
-equivalence with legacy — and through it, with the source — is the
-contract the oracle now checks."""
+Exact net-shape equality against the pre-cutover legacy compiler is
+retired BY DESIGN (and the differential harness went with it at the
+cutover): the lowering sequences one VariablesFlow per statement list
+and catalogs agents after lowering, so recorded nets intentionally
+differ from legacy's single-flow shape. Agreement with the source is
+the contract the oracle checks."""
 
 import ast
 
@@ -21,14 +20,18 @@ import pytest
 
 from natsune.backend.lowering import _FunctionLowering, lower_function
 from natsune.backend.python_backend import PythonBackend
+from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.ir.nodes import IrAssign, IrCallInet
+from natsune.frontend.link import collect_call_links
+from natsune.frontend.signature import analyze_signature
+from natsune.frontend.source import extract_source
+from natsune.frontend.symbols import collect_symbols
 from natsune.ports import ExtMergeFuncPort
 from tests.backend.helpers import (
     Program,
     build_ir_for_function,
     capturing_lower,
     program_ids,
-    run_legacy,
 )
 
 # --- straight-line execution cases ---------------------------------------
@@ -196,7 +199,7 @@ def collect_attr_subscript_targets(a) -> None:
 
 _CASES = [
     # (program, args) — the expected value comes from calling the case's
-    # own Python function; legacy and the new lowering must both match it.
+    # own Python function; the lowering must match it.
     (Program(return_sum), (3, 4)),
     (Program(local_roundtrip), (5,)),
     (Program(augassign_rebind), (7,)),
@@ -211,11 +214,8 @@ _CASES = [
 ]
 
 _CALL_PROGRAMS = [
-    # (program, args). NOTE on naming: legacy FlowVariableMap.update
-    # requires every callee variable name to already exist in the caller's
-    # map — a legacy constraint that only holds when names coincide (the
-    # legacy suite's call sites all do). These cases name variables to keep
-    # the legacy side compilable, which the comparison needs.
+    # (program, args). Cases pair a caller with its callees so the link
+    # resolves to the marked callee instead of falling back to eval.
     (Program(call_inc, inc), (2,)),
     (Program(call_add_twice, add), (2, 3)),
     (Program(call_step, step), (3,)),
@@ -235,23 +235,21 @@ _COLLECTION_CASES = [
 
 
 @pytest.mark.parametrize("program,args", _CASES, ids=program_ids)
-def test_matches_legacy_execution(program: Program, args: tuple) -> None:
+def test_execution_matches_source(program: Program, args: tuple) -> None:
     expected = program.call(*args)
-    assert run_legacy(program.compile_legacy().compiled, *args) == expected
     assert program.lower()(*args) == expected
 
 
 @pytest.mark.parametrize("program,args", _CALL_PROGRAMS, ids=program_ids)
-def test_call_cases_match_legacy_execution(program: Program, args: tuple) -> None:
+def test_call_cases_execute(program: Program, args: tuple) -> None:
     expected = program.call(*args)
-    assert run_legacy(program.compile_legacy().compiled, *args) == expected
 
     ir = program.build_ir()
     statement = ir.body.statements[0]
     assert isinstance(statement, IrAssign)
     assert isinstance(
         statement.value, IrCallInet
-    ), "the call must link to the legacy callee, not fall back to eval"
+    ), "the call must link to the marked callee, not fall back to eval"
     assert program.lower()(*args) == expected
 
 
@@ -316,12 +314,22 @@ def test_augassign_synthesizes_binop_node():
 
 
 @pytest.mark.parametrize("fn", _COLLECTION_CASES)
-def test_variable_collection_matches_legacy(fn) -> None:
+def test_variable_collection_matches_symbols(fn) -> None:
     """The bundle is the interface: names, adapters, AND order must equal
-    the legacy collection pass (interface position is order-bearing, §6).
-    The new walk is recursive over targets and nested bodies, so it collects
-    exactly the names legacy's recursive visitor does."""
+    the frontend symbols table (interface position is order-bearing, §6;
+    this is also the invariant the recursive-callee promise's adapters
+    rest on, CUTOVER.md §2). The lowering walk is recursive over targets
+    and nested bodies, so it collects exactly the names the symbols walk
+    does."""
     program = Program(fn)
-    legacy = program.compile_legacy()
     lowering = _FunctionLowering(program.build_ir(), PythonBackend())
-    assert list(lowering.collect_variables()) == list(legacy.variables)
+
+    source = extract_source(
+        program.entry,
+        globals=program.entry.__globals__,
+        filename=program.entry.__code__.co_filename,
+    )
+    signature = analyze_signature(source, DiagnosticSink())
+    symbols = collect_symbols(source, signature, DiagnosticSink())
+
+    assert list(lowering.collect_variables()) == list(symbols.variables)

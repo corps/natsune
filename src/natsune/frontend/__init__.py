@@ -1,10 +1,9 @@
-"""The new compiler frontend.
+"""The compiler frontend.
 
-Plain data in, plain data out. Nothing here imports `natsune.compiler`, and
-nothing creates registers, wires, or flows. The old `natsune.compiler` module
-stays untouched and remains the live implementation until the backend/cutover
-phase (see COMPILER_REFACTOR.md).
-"""
+Plain data in, plain data out. Nothing here creates registers, wires, or
+flows, and nothing imports the runtime: backends consume the IR through
+`natsune.backend`, and the deferred driver lives in `natsune.inet`
+(CUTOVER.md)."""
 
 from natsune.frontend.diagnostics import (
     CompileDiagnostic,

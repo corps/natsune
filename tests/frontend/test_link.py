@@ -154,8 +154,18 @@ def test_eval_compile_time_success():
     assert result == EvaluatedValue(value=int, source_text="int")
 
 
-def test_frontend_never_imports_the_old_compiler():
+def test_frontend_never_imports_the_runtime():
+    """The frontend is plain data in / plain data out: it must never
+    import the runtime layers (backend, driver, or the retired compiler
+    module) — they consume the frontend's output, never the reverse
+    (CUTOVER.md §3)."""
     import natsune.frontend
+
+    forbidden = (
+        "natsune.backend",
+        "natsune.inet",
+        "natsune.compiler",  # retired at the cutover; guard keeps it named
+    )
 
     frontend_dir = os.path.dirname(natsune.frontend.__file__)
     scanned = 0
@@ -176,7 +186,8 @@ def test_frontend_never_imports_the_old_compiler():
                 else:
                     continue
                 for module in modules:
-                    assert module != "natsune.compiler" and not module.startswith(
-                        "natsune.compiler."
-                    ), f"{filename} imports the old compiler"
+                    assert not any(
+                        module == prefix or module.startswith(prefix + ".")
+                        for prefix in forbidden
+                    ), f"{filename} imports the runtime layer {module!r}"
     assert scanned >= 3  # the guard itself must actually scan the modules

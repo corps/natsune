@@ -3,8 +3,12 @@ import pytest
 from natsune.adapters import InverseAdapter, ReferenceAdapter, ValueAdapter
 from natsune.backend.lowering import _FunctionLowering
 from natsune.backend.python_backend import PythonBackend
+from natsune.frontend.diagnostics import DiagnosticSink
+from natsune.frontend.signature import analyze_signature
+from natsune.frontend.source import extract_source
+from natsune.frontend.symbols import collect_symbols
 from natsune.special_forms import Inverse, Ref
-from tests.backend.helpers import Program, program_ids, run_legacy
+from tests.backend.helpers import Program, program_ids
 
 
 def take_reference(a: Ref[int]) -> None:
@@ -73,19 +77,30 @@ _CASES = [
 
 
 @pytest.mark.parametrize("program,args,expected", _CASES, ids=program_ids)
-def test_matches_legacy_execution(program: Program, args: tuple, expected) -> None:
-    assert run_legacy(program.compile_legacy().compiled, *args) == expected
+def test_execution(program: Program, args: tuple, expected) -> None:
     assert program.lower()(*args) == expected
 
 
-def test_bundle_adapters_match_legacy_by_name():
+def test_bundle_adapters_match_symbols_by_name():
+    """The lowering's variable walk must agree with the frontend symbols
+    table in names, adapters, AND order — this is the same invariant the
+    recursive-callee promise's interface adapters rest on (CUTOVER.md
+    §2: the promise builds its adapters from the collected symbols
+    through the same constructors the net's VariablesFlow uses)."""
     program = Program(shift_list_by_smallest)
-    legacy = program.compile_legacy()
     ours = _FunctionLowering(program.build_ir(), PythonBackend()).collect_variables()
 
-    assert set(ours) == set(legacy.variables)
+    source = extract_source(
+        program.entry,
+        globals=program.entry.__globals__,
+        filename=program.entry.__code__.co_filename,
+    )
+    signature = analyze_signature(source, DiagnosticSink())
+    symbols = collect_symbols(source, signature, DiagnosticSink())
+
+    assert list(ours) == list(symbols.variables)
     for name, adapter in ours.items():
-        assert type(adapter) is type(legacy.variables[name]), name
+        assert type(adapter) is type(symbols.variables[name]), name
 
     assert isinstance(ours["smallest"], InverseAdapter)
     assert isinstance(ours["result"], ReferenceAdapter)

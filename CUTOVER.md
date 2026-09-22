@@ -1,5 +1,12 @@
 # Cutover plan: replacing `natsune.compiler` with the new pipeline
 
+STATUS: **COMPLETE**. `natsune/compiler.py` and the legacy differential
+harness are deleted; the deferred driver (`natsune/inet.py`), the
+frontend, and the backend are the only compiler. `@inet` is re-exported
+as `from natsune import inet`. The two `test_drops` pins (§5) are the
+recorded follow-up. This document is kept as the record of the cutover
+design (the § numbering is referenced from code comments and tests).
+
 This continues COMPILER_REFACTOR.md (frontend §0–§7 and the backend lowering are
 done and green). What remains is the cutover: the `inet` decorator stops using
 the legacy eager compiler, `natsune/compiler.py` and `tests/test_compiler.py`
@@ -423,20 +430,20 @@ Single landing (C + D can be one PR if 4a is already in):
 (B and C may land together; the split exists so the end-to-end decorator
 suite can be reviewed against the old suite while both are runnable.)
 
-## Decisions
+## Decisions (resolved at the cutover)
 
-1. **Recursion:** RESOLVED — the `PromiseExpansion` lazy graft lands in the
-   cutover (§2). By-reference mutation of the promise (fill-at-freeze) is
-   the accepted Python-target semantics; generalizing agents to a labeled
+1. **Recursion:** RESOLVED — the `PromiseExpansion` lazy graft landed in
+   the cutover (§2). By-reference mutation of the promise (fill-at-freeze)
+   is the accepted Python-target semantics; generalizing agents to a labeled
    form for non-Python targets remains future work, and canonicalizing
    compiled interfaces to signature-only adapters (instead of today's
    params+locals bundles) is the natural companion cleanup — it would make
    promise adapters derivable from the signature alone.
-2. **Entry-point default executor:** `DeterministicSerialExecutor` (legacy
-   parity, recommended) vs adopting `as_callable`'s `ThreadPoolExecutor`.
-3. **Marker name:** keep `__inet__` (recommended — `link_name`, fakes, and
-   docs all reference it; renaming is orthogonal churn).
-4. **Public surface:** `from natsune.inet import inet` only, or re-export
-   from `natsune/__init__.py`?
-5. **Explicit eager API:** ship `inet.compile(func)` at cutover, or defer
-   `compile_module` until someone asks?
+2. **Entry-point default executor:** RESOLVED — `DeterministicSerialExecutor`
+   (legacy parity); per-call and decorator-level `executor=` overrides
+   preserved, `as_callable`'s Erasure unwrap-and-reraise kept.
+3. **Marker name:** RESOLVED — kept `__inet__`.
+4. **Public surface:** RESOLVED — `natsune/__init__.py` re-exports `inet`
+   (`from natsune import inet`); the module lives at `natsune.inet`.
+5. **Explicit eager API:** RESOLVED — `InetFunction.ensure_compiled()` is
+   public; a `compile_module` convenience was deferred until needed.
