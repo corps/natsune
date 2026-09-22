@@ -20,7 +20,8 @@ def _inet_function(arg_types=(int,), return_type=int):
     """A callable with an `__inet__` attribute shaped like the old compiler."""
     compiler = SimpleNamespace(
         args_adapter=ParValueAdapter([adapter_from_type(te) for te in arg_types]),
-        return_annot=return_type,
+        return_adapter=adapter_from_type(return_type),
+        expansion=None,
     )
 
     def make(x):

@@ -20,6 +20,12 @@ from natsune.adapters import (
     Variables,
     adapter_from_type,
 )
+from natsune.backend.runtime import (
+    construct_locals,
+    eval_expression,
+    exec_expression,
+)
+from natsune.backend.runtime import match_exception_group as _match_exception_group
 from natsune.connector import Connector
 from natsune.control_flow import (
     ConcurrentValueMerge,
@@ -314,30 +320,6 @@ def _try_iter(i: Iterator) -> Any:
         return next(i), True
     except StopIteration:
         return None, False
-
-
-def _match_exception_group(
-    exceptions: list[Exception], handler_group: tuple | type | None
-) -> tuple[list, list]:
-    if handler_group is None:
-        return exceptions, []
-
-    matches: list[Exception] = []
-    remaining = [*exceptions]
-
-    while remaining:
-        e = remaining.pop(0)
-        if isinstance(e, ExceptionGroup):
-            matched_group, remaining_group = e.split(handler_group)
-            if matched_group:
-                matches.extend(matched_group.exceptions)
-            if remaining_group:
-                remaining.extend(remaining_group.exceptions)
-        else:
-            if isinstance(e, handler_group):
-                matches.append(e)
-
-    return matches, remaining
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1026,20 +1008,6 @@ class InetVariablesEvaluator(ast.NodeVisitor):
         if isinstance(node, ast.Call):
             self.generic_visit(node)
         return self.compiler.infer_expression_adapter(node)
-
-
-def construct_locals(locals_values: tuple, locals_keys: tuple) -> dict:
-    return dict(zip(locals_keys, locals_values))
-
-
-def exec_expression(expr_str: str, context: tuple[dict, dict]) -> None:
-    globals, locals = context
-    exec(expr_str, globals=globals, locals=locals)
-
-
-def eval_expression(expr_str: str, context: tuple[dict, dict]) -> Any:
-    globals, locals = context
-    return eval(expr_str, globals=globals, locals=locals)
 
 
 def inet(f: Callable | None = None, *, executor: Executor | None = None) -> Callable:

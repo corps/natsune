@@ -223,6 +223,15 @@ class FrozenExpansion(Expansion):
     def __copy__(self) -> Self:
         return self
 
+    def __eq__(self, other: object) -> bool:
+        # Identity semantics: the template's fields hold ports and wires
+        # (list-bearing, unhashable); equality-by-identity is what agent
+        # catalogs and graft copies want anyway.
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
+
     def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire], /) -> None:
         materialize_template(
             self.input_wire,

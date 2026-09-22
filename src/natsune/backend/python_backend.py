@@ -7,7 +7,7 @@ from typing import Any, Callable, Collection
 from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.backend.agents import AgentImpl, callee_invocation
 from natsune.backend.protocol import LoweredUnit
-from natsune.compiler import construct_locals, eval_expression, exec_expression
+from natsune.backend.runtime import construct_locals, eval_expression, exec_expression
 from natsune.connector import Connector, FrozenExpansion
 from natsune.executor import Executor, ThreadPoolExecutor
 from natsune.frontend import IrFunction

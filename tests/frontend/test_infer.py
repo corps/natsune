@@ -14,6 +14,7 @@ from natsune.frontend.link import (
     LinkNotFound,
     collect_call_links,
 )
+from natsune.interface import InetRef
 from natsune.special_forms import Par
 from tests.frontend.helpers import parse_function
 
@@ -156,10 +157,12 @@ def test_collect_call_links_resolves_body_calls_once():
 
 
 def test_collect_call_links_resolves_inet_and_values():
-    # A compiler-shaped object behind `__inet__` (what `from_ref` reads).
+    # An inet-artifact-shaped object behind `__inet__` (what `from_ref` reads).
     compiler = SimpleNamespace(
         args_adapter=ParValueAdapter([VA]),
-        return_annot=Par[int, int],
+        return_adapter=adapter_from_type(Par[int, int]),
+        expansion=None,
+        ensure_compiled=lambda: None,
     )
 
     def make(x):
@@ -176,7 +179,7 @@ def test_collect_call_links_resolves_inet_and_values():
     links = collect_call_links(func_def.body, {"make": make})
 
     assert links["make"] == LinkedInet(
-        ref=compiler,
+        ref=cast(InetRef, compiler),
         arity=1,
         arg_adapters=(VA,),
         return_adapter=ParValueAdapter([VA, VA]),

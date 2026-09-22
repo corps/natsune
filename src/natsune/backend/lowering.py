@@ -5,12 +5,13 @@ from typing import Any, assert_never
 from natsune.adapters import VA, Adapter, ParValueAdapter, Variables
 from natsune.backend.agents import (
     AgentImpl,
+    PromiseExpansion,
     callee_invocation,
     try_iter,
 )
 from natsune.backend.control_branch_flow import ControlBranchFlow
 from natsune.backend.protocol import Backend, LoweredUnit
-from natsune.connector import ExpansionBuilder
+from natsune.connector import ExpansionBuilder, FrozenExpansion
 from natsune.control_flow import (
     CloseAfterContingent,
     ConcurrentValueMerge,
@@ -108,6 +109,11 @@ class _FunctionLowering:
                     targets.append(expansion.input_interface.interface)
                     targets.append(expansion.output_interface.interface)
                     seen_agents.add(expansion)
+            elif isinstance(expansion, (FrozenExpansion, PromiseExpansion)):
+                # Compiled callees, grafted whole. Leaves in the catalog:
+                # their internal agents belong to the callee's own unit,
+                # and a promise has nothing behind it yet.
+                seen_agents.add(expansion)
             elif isinstance(expansion, IfThenElseStatement):
                 if expansion not in seen_agents:
                     expansions.extend((expansion.true_case, expansion.false_case))
@@ -553,13 +559,17 @@ class _FunctionLowering:
                 flow,
             )
         elif isinstance(expr, IrCallInet):
-            # Mirror old compiler.py:405–425: resolve the callee, wire args
-            # left-to-right, return the output register. Arity/keywords are
-            # frontend-validated (§3.3); the zip is strict anyway.
-            agent = expr.ref
-            inputs, output = callee_invocation(
-                agent, len(agent.args_adapter.concurrent_items), flow
-            )
+            # Mirror old compiler.py:405–425: wire args left-to-right,
+            # return the output register. Arity/keywords are
+            # frontend-validated (§3.3); the zip is strict anyway. The
+            # ref's expansion is promise-or-frozen (CUTOVER.md §2) — the
+            # driver compiled every non-cyclic callee before lowering,
+            # and cyclic ones graft the promise the same way.
+            expansion = expr.ref.expansion
+            assert isinstance(
+                expansion, (FrozenExpansion, ExpansionBuilder, PromiseExpansion)
+            ), "callee net missing: the driver compiles (or promises) every callee before lowering"
+            inputs, output = callee_invocation(expansion, expr.arity, flow)
             for input_register, arg in zip(inputs, expr.args, strict=True):
                 send_value(self.from_expr(arg, flow), input_register)
             # should_capture_exceptions is False for now: IrTry does not

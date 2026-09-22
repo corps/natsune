@@ -5,10 +5,12 @@ from natsune.special_forms import Inverse, Par, Ref
 
 
 def _compiler(*arg_types, return_type=None) -> SimpleNamespace:
-    """An old-compiler-shaped object behind `__inet__` (copied metadata)."""
+    """An inet-artifact-shaped object behind `__inet__` (copied
+    metadata; the post-cutover `InetRef` surface)."""
     return SimpleNamespace(
         args_adapter=ParValueAdapter([adapter_from_type(te) for te in arg_types]),
-        return_annot=return_type,
+        return_adapter=adapter_from_type(return_type),
+        expansion=None,
     )
 
 

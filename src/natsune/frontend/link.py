@@ -3,25 +3,25 @@ import dataclasses
 from collections.abc import Iterable
 from typing import Any
 
-from natsune.adapters import Adapter, adapter_from_type
-from natsune.legacy import LegacyInetInterface
+from natsune.adapters import Adapter
+from natsune.interface import InetRef
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LinkedInet:
-    ref: LegacyInetInterface
+    ref: InetRef
     arity: int
     arg_adapters: tuple[Adapter, ...]
     return_adapter: Adapter
 
     @classmethod
-    def from_ref(cls, ref: LegacyInetInterface) -> LinkedInet:
+    def from_ref(cls, ref: InetRef) -> LinkedInet:
         arg_adapters = tuple(ref.args_adapter.concurrent_items)
         return cls(
             ref=ref,
             arity=len(arg_adapters),
             arg_adapters=arg_adapters,
-            return_adapter=adapter_from_type(ref.return_annot),
+            return_adapter=ref.return_adapter,
         )
 
 
@@ -38,14 +38,25 @@ class LinkNotFound:
 LinkResult = LinkedInet | LinkedValue | LinkNotFound
 
 
+def collect_called_names(body: Iterable[ast.stmt]) -> list[str]:
+    """Called names, in first-appearance walk order (deterministic: the
+    driver's callee pass runs in this order and links dict order follows
+    it)."""
+    module = ast.Module(body=list(body), type_ignores=[])
+    names: list[str] = []
+    for node in ast.walk(module):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id not in names:
+                names.append(node.func.id)
+    return names
+
+
 def collect_call_links(
     body: Iterable[ast.stmt], globals: dict[str, Any]
 ) -> dict[str, LinkResult]:
     links: dict[str, LinkResult] = {}
-    module = ast.Module(body=list(body), type_ignores=[])
-    for node in ast.walk(module):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            links.setdefault(node.func.id, link_name(node.func.id, globals))
+    for name in collect_called_names(body):
+        links.setdefault(name, link_name(name, globals))
     return links
 
 

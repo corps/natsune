@@ -2,7 +2,7 @@ import random
 import threading
 from typing import Self
 import dataclasses
-from natsune.compiler import inet
+from natsune.inet import inet
 from natsune.executor import ThreadPoolExecutor
 from natsune.special_forms import Par, Ref, Inverse
 

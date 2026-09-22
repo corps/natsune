@@ -3,15 +3,20 @@ Python functions, not source strings.
 
 A single-function case is just the function object; a multi-function
 case is a `Program` — an entry function plus the callees that must be
-legacy-compiled and `__inet__`-attached before the entry is compiled or
-IR-linked (exactly what @inet does in production). Everything else is
-derived from those objects through the genuine pipeline paths
-(`inspect.getsourcelines` reads the real test module, the same way the
-`tests/frontend/programs.py` programs are consumed by the snapshot
-suite), so there is no exec, no linecache registration, and no
-string-source copies to keep in sync. Adding a case is writing (or
-reusing) a function; its syntax is checked at import like any other
-code.
+`__inet__`-attached before the entry is compiled or IR-linked (exactly
+what @inet does in production). Everything else is derived from those
+objects through the genuine pipeline paths (`inspect.getsourcelines`
+reads the real test module, the same way the `tests/frontend/programs.py`
+programs are consumed by the snapshot suite), so there is no exec, no
+linecache registration, and no string-source copies to keep in sync.
+Adding a case is writing (or reusing) a function; its syntax is checked
+at import like any other code.
+
+Two attachment modes, one attribute: `build_ir`/`lower` attach deferred
+`InetFunction` markers (the post-cutover shape — the driver's callee
+pass compiles them on demand); `compile_legacy` legacy-compiles callees
+for the differential legs. They never run nested, so the `__inet__`
+attribute handoff is safe.
 """
 
 import threading
@@ -25,12 +30,8 @@ from natsune.backend.python_backend import PythonBackend
 from natsune.compiler import InetFunctionCompiler
 from natsune.control_flow import FlowControlInto, FlowInputInto
 from natsune.executor import DeterministicSerialExecutor
-from natsune.frontend.diagnostics import DiagnosticSink
-from natsune.frontend.ir import IrFunction, build_ir
-from natsune.frontend.link import collect_call_links
-from natsune.frontend.signature import analyze_signature
-from natsune.frontend.source import extract_source
-from natsune.frontend.symbols import collect_symbols
+from natsune.frontend.ir import IrFunction
+from natsune.inet import InetFunction, build_ir_for_function
 from natsune.invocations import expansion_invocation, filter_invocation
 from natsune.registers import as_constant_register, send_value
 
@@ -44,8 +45,9 @@ def _inet_attached(
     callees: tuple[FunctionType, ...],
 ) -> Generator[None]:
     """Legacy-compile each callee and attach its `__inet__` for the
-    duration of the block (what @inet does), then remove the attachment —
-    module-level case functions are shared between tests."""
+    duration of the block (what the old @inet did), then remove the
+    attachment — module-level case functions are shared between tests.
+    Serves the differential (`compile_legacy`) legs."""
     attached: list[FunctionType] = []
     try:
         for callee in callees:
@@ -54,6 +56,24 @@ def _inet_attached(
             )
             compiler.compile()
             setattr(callee, "__inet__", compiler)
+            attached.append(callee)
+        yield
+    finally:
+        for callee in attached:
+            delattr(callee, "__inet__")
+
+
+@contextmanager
+def _markers_attached(
+    callees: tuple[FunctionType, ...],
+) -> Generator[None]:
+    """Attach deferred `InetFunction` markers (the post-cutover
+    decoration shape: mark only, compile on demand) for the duration of
+    the block."""
+    attached: list[FunctionType] = []
+    try:
+        for callee in callees:
+            setattr(callee, "__inet__", InetFunction(callee))
             attached.append(callee)
         yield
     finally:
@@ -87,7 +107,9 @@ class Program:
         return self.entry(*args)
 
     def build_ir(self) -> IrFunction:
-        with _inet_attached(self.callees):
+        """The deferred pipeline (natsune.inet): callees attached as
+        markers, compiled on demand by the driver's callee pass."""
+        with _markers_attached(self.callees):
             return build_ir_for_function(self.entry)
 
     def lower(self, backend: PythonBackend | None = None) -> Any:
@@ -108,19 +130,6 @@ class Program:
             )
             compiler.compile()
             return compiler
-
-
-def build_ir_for_function(func: FunctionType) -> IrFunction:
-    """The phase-1 pipeline over a real function object (no exec):
-    extract_source → signature → symbols → call links → IR."""
-    source = extract_source(func, globals=func.__globals__, filename=_filename(func))
-    signature = analyze_signature(source, DiagnosticSink())
-    symbols = collect_symbols(source, signature, DiagnosticSink())
-    links = collect_call_links(source.func_def.body, source.globals)
-    sink = DiagnosticSink()
-    ir = build_ir(source, signature, symbols, links, sink)
-    assert not sink.diagnostics, tuple(str(d) for d in sink.diagnostics)
-    return ir
 
 
 def program_ids(value: Any) -> str | None:

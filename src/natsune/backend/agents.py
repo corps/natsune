@@ -1,5 +1,6 @@
 from typing import Any, Iterator, Sequence
 
+from natsune.adapters import Adapter
 from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
 from natsune.control_flow import (
     CloseAfterContingent,
@@ -13,8 +14,7 @@ from natsune.control_flow import (
     SerialOr,
 )
 from natsune.invocations import Invocation, closer, pack_from, pack_into
-from natsune.legacy import LegacyInetInterface
-from natsune.ports import Graft, Wire
+from natsune.ports import Graft, Port, Wire
 from natsune.registers import (
     FromInterfaceRegister,
     FromRegister,
@@ -22,7 +22,62 @@ from natsune.registers import (
     ToRegister,
 )
 
-type AgentImpl = ExpansionBuilder | LegacyInetInterface | IfThenElseStatement | IfThenElse | Loop | SerialOr | SerialAnd | CloseAfterContingent | ConcurrentValueMerge
+type AgentImpl = (
+    ExpansionBuilder
+    | FrozenExpansion
+    | PromiseExpansion
+    | IfThenElseStatement
+    | IfThenElse
+    | Loop
+    | SerialOr
+    | SerialAnd
+    | CloseAfterContingent
+    | ConcurrentValueMerge
+)
+
+
+class PromiseExpansion:
+    """Late-bound callee net (CUTOVER.md §2): stands in for a
+    FrozenExpansion that is still being compiled — recursive and mutually
+    recursive inet calls. Call-site grafts baked with the promise
+    materialize through it once the owning compile fills `target`.
+
+    The adapters must match what the finished net will expose: the owner
+    builds them from its collected symbols through the same
+    flow_input_adapter/flow_control_adapter constructors the real net's
+    VariablesFlow uses, and the fill asserts the match (CUTOVER.md §2).
+
+    By-reference mutation of the promise is the accepted Python-target
+    semantics. Fills always land before any net runs: a promise is only
+    requested during its owner's callee pass, and a nested compile — fill
+    included — completes before the caller's own lowering starts, while
+    nets execute only from entry points after compilation.
+    """
+
+    def __init__(
+        self, name: str, input_adapter: Adapter, output_adapter: Adapter
+    ) -> None:
+        self.name = name
+        self.input_adapter = input_adapter
+        self.output_adapter = output_adapter
+        self.target: FrozenExpansion | None = None
+
+    def __copy__(self) -> "PromiseExpansion":
+        return self  # every baked graft shares the promise; fills are global
+
+    def __call__(
+        self, executor: Connector, port: Port, wires: Sequence[Wire], /
+    ) -> None:
+        assert (
+            self.target is not None
+        ), f"net for {self.name} used before compilation finished"
+        self.target(executor, port, wires)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
 
 
 def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
@@ -33,18 +88,13 @@ def try_iter(i: Iterator[Any]) -> tuple[Any, bool]:
 
 
 def callee_invocation(
-    agent: FrozenExpansion | ExpansionBuilder | LegacyInetInterface,
+    agent: FrozenExpansion | ExpansionBuilder | PromiseExpansion,
     arity: int,
     connector: Connector,
 ) -> tuple[Sequence[ToRegister], FromRegister]:
-    if isinstance(agent, LegacyInetInterface):
-        input_adapter = agent.compiled.input_adapter
-        output_adapter = agent.compiled.output_adapter
-        expansion = agent.compiled
-    else:
-        input_adapter = agent.input_adapter
-        output_adapter = agent.output_adapter
-        expansion = agent
+    input_adapter = agent.input_adapter
+    output_adapter = agent.output_adapter
+    expansion = agent
 
     graft = Graft(
         expansion,

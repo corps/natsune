@@ -26,7 +26,8 @@ def _inet_function(arg_types=(int, str), return_type=int):
     """A stand-in for the old shape: object with `__inet__` -> compiler-like."""
     compiler = SimpleNamespace(
         args_adapter=ParValueAdapter([adapter_from_type(te) for te in arg_types]),
-        return_annot=return_type,
+        return_adapter=adapter_from_type(return_type),
+        expansion=None,
     )
     return SimpleNamespace(__inet__=compiler), compiler
 
@@ -85,7 +86,9 @@ def test_metadata_is_copied_not_referenced():
     # already-copied tuple (the frontend froze its view at link time).
     compiler_args = [adapter_from_type(int)]
     compiler = SimpleNamespace(
-        args_adapter=ParValueAdapter(compiler_args), return_annot=int
+        args_adapter=ParValueAdapter(compiler_args),
+        return_adapter=adapter_from_type(int),
+        expansion=None,
     )
     func = SimpleNamespace(__inet__=compiler)
     result = link_name("f", {"f": func})
