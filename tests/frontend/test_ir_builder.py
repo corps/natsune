@@ -3,7 +3,7 @@ import dataclasses
 
 import pytest
 
-from natsune.adapters import VA, ParValueAdapter, adapter_from_type
+from natsune.first_order.adapters import VA, ParValueAdapter, adapter_from_type
 from natsune.frontend.ir import (
     Exits,
     IrAssign,

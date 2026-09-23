@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from natsune.adapters import VA, ParValueAdapter, ReferenceAdapter, adapter_from_type
+from natsune.first_order.adapters import VA, ParValueAdapter, ReferenceAdapter, adapter_from_type
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.signature import analyze_signature
 from natsune.frontend.symbols import SymbolsTable, collect_symbols

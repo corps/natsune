@@ -2,7 +2,7 @@ import ast
 import dataclasses
 from collections.abc import Mapping
 
-from natsune.adapters import VA, Adapter, ParValueAdapter
+from natsune.first_order.adapters import VA, Adapter, ParValueAdapter
 from natsune.frontend.link import LinkedInet, LinkResult
 
 

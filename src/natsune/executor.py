@@ -9,10 +9,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, cast
 
-from natsune.connector import Connector
+from natsune.backend.connector import Connector
 from natsune.deque import IdleCounter, WorkStealingDeque
-from natsune.interactions import execute_interaction
-from natsune.ports import Port
+from natsune.first_order.interactions import execute_interaction
+from natsune.first_order.ports import Port
 
 
 class Executor(Connector, ABC):

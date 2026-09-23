@@ -2,13 +2,13 @@ from typing import Any, Collection, cast
 
 import pytest
 
-from natsune.adapters import ValueAdapter, Variables
+from natsune.first_order.adapters import ValueAdapter, Variables
 from natsune.backend.control_branch_flow import ControlBranchFlow
-from natsune.calculus import Calculus
-from natsune.control_flow import VariablesFlow
+from tests.calculus import Calculus
+from natsune.backend.control_flow import VariablesFlow
 from natsune.frontend import IrFunction
 from natsune.frontend.ir import Exits, IrBody, VariableUsage
-from natsune.registers import as_constant_register, send_value
+from natsune.backend.registers import as_constant_register, send_value
 
 
 def create_flow(

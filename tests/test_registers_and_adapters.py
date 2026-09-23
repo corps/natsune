@@ -2,7 +2,7 @@ from typing import Sequence, Self
 
 import pytest
 
-from natsune.adapters import (
+from natsune.first_order.adapters import (
     ValueAdapter,
     ReferenceAdapter,
     Variables,
@@ -11,10 +11,10 @@ from natsune.adapters import (
     Adapter,
     VA,
 )
-from natsune.calculus import Calculus
-from natsune.control_flow import VariablesFlow
-from natsune.connector import Connector
-from natsune.invocations import (
+from tests.calculus import Calculus
+from natsune.backend.control_flow import VariablesFlow
+from natsune.backend.connector import Connector
+from natsune.backend.invocations import (
     ExpansionWithAdapters,
     expansion_invocation,
     unpack_port_and_wires,
@@ -23,9 +23,9 @@ from natsune.invocations import (
     merge_invocation,
     send_parameters,
 )
-from natsune.optimizer import optimize
-from natsune.ports import ValuePort, Port, Wire, Erasure, CombPort, Graft
-from natsune.registers import (
+from natsune.backend.optimizer import optimize
+from natsune.first_order.ports import ValuePort, Port, Wire, Erasure, CombPort, Graft
+from natsune.backend.registers import (
     serialize_values,
     send_value,
     send_values,

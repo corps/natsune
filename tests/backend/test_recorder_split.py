@@ -4,11 +4,11 @@ its __call__ (materialize_template) is the liberated closure that replays
 the recorded pairs into any connector. VariablesFlow delegates __call__
 through the same machinery."""
 
-from natsune.adapters import VA, Variables
-from natsune.connector import ExpansionBuilder, serialize_active_pairs
-from natsune.control_flow import VariablesFlow
+from natsune.first_order.adapters import VA, Variables
+from natsune.backend.connector import ExpansionBuilder, serialize_active_pairs
+from natsune.backend.control_flow import VariablesFlow
 from natsune.inet import inet
-from natsune.ports import ConstantValuePort, Wire
+from natsune.first_order.ports import ConstantValuePort, Wire
 
 
 def _recorded():

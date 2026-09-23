@@ -2,7 +2,7 @@ import ast
 import os
 from types import SimpleNamespace
 
-from natsune.adapters import VA, ParValueAdapter, adapter_from_type
+from natsune.first_order.adapters import VA, ParValueAdapter, adapter_from_type
 from natsune.frontend.link import (
     EvaluatedValue,
     EvaluationFailure,

@@ -1,19 +1,16 @@
 import dataclasses
 from typing import Mapping
 
-from natsune.control_flow import (
+from natsune.backend.control_flow import (
     FlowControlInto,
     VariablesFlow,
 )
-from natsune.frontend.ir import Exits, VariableUsage
-from natsune.ports import Erasure, Wire
-from natsune.registers import (
-    FromRegister,
+from natsune.backend.registers import (
     as_from_register,
-    as_live_registers,
-    as_to_register,
     send_value,
 )
+from natsune.first_order.ports import Erasure
+from natsune.frontend.ir import Exits, VariableUsage
 
 
 # TODO: On cutover, make this agree with VariablesFlow in terms of file positioning, esp when removing old concepts

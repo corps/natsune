@@ -26,7 +26,7 @@ from natsune.frontend.link import collect_call_links
 from natsune.frontend.signature import analyze_signature
 from natsune.frontend.source import extract_source
 from natsune.frontend.symbols import collect_symbols
-from natsune.ports import ExtMergeFuncPort
+from natsune.first_order.ports import ExtMergeFuncPort
 from tests.backend.helpers import (
     Program,
     build_ir_for_function,

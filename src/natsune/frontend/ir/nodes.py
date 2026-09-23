@@ -4,9 +4,9 @@ from collections.abc import Iterator, Mapping, Sequence
 from enum import IntFlag
 from typing import Any, Literal, assert_never
 
-from natsune.adapters import VA, Adapter, read_independently
+from natsune.first_order.adapters import VA, Adapter, read_independently
 from natsune.frontend.diagnostics import Position
-from natsune.interface import InetRef
+from natsune.frontend.inet_ref import InetRef
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)

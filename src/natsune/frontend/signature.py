@@ -2,7 +2,12 @@ import ast
 import dataclasses
 from typing import get_type_hints
 
-from natsune.adapters import Adapter, ParValueAdapter, TypeExpression, adapter_from_type
+from natsune.first_order.adapters import (
+    Adapter,
+    ParValueAdapter,
+    TypeExpression,
+    adapter_from_type,
+)
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.source import FunctionSource
 

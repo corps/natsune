@@ -13,18 +13,8 @@ from typing import (
 
 from karakuri.annotations import Annotation
 
-from natsune.adapters import VA, Adapter
-from natsune.connector import Connector
-from natsune.ports import (
-    Erasure,
-    Expansion,
-    ExtMergeFuncPort,
-    ExtSplitFuncPort,
-    Graft,
-    Port,
-    Wire,
-)
-from natsune.registers import (
+from natsune.backend.connector import Connector
+from natsune.backend.registers import (
     FromInterfaceRegister,
     FromRegister,
     InterfaceRegister,
@@ -34,6 +24,16 @@ from natsune.registers import (
     as_from_register,
     as_to_register,
     send_value,
+)
+from natsune.first_order.adapters import VA, Adapter
+from natsune.first_order.ports import (
+    Erasure,
+    Expansion,
+    ExtMergeFuncPort,
+    ExtSplitFuncPort,
+    Graft,
+    Port,
+    Wire,
 )
 
 

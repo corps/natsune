@@ -13,8 +13,8 @@ from typing import (
     get_origin,
 )
 
-from natsune.connector import Connector
-from natsune.ports import CombPort, Erasure, Port, Target, Wire, WirePort
+from natsune.backend.connector import Connector
+from natsune.first_order.ports import CombPort, Erasure, Port, Target, Wire, WirePort
 from natsune.special_forms import Inverse, Par, Ref
 
 

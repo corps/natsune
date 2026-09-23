@@ -1,7 +1,7 @@
 import pytest
 
-from natsune.calculus import Calculus
-from natsune.ports import ValuePort
+from tests.calculus import Calculus
+from natsune.first_order.ports import ValuePort
 
 
 @pytest.fixture(scope="function")

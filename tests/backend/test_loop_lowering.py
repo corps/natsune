@@ -1,6 +1,6 @@
 import pytest
 
-from natsune.control_flow import Loop
+from natsune.backend.control_flow import Loop
 from natsune.special_forms import Par, Ref
 from tests.backend.helpers import Program, capturing_lower, program_ids
 

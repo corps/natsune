@@ -19,9 +19,9 @@ the same object drives the plain program and the lowering.
 
 import pytest
 
-from natsune.connector import Graft, serialize_active_pairs
-from natsune.control_flow import IfThenElseStatement, VariablesFlow
-from natsune.ports import Port, Wire
+from natsune.backend.connector import Graft, serialize_active_pairs
+from natsune.backend.control_flow import IfThenElseStatement, VariablesFlow
+from natsune.first_order.ports import Port, Wire
 from tests.backend.helpers import Program, capturing_lower, program_ids
 
 # --- case programs -------------------------------------------------------

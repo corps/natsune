@@ -2,12 +2,12 @@ import dataclasses
 from collections import defaultdict
 from typing import Any, Callable, Literal, Self, Sequence
 
-from natsune.adapters import VA, Adapter, ValueAdapter
-from natsune.connector import Connector, serialize_active_pairs
-from natsune.control_flow import AmbiguousPair
+from natsune.first_order.adapters import VA, Adapter
+from natsune.backend.connector import Connector, serialize_active_pairs
+from natsune.backend.control_flow import AmbiguousPair
 from natsune.executor import DeterministicSerialExecutor
-from natsune.optimizer import optimize
-from natsune.ports import (
+from natsune.backend.optimizer import optimize
+from natsune.first_order.ports import (
     CombPort,
     Erasure,
     Expansion,
@@ -20,7 +20,7 @@ from natsune.ports import (
     Wire,
     WirePort,
 )
-from natsune.registers import (
+from natsune.backend.registers import (
     FromRegister,
     ToRegister,
     as_constant_register,

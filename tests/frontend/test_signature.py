@@ -1,6 +1,6 @@
 import pytest
 
-from natsune.adapters import VA, ParValueAdapter, adapter_from_type
+from natsune.first_order.adapters import VA, ParValueAdapter, adapter_from_type
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.signature import Signature, analyze_signature
 from natsune.special_forms import Par

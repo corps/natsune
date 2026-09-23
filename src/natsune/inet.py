@@ -24,14 +24,14 @@ import threading
 from types import FunctionType
 from typing import Any, Callable
 
-from natsune.adapters import Adapter, ParValueAdapter, Variables
 from natsune.backend.agents import PromiseExpansion
+from natsune.backend.connector import FrozenExpansion
+from natsune.backend.control_flow import flow_control_adapter, flow_input_adapter
 from natsune.backend.lowering import lower_function
 from natsune.backend.protocol import LoweredUnit
 from natsune.backend.python_backend import PythonBackend, as_callable
-from natsune.connector import FrozenExpansion
-from natsune.control_flow import flow_control_adapter, flow_input_adapter
 from natsune.executor import DeterministicSerialExecutor, Executor
+from natsune.first_order.adapters import Adapter, ParValueAdapter, Variables
 from natsune.frontend import IrFunction
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.ir import build_ir
@@ -58,7 +58,7 @@ _compile_lock = threading.RLock()
 
 class InetFunction:
     """The `__inet__` artifact: marker, deferred compile state, and the
-    callee surface the compiler links against (natsune.interface.InetRef).
+    callee surface the compiler links against (natsune.frontend.inet_ref.InetRef).
 
     Field progression: `expansion` is None until compilation starts, then
     promise-or-frozen forever after; `entry` (the as_callable product) is
@@ -261,27 +261,18 @@ def _resolve_markers(source) -> list[tuple[str, Any]]:
 
 
 def build_ir_for_function(func: FunctionType) -> IrFunction:
-    """The deferred pipeline over a real function object, through IR:
-    extract → signature → signature pass → symbols → compile pass →
-    links → IR. Compiles every marked callee on demand (first use
-    anywhere in a cycle compiles the whole reachable graph; cyclic refs
-    stay promises until their owner finishes). Raises on diagnostics."""
     sink = DiagnosticSink()
     source = extract_source(
         func, globals=func.__globals__, filename=func.__code__.co_filename
     )
     signature = analyze_signature(source, sink)
 
-    # Signature pass: callees' return adapters must be known before
-    # symbol collection types a call against them.
     markers = _resolve_markers(source)
     for _, ref in markers:
         ref.ensure_signature()
 
     symbols = collect_symbols(source, signature, sink)
 
-    # Compile pass: full compilation for acyclic callees; cyclic refs
-    # return immediately (their promise is in `ref.expansion`).
     for _, ref in markers:
         ref.ensure_compiled()
 
@@ -294,10 +285,6 @@ def build_ir_for_function(func: FunctionType) -> IrFunction:
 def inet(
     f: FunctionType | None = None, *, executor: Executor | None = None
 ) -> Callable[..., Any]:
-    """Mark a function for the compiler. Decoration is pure marking — no
-    compilation, no analysis. The first call (from Python or from another
-    inet function's callee pass) compiles."""
-
     def decorate(func: FunctionType) -> Callable[..., Any]:
         artifact = InetFunction(func, executor)
 

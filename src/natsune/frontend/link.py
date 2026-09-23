@@ -3,8 +3,8 @@ import dataclasses
 from collections.abc import Iterable
 from typing import Any
 
-from natsune.adapters import Adapter
-from natsune.interface import InetRef
+from natsune.first_order.adapters import Adapter
+from natsune.frontend.inet_ref import InetRef
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

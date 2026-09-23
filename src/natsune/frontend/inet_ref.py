@@ -9,8 +9,8 @@ wires. This module is a leaf: adapters/ports only."""
 
 from typing import Protocol, runtime_checkable
 
-from natsune.adapters import Adapter, ParValueAdapter
-from natsune.ports import Expansion
+from natsune.first_order.adapters import Adapter, ParValueAdapter
+from natsune.first_order.ports import Expansion
 
 
 @runtime_checkable

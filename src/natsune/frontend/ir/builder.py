@@ -3,7 +3,7 @@ import dataclasses
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from natsune.adapters import VA, ParValueAdapter
+from natsune.first_order.adapters import VA, ParValueAdapter
 from natsune.frontend.diagnostics import DiagnosticSink, Position
 from natsune.frontend.infer import ParSubscriptError, infer_adapter, par_subscript_index
 from natsune.frontend.ir.nodes import (

@@ -1,6 +1,6 @@
 import pytest
 
-from natsune.adapters import InverseAdapter, ReferenceAdapter, ValueAdapter
+from natsune.first_order.adapters import InverseAdapter, ReferenceAdapter, ValueAdapter
 from natsune.backend.lowering import _FunctionLowering
 from natsune.backend.python_backend import PythonBackend
 from natsune.frontend.diagnostics import DiagnosticSink

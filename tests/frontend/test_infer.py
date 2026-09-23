@@ -2,7 +2,7 @@ import ast
 from types import SimpleNamespace
 from typing import cast, Any
 
-from natsune.adapters import VA, ParValueAdapter, adapter_from_type
+from natsune.first_order.adapters import VA, ParValueAdapter, adapter_from_type
 from natsune.frontend.infer import (
     ParSubscriptError,
     infer_adapter,
@@ -14,7 +14,7 @@ from natsune.frontend.link import (
     LinkNotFound,
     collect_call_links,
 )
-from natsune.interface import InetRef
+from natsune.frontend.inet_ref import InetRef
 from natsune.special_forms import Par
 from tests.frontend.helpers import parse_function
 

@@ -1,5 +1,5 @@
 import threading
-from typing import Generic, Literal, TypeVar
+from typing import Literal
 
 
 class IdleCounter:

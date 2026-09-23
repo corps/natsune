@@ -1,8 +1,7 @@
 from typing import Any, Iterator, Sequence
 
-from natsune.adapters import Adapter
-from natsune.connector import Connector, ExpansionBuilder, FrozenExpansion
-from natsune.control_flow import (
+from natsune.backend.connector import Connector, ExpansionBuilder, FrozenExpansion
+from natsune.backend.control_flow import (
     CloseAfterContingent,
     ConcurrentValueMerge,
     FlowControlInto,
@@ -13,14 +12,15 @@ from natsune.control_flow import (
     SerialAnd,
     SerialOr,
 )
-from natsune.invocations import Invocation, closer, pack_from, pack_into
-from natsune.ports import Graft, Port, Wire
-from natsune.registers import (
+from natsune.backend.invocations import Invocation, closer, pack_from, pack_into
+from natsune.backend.registers import (
     FromInterfaceRegister,
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
 )
+from natsune.first_order.adapters import Adapter
+from natsune.first_order.ports import Graft, Port, Wire
 
 type AgentImpl = (
     ExpansionBuilder

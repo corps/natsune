@@ -1,16 +1,16 @@
 import pytest
 
-from natsune.adapters import ValueAdapter, Variables, ParValueAdapter
-from natsune.calculus import Calculus
-from natsune.connector import ExpansionBuilder
-from natsune.control_flow import SerialOr, IfThenElse, Loop, VariablesFlow
-from natsune.invocations import (
+from natsune.first_order.adapters import ValueAdapter, Variables, ParValueAdapter
+from tests.calculus import Calculus
+from natsune.backend.connector import ExpansionBuilder
+from natsune.backend.control_flow import SerialOr, IfThenElse, Loop, VariablesFlow
+from natsune.backend.invocations import (
     filter_invocation,
     send_parameter,
     expansion_invocation,
     merge_invocation,
 )
-from natsune.registers import (
+from natsune.backend.registers import (
     send_value,
     as_constant_register,
     ToInterfaceRegister,

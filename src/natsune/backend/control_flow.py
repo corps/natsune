@@ -2,21 +2,14 @@ import dataclasses
 from functools import cached_property
 from typing import Any, Callable, ClassVar, Self, Sequence
 
-from natsune.adapters import (
-    RA_VA,
-    VA,
-    Adapter,
-    ParValueAdapter,
-    Variables,
-)
-from natsune.connector import (
+from natsune.backend.connector import (
     Connector,
     ExpansionBuilder,
     global_wire_lock,
     new_wires_cache,
     serialize_port,
 )
-from natsune.invocations import (
+from natsune.backend.invocations import (
     ExpansionWithAdapters,
     Invocation,
     _pack_from,
@@ -32,16 +25,8 @@ from natsune.invocations import (
     unpack_port_and_wires,
     unpack_wires,
 )
-from natsune.optimizer import optimize
-from natsune.ports import (
-    Erasure,
-    Expansion,
-    Graft,
-    Port,
-    ValuePort,
-    Wire,
-)
-from natsune.registers import (
+from natsune.backend.optimizer import optimize
+from natsune.backend.registers import (
     FlowRegister,
     FlowRegisterUsage,
     FromInterfaceRegister,
@@ -54,6 +39,21 @@ from natsune.registers import (
     borrow_registers,
     send_value,
     send_values,
+)
+from natsune.first_order.adapters import (
+    RA_VA,
+    VA,
+    Adapter,
+    ParValueAdapter,
+    Variables,
+)
+from natsune.first_order.ports import (
+    Erasure,
+    Expansion,
+    Graft,
+    Port,
+    ValuePort,
+    Wire,
 )
 
 

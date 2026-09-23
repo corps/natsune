@@ -2,7 +2,7 @@ import ast
 import dataclasses
 from typing import Any
 
-from natsune.adapters import VA, Adapter, ParValueAdapter, adapter_from_type
+from natsune.first_order.adapters import VA, Adapter, ParValueAdapter, adapter_from_type
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.infer import infer_adapter
 from natsune.frontend.link import (

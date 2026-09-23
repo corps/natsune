@@ -4,21 +4,16 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Callable, Collection
 
-from natsune.adapters import VA, Adapter, ValueAdapter
 from natsune.backend.agents import AgentImpl, callee_invocation
-from natsune.backend.protocol import LoweredUnit
-from natsune.backend.runtime import construct_locals, eval_expression, exec_expression
-from natsune.connector import Connector, FrozenExpansion
-from natsune.executor import Executor, ThreadPoolExecutor
-from natsune.frontend import IrFunction
-from natsune.invocations import (
+from natsune.backend.connector import Connector, FrozenExpansion
+from natsune.backend.invocations import (
     catch,
     filter_invocation,
     merge_invocation,
     send_parameters,
 )
-from natsune.ports import Erasure, Graft, Wire
-from natsune.registers import (
+from natsune.backend.protocol import LoweredUnit
+from natsune.backend.registers import (
     FromRegister,
     ToRegister,
     as_constant_register,
@@ -28,6 +23,11 @@ from natsune.registers import (
     send_value,
     serialize_values,
 )
+from natsune.backend.runtime import construct_locals, eval_expression, exec_expression
+from natsune.executor import Executor, ThreadPoolExecutor
+from natsune.first_order.adapters import VA, Adapter, ValueAdapter
+from natsune.first_order.ports import Erasure, Graft, Wire
+from natsune.frontend import IrFunction
 
 
 @dataclasses.dataclass

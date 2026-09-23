@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from natsune.adapters import ParValueAdapter, adapter_from_type
+from natsune.first_order.adapters import ParValueAdapter, adapter_from_type
 from natsune.special_forms import Inverse, Par, Ref
 
 

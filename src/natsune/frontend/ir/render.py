@@ -2,7 +2,7 @@ import ast
 from collections.abc import Callable
 from typing import Any
 
-from natsune.adapters import (
+from natsune.first_order.adapters import (
     InverseAdapter,
     ParValueAdapter,
     ReferenceAdapter,

@@ -3,19 +3,17 @@ from typing import Any, Callable, Iterable, Literal, Protocol, Self, Sequence, c
 
 from karakuri.inference.mapping_inference import MappingInference
 
-from natsune.adapters import (
+from natsune.backend.connector import Connector
+from natsune.first_order.adapters import (
     RA_VA,
     UA,
     VA,
     Adapter,
     ParValueAdapter,
-    ReferenceAdapter,
-    UnknownAdapter,
     ValueAdapter,
     to_accepts_from,
 )
-from natsune.connector import Connector
-from natsune.ports import (
+from natsune.first_order.ports import (
     CombPort,
     ConstantValuePort,
     Erasure,
@@ -145,7 +143,7 @@ class _FromRegister:
         )
 
     def __or__(self, other: FromRegister) -> FromRegister:
-        from natsune.control_flow import SerialOr
+        from natsune.backend.control_flow import SerialOr
 
         assert self.adapter == other.adapter
 
@@ -155,7 +153,7 @@ class _FromRegister:
             return selection.wire.result.readout()
 
     def __and__(self, other: FromRegister) -> FromRegister:
-        from natsune.control_flow import SerialAnd
+        from natsune.backend.control_flow import SerialAnd
 
         with SerialAnd(self.adapter, other.adapter).invocation(
             self.connector
@@ -177,7 +175,7 @@ class _FromRegister:
         )
 
     def trace(self, label: str) -> FromRegister:
-        from natsune.control_flow import Tracer
+        from natsune.backend.control_flow import Tracer
 
         g = Graft(Tracer(label), [Wire()])
         self.connector.connect(self.port, g)
@@ -535,8 +533,12 @@ def fold_merge(
 def borrow_registers(
     registers: list[FromRegister], finished_from: FromRegister
 ) -> list[FromRegister]:
-    from natsune.control_flow import CloseAfterContingent, MergeInputTo, MergeOutputInto
-    from natsune.invocations import expansion_invocation
+    from natsune.backend.control_flow import (
+        CloseAfterContingent,
+        MergeInputTo,
+        MergeOutputInto,
+    )
+    from natsune.backend.invocations import expansion_invocation
 
     if not registers:
         return registers

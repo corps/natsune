@@ -2,7 +2,7 @@ import copy
 import dataclasses
 from typing import TYPE_CHECKING
 
-from natsune.ports import (
+from natsune.first_order.ports import (
     CombPort,
     Erasure,
     ExtMergeFuncPort,
@@ -14,10 +14,7 @@ from natsune.ports import (
     WirePort,
 )
 
-from .connector import Connector
-
-if TYPE_CHECKING:
-    from .connector import Connector
+from ..backend.connector import Connector
 
 __all__ = [
     "execute_ext_merge_func",

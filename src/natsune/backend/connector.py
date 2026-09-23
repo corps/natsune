@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager
 from functools import cached_property
 from typing import TYPE_CHECKING, Callable, Generator, Iterator, Self, Sequence
 
-from natsune.ports import (
+from natsune.first_order.ports import (
     CombPort,
     Erasure,
     Expansion,
@@ -23,11 +23,11 @@ from natsune.ports import (
 )
 
 if TYPE_CHECKING:
-    from natsune.adapters import Adapter
-    from natsune.registers import (
+    from natsune.backend.registers import (
         FromInterfaceRegister,
         ToInterfaceRegister,
     )
+    from natsune.first_order.adapters import Adapter
 
 __all__ = [
     "Connector",
@@ -266,13 +266,13 @@ class ExpansionBuilder(Connector):
 
     @cached_property
     def input_interface(self) -> FromInterfaceRegister:
-        from natsune.registers import FromInterfaceRegister
+        from natsune.backend.registers import FromInterfaceRegister
 
         return FromInterfaceRegister(self.input_adapter, self)
 
     @cached_property
     def output_interface(self) -> ToInterfaceRegister:
-        from natsune.registers import ToInterfaceRegister
+        from natsune.backend.registers import ToInterfaceRegister
 
         return ToInterfaceRegister(self.output_adapter, self)
 
@@ -289,7 +289,7 @@ class ExpansionBuilder(Connector):
         self.output_interface.close()
         self.input_interface.close()
 
-        from natsune.optimizer import optimize
+        from natsune.backend.optimizer import optimize
 
         optimize(self, self.active_pairs)
         self.active_pairs = tuple(self.active_pairs)  # type: ignore

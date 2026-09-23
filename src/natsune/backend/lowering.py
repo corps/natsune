@@ -2,17 +2,15 @@ import ast
 import operator
 from typing import Any, assert_never
 
-from natsune.adapters import VA, Adapter, ParValueAdapter, Variables
 from natsune.backend.agents import (
     AgentImpl,
     PromiseExpansion,
     callee_invocation,
     try_iter,
 )
+from natsune.backend.connector import ExpansionBuilder, FrozenExpansion
 from natsune.backend.control_branch_flow import ControlBranchFlow
-from natsune.backend.protocol import Backend, LoweredUnit
-from natsune.connector import ExpansionBuilder, FrozenExpansion
-from natsune.control_flow import (
+from natsune.backend.control_flow import (
     CloseAfterContingent,
     ConcurrentValueMerge,
     FlowControlInto,
@@ -24,6 +22,26 @@ from natsune.control_flow import (
     SerialOr,
     VariablesFlow,
 )
+from natsune.backend.invocations import (
+    closer,
+    filter_invocation,
+    pack_from,
+    pack_into,
+    send_parameter,
+    split_invocation,
+)
+from natsune.backend.protocol import Backend, LoweredUnit
+from natsune.backend.registers import (
+    FromRegister,
+    ToRegister,
+    as_constant_register,
+    as_from_register,
+    join_from_registers,
+    join_to_registers,
+    send_value,
+)
+from natsune.first_order.adapters import VA, Adapter, ParValueAdapter, Variables
+from natsune.first_order.ports import Expansion, Graft, Port, Target, Wire
 from natsune.frontend.ir import IrBody, IrBoolOp, IrFunction, IrParIndex
 from natsune.frontend.ir.nodes import (
     Exits,
@@ -47,24 +65,6 @@ from natsune.frontend.ir.nodes import (
     IrTuple,
     IrVar,
     IrWhile,
-)
-from natsune.invocations import (
-    closer,
-    filter_invocation,
-    pack_from,
-    pack_into,
-    send_parameter,
-    split_invocation,
-)
-from natsune.ports import Expansion, Graft, Port, Target, Wire
-from natsune.registers import (
-    FromRegister,
-    ToRegister,
-    as_constant_register,
-    as_from_register,
-    join_from_registers,
-    join_to_registers,
-    send_value,
 )
 
 

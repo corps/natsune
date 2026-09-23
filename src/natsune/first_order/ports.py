@@ -12,7 +12,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from .connector import Connector
+    from ..backend.connector import Connector
 
 
 class Port:

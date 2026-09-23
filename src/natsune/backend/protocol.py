@@ -3,11 +3,11 @@ import dataclasses
 from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
-from natsune.adapters import Adapter
 from natsune.backend.agents import AgentImpl
-from natsune.connector import Connector, FrozenExpansion
+from natsune.backend.connector import Connector, FrozenExpansion
+from natsune.backend.registers import FromRegister, ToRegister
+from natsune.first_order.adapters import Adapter
 from natsune.frontend import IrFunction
-from natsune.registers import FromRegister, ToRegister
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
