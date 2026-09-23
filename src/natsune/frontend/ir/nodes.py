@@ -242,8 +242,7 @@ type IrStmt = (
 type IrBodyExit = IrIf | IrWhile | IrFor | IrReturn | IrContinue | IrBreak
 
 
-class IrStructureError(Exception):
-    """An IrBody statement list has an invalid exit structure."""
+class IrStructureError(Exception): ...
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -273,7 +272,6 @@ class IrFunction(IrNode):
 
 
 def iter_child_expressions(node: IrExpr | IrStmt) -> Iterator[IrExpr]:
-    """Yield the direct IrExpr children of an expression or statement (shallow)."""
     match node:
         case IrVar() | IrConst():
             return
@@ -327,10 +325,6 @@ def _collect_expr_usage(
     adapters: Mapping[str, Adapter],
 ) -> None:
     if isinstance(expr, IrVar) and not expr.is_global:
-        # Usage classifies the EFFECT on the variable's cell, not the
-        # syntactic position (§1): a read of a variable whose adapter
-        # linearizes reads (Reference/Inverse/Par today) is effectually a
-        # write — the cell advances.
         adapter = adapters.get(expr.name)
         how = (
             "read"
@@ -407,15 +401,6 @@ def _collect_stmt_usage(
 
 
 def _loop_exits(body: IrBody, orelse: IrBody) -> Exits:
-    """Exits of IrWhile/IrFor.
-
-    RETURN propagates past the loop; FALLTHROUGH (an iteration completes)
-    and CONTINUE (jumps to the re-test) keep the loop alive. The orelse
-    runs whenever the loop completes normally — conditions and iterables
-    are opaque, so its exits always contribute. BREAK terminates the loop
-    while skipping the orelse: flow resumes after the loop, so it
-    contributes FALLTHROUGH for the loop as a whole.
-    """
     body_exits = body.exits
     result = (body_exits & LOOP_BODY_MASK) | orelse.exits
     if body_exits & Exits.BREAK:
@@ -424,11 +409,6 @@ def _loop_exits(body: IrBody, orelse: IrBody) -> Exits:
 
 
 def _validate_post_exit(stmt: IrStmt) -> None:
-    """Check one statement placed after the body's exit has been determined.
-
-    Post-exit statements run concurrently: a bare IrReturn/IrContinue/IrBreak,
-    or a disjunctive with an exiting path, would race the determined exit.
-    """
     if isinstance(stmt, (IrReturn, IrContinue, IrBreak)):
         raise IrStructureError(
             f"{type(stmt).__name__} after the statement list's close: post-close "
@@ -444,15 +424,6 @@ def _validate_post_exit(stmt: IrStmt) -> None:
 def _analyze_body_flow(
     statements: tuple[IrStmt, ...],
 ) -> tuple[Sequence[IrIf | IrWhile | IrFor], IrBodyExit | None]:
-    """Scan a statement list for its disjunctives and closer.
-
-    A disjunctive (IrIf/IrWhile/IrFor) that can fall through (its exits
-    carries Exits.FALLTHROUGH) returns flow to the statement list and is
-    collected; the first statement that never returns flow is the closer.
-    Statements after the closer are validated by _validate_post_exit. Exits
-    are read from the stored exits properties, so the analysis runs
-    bottom-up: children must already carry their computed fields.
-    """
     disjunctives: list[IrIf | IrWhile | IrFor] = []
     body_exit: IrBodyExit | None = None
     exit_index = -1
@@ -478,18 +449,6 @@ def analyze_ir_body(
 ) -> tuple[
     Mapping[str, VariableUsage], Sequence[IrIf | IrWhile | IrFor], IrBodyExit | None
 ]:
-    """Compute an IrBody's derived fields (see the IrBody docstring).
-
-    Called on a body's statements as the builder constructs it: child bodies
-    inside the statements must already carry their own computed fields,
-    keeping the whole computation bottom-up. Invalid exit structures raise
-    IrStructureError here, at build time.
-
-    ``adapters`` is the function-wide name→adapter table (params and
-    annotated locals — SymbolsTable.variables): reads are classified by
-    the variable's wiring discipline, so the table must be complete,
-    which it is — it is built ahead of IR construction, order-free.
-    """
     usage: dict[str, VariableUsage] = {}
     for stmt in statements:
         _collect_stmt_usage(stmt, usage, adapters)

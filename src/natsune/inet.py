@@ -147,7 +147,7 @@ class InetFunction:
         # Signature pass first: collect_symbols types calls against callee
         # return adapters, so every marker callee must have its signature
         # filled before symbols are collected.
-        markers = _resolve_markers(source)
+        markers = resolve_markers(source)
         for _, ref in markers:
             ref.ensure_signature()
 
@@ -242,10 +242,7 @@ class _UnitCapture(PythonBackend):
         return super().finish(artifact)
 
 
-def _resolve_markers(source) -> list[tuple[str, Any]]:
-    """(name, marker) for every called name that resolves to an inet
-    artifact, in first-appearance order. Names that fail to evaluate are
-    skipped here — link_name reports them with its own precision."""
+def resolve_markers(source) -> list[tuple[str, Any]]:
     markers: list[tuple[str, Any]] = []
     for name in collect_called_names(source.func_def.body):
         try:
@@ -267,7 +264,7 @@ def build_ir_for_function(func: FunctionType) -> IrFunction:
     )
     signature = analyze_signature(source, sink)
 
-    markers = _resolve_markers(source)
+    markers = resolve_markers(source)
     for _, ref in markers:
         ref.ensure_signature()
 

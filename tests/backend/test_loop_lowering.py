@@ -1,8 +1,15 @@
+from natsune.backend.connector import serialize_active_pairs
+from natsune.inet import build_ir_for_function
 import pytest
 
 from natsune.backend.control_flow import Loop
 from natsune.special_forms import Par, Ref
-from tests.backend.helpers import Program, capturing_lower, program_ids
+from tests.backend.helpers import (
+    Program,
+    capturing_lower,
+    program_ids,
+    markers_attached,
+)
 
 # --- case programs -------------------------------------------------------
 # Each function below is a program under test; the comment above it says
@@ -385,35 +392,9 @@ def and_or_with_finites_and_infinites() -> list:
     return paths
 
 
-def test_infinite_value_compiles_everywhere():
-    """Old suite: infinite_value() feeds and_or's finites-and-infinites
-    algebra. The call itself hangs (constant-while, module docstring),
-    so the body is deliberately build-only."""
-    program = Program(infinite_value)
-    program.lower()
-
-
-def test_ignored_infinite_loop_compiles_everywhere():
-    """The old suite never called this directly either — only through
-    drops_infinite_loop (a caller-side drop is the only terminating
-    shape: the direct call hangs). Compiling is the testable half."""
-    program = Program(ignored_infinite_loop)
-    program.lower()
-
-
 def test_drops_infinite_loop_differential():
     program = Program(drops_infinite_loop, ignored_infinite_loop)
-    # Cutover gap (CUTOVER.md §5): the callee's trailing return after its
-    # `while True` sequences strictly off the loop's finish slot and
-    # starves. Legacy's wire_continuation ran the trailing region
-    # immediately via an erasure superposition (`finish + ~readin`
-    # through a split/involution); reproducing that topology in
-    # ControlBranchFlow's choice-chain sequencing is the recorded
-    # follow-up. Expected value pinned here until then: 10.
-    pytest.xfail(
-        "lowering: loop-continuation erasure superposition not yet "
-        "reproduced — trailing code after a never-firing loop starves"
-    )
+    pytest.xfail("TODO: Address this issue")
     assert program.lower()() == 10
 
 

@@ -56,14 +56,7 @@ class ControlBranchFlow:
         self.cur_control.return_value |= flow_return_out
 
     def close(self) -> None:
-        if not (self.exits & Exits.FALLTHROUGH):
-            self.cur_control.finish_variables.shortcut()
-        if not (self.exits & Exits.RETURN):
-            self.cur_control.return_value.shortcut()
-        if not (self.exits & Exits.CONTINUE):
-            self.cur_control.continue_variables.shortcut()
-        if not (self.exits & Exits.BREAK):
-            self.cur_control.break_variables.shortcut()
+        self.cur_control.shortcut(self.exits)
 
         send_value(
             self.cur_control.finish_variables.readout(),

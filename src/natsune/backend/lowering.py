@@ -8,7 +8,11 @@ from natsune.backend.agents import (
     callee_invocation,
     try_iter,
 )
-from natsune.backend.connector import ExpansionBuilder, FrozenExpansion
+from natsune.backend.connector import (
+    ExpansionBuilder,
+    FrozenExpansion,
+    serialize_active_pairs,
+)
 from natsune.backend.control_branch_flow import ControlBranchFlow
 from natsune.backend.control_flow import (
     CloseAfterContingent,
@@ -81,6 +85,11 @@ def lower_function(ir: IrFunction, backend: Backend) -> Any:
     return lowering.run()
 
 
+def serialize_function(ir: IrFunction, backend: Backend) -> list[str]:
+    flow = _FunctionLowering(ir, backend).branch_flow(ir.body, exits=ir.exits)
+    return serialize_active_pairs(flow.active_pairs, {})
+
+
 class _FunctionLowering:
     def __init__(self, ir: IrFunction, backend: Backend) -> None:
         self.ir = ir
@@ -110,9 +119,6 @@ class _FunctionLowering:
                     targets.append(expansion.output_interface.interface)
                     seen_agents.add(expansion)
             elif isinstance(expansion, (FrozenExpansion, PromiseExpansion)):
-                # Compiled callees, grafted whole. Leaves in the catalog:
-                # their internal agents belong to the callee's own unit,
-                # and a promise has nothing behind it yet.
                 seen_agents.add(expansion)
             elif isinstance(expansion, IfThenElseStatement):
                 if expansion not in seen_agents:
@@ -165,9 +171,6 @@ class _FunctionLowering:
                 for target in stmt.targets:
                     self.collect_from_target(target, variables)
             elif isinstance(stmt, IrAugAssign):
-                # Old visit_AugAssign marks fresh targets VA unconditionally.
-                # A fresh augassign target is never in the symbols table, so
-                # the frontend already stamped VA into its IrTargetName.
                 self.collect_from_target(stmt.target, variables)
             elif isinstance(stmt, IrIf):
                 self.collect_from_statements(stmt.then_body.statements, variables)
@@ -194,7 +197,9 @@ class _FunctionLowering:
                 for element in elements:
                     self.collect_from_target(element, variables)
             case IrTargetName() | IrTargetDynamic():
-                pass  # globals are refused at lowering; dynamics declare nothing
+                pass
+            case _:
+                assert_never(target)
 
     def lower_statements(
         self,
@@ -267,6 +272,8 @@ class _FunctionLowering:
         if_agent = IfThenElseStatement(true_case=true_flow, false_case=false_flow)
 
         with if_agent.invocation(flow) as if_invocation:
+            if_invocation.wire.result.shortcut(stmt.exits)
+
             send_value(
                 self.from_expr(stmt.test, flow),
                 if_invocation.port.readin(),
@@ -304,17 +311,6 @@ class _FunctionLowering:
         flow.close()
 
     def lower_loop(self, flow: VariablesFlow, stmt: IrFor | IrWhile) -> None:
-        """Lower IrWhile/IrFor through the Loop composite (§6.1).
-
-        The iteration flow is the per-iteration re-test: for a For it
-        pulls the next element off the iterator and deconstructs it into
-        the target; for a While it evaluates the test. The composite's
-        finish slot (= exhaustion, including body break) is what sequences
-        the trailing region — the next layer starts off cur_control.finish,
-        so "loop exhausted" is exactly what feeds it. All four result
-        slots forward unconditionally (the §3.2 rule, loops included);
-        consumption/shortcut stays exits-driven in ControlBranchFlow.
-        """
         body_flow = self.branch_flow(stmt.body, exits=stmt.body.exits)
         orelse_flow = self.branch_flow(stmt.orelse, exits=stmt.orelse.exits)
 
@@ -330,8 +326,6 @@ class _FunctionLowering:
 
         with loop.invocation(flow) as loop_invocation:
             if isinstance(stmt, IrFor):
-                # iter(<iterable>) — the builtin, through the eval-filter
-                # gadget (mirrors legacy compiler.py:857–860).
                 send_value(
                     send_parameter(
                         filter_invocation(iter, flow),
@@ -343,6 +337,8 @@ class _FunctionLowering:
                 flow.variables_readout(),
                 loop_invocation.port.variables.readin(),
             )
+
+            loop_invocation.wire.shortcut(stmt.exits)
 
             send_value(
                 loop_invocation.wire.finish_variables.readout(),
@@ -364,10 +360,6 @@ class _FunctionLowering:
         flow.close()
 
     def deconstruct_iteration_flow(self, target: IrTarget) -> VariablesFlow:
-        """The For loop's iteration flow: pull the next element and
-        deconstruct it into the target, reporting (element-matched) as the
-        re-test. Mirrors legacy parse_deconstruct_iter (compiler.py:534).
-        """
         with VariablesFlow(
             variables=Variables(self.variables), return_adapter=VA
         ) as true_case:
@@ -431,9 +423,6 @@ class _FunctionLowering:
         return flow
 
     def test_iteration_flow(self, test: IrExpr) -> VariablesFlow:
-        """The While loop's iteration flow: evaluate the test per
-        iteration; its value is the re-test. Mirrors legacy parse_test
-        (compiler.py:730)."""
         with VariablesFlow(
             variables=Variables(self.variables), return_adapter=VA
         ) as flow:

@@ -53,6 +53,7 @@ from natsune.first_order.ports import (
     ValuePort,
     Wire,
 )
+from natsune.frontend.ir import Exits
 
 
 @dataclasses.dataclass(slots=True)
@@ -152,6 +153,16 @@ class FlowControlInto:
     @classmethod
     def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
         return _pack_into(to_register, cls)
+
+    def shortcut(self, exits: Exits) -> None:
+        if not (exits & Exits.FALLTHROUGH):
+            self.finish_variables.shortcut()
+        if not (exits & Exits.RETURN):
+            self.return_value.shortcut()
+        if not (exits & Exits.CONTINUE):
+            self.continue_variables.shortcut()
+        if not (exits & Exits.BREAK):
+            self.break_variables.shortcut()
 
 
 @dataclasses.dataclass(slots=True)
