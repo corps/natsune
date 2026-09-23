@@ -269,9 +269,17 @@ class _FunctionLowering:
     def lower_if(self, flow: VariablesFlow, stmt: IrIf) -> None:
         true_flow = self.branch_flow(stmt.then_body, exits=stmt.then_body.exits)
         false_flow = self.branch_flow(stmt.else_body, exits=stmt.else_body.exits)
-        if_agent = IfThenElseStatement(true_case=true_flow, false_case=false_flow)
+        # The statement carries its own IrIf: its __call__ shortcuts its
+        # runtime control channels per .exits, covering every graft.
+        if_agent = IfThenElseStatement(
+            true_case=true_flow, false_case=false_flow, ir=stmt
+        )
 
         with if_agent.invocation(flow) as if_invocation:
+            # Pre-reduce hint (the expansion's __call__ remains the semantic
+            # owner): annihilating the caller-side channels here lets
+            # optimize() replace the connecting wire chains with stubs in
+            # this builder's frozen artifact.
             if_invocation.wire.result.shortcut(stmt.exits)
 
             send_value(
@@ -322,6 +330,7 @@ class _FunctionLowering:
             ),
             body_flow,
             orelse_flow,
+            ir=stmt,
         )
 
         with loop.invocation(flow) as loop_invocation:
@@ -338,6 +347,10 @@ class _FunctionLowering:
                 loop_invocation.port.variables.readin(),
             )
 
+            # Pre-reduce hint, mirroring lower_if: the loop's __call__
+            # owns the shortcut semantically (it also covers graft sites
+            # this never sees, like the true_case recursion); doing it here
+            # as well just shortens the caller-side wire chains statically.
             loop_invocation.wire.shortcut(stmt.exits)
 
             send_value(
@@ -436,20 +449,25 @@ class _FunctionLowering:
             )
         return flow
 
-    def new_flow(
-        self, branching_flow: ControlBranchFlow | None = None
-    ) -> VariablesFlow:
-        if branching_flow is None:
-            return VariablesFlow(
-                variables=Variables(self.variables),
-                return_adapter=self.ir.return_adapter,
-            )
-        else:
-            return branching_flow.apply_new_layer()
+    def new_flow(self, branching_flow: ControlBranchFlow) -> VariablesFlow:
+        # Body flows are constructed in branch_flow (which knows the
+        # IrBody); every other layer descends from a ControlBranchFlow.
+        return branching_flow.apply_new_layer()
 
     def branch_flow(self, body: IrBody, *, exits: Exits) -> VariablesFlow:
+        # The containing flow is the body flow: it carries the IrBody so
+        # composites invoking it (Loop.true_case, __call__ consumers) can
+        # consult body.exits themselves. `exits` stays a lowering concern:
+        # the top-level body is closed with the FUNCTION's exits (implicit
+        # return promoted), which is not derivable from the body node.
         with ControlBranchFlow(
-            self.new_flow(), body.variable_usage, exits
+            VariablesFlow(
+                variables=Variables(self.variables),
+                return_adapter=self.ir.return_adapter,
+                ir=body,
+            ),
+            body.variable_usage,
+            exits,
         ) as branch_flow:
             self.lower_statements(branch_flow, body, exits=exits)
         return branch_flow.containing_flow

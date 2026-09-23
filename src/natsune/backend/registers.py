@@ -318,6 +318,11 @@ class ToInterfaceRegister(InterfaceRegister):
         self.connector.annihilate(given)
         return _ToRegister(taken, self.adapter, self.connector)
 
+    def shortcut(self) -> None:
+        taken, given = self.extend()
+        self.connector.annihilate(taken)
+        self.connector.annihilate(given)
+
 
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out
 # or readin multiple times, producing an extension (sharing) for each.

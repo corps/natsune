@@ -1,4 +1,11 @@
-from natsune.backend.connector import serialize_active_pairs
+from natsune.backend.connector import (
+    ExpansionBuilder,
+    Graft,
+    serialize_active_pairs,
+)
+from natsune.backend.optimizer import optimize
+from natsune.first_order.ports import Port, Wire
+from natsune.frontend.ir import Exits
 from natsune.inet import build_ir_for_function
 import pytest
 
@@ -122,6 +129,56 @@ def while_direct_break(a: int) -> int:
     while a > 0:
         total = 5
         break
+    return total
+
+
+# --- no-reentry bodies -----------------------------------------------------
+# The body can never complete an iteration — no fallthrough, no continue —
+# so the loop's re-entry machinery is provably dead. These cases pin the
+# SEMANTICS of that shape (against the full machinery first, then against
+# the pruned template once it lands).
+
+
+def for_return_first(a: int) -> int:
+    for i in range(a):
+        return i
+    return -1
+
+
+def while_return_test(a: int) -> int:
+    while a >= 0:
+        return 42
+    return -1
+
+
+def for_break_only(a: int) -> int:
+    x = 5
+    for i in range(a):
+        break
+    x = x + 1
+    return x
+
+
+def for_if_always_exits(a: int) -> int:
+    # the if is the body's closer: both arms return, so the body itself can
+    # only RETURN — the loop cannot iterate past its first element
+    for i in range(a):
+        if i > 10:
+            return 1
+        else:
+            return 2
+    return 0
+
+
+def outer_recurse_inner_no_recurse(outer: int) -> int:
+    # composed: the inner loop's body is break-only (its re-entry is
+    # prunable) while the outer body falls through and must keep its own
+    # recursion machinery
+    total = 0
+    for i in range(outer):
+        for j in range(3):
+            break
+        total += i
     return total
 
 
@@ -280,6 +337,17 @@ _CASES = [
     (Program(for_break_orelse), (5,)),
     (Program(loop_early_return), (10,)),
     (Program(loop_early_return), (2,)),
+    (Program(for_return_first), (0,)),
+    (Program(for_return_first), (3,)),
+    (Program(while_return_test), (5,)),
+    (Program(while_return_test), (-1,)),
+    (Program(for_break_only), (0,)),
+    (Program(for_break_only), (7,)),
+    (Program(for_if_always_exits), (0,)),
+    (Program(for_if_always_exits), (5,)),
+    (Program(for_if_always_exits), (20,)),
+    (Program(outer_recurse_inner_no_recurse), (0,)),
+    (Program(outer_recurse_inner_no_recurse), (4,)),
     (Program(nested_while_in_for), (4,)),
     (Program(loop_then_trailing), (5,)),
     (Program(while_then_trailing), (5,)),
@@ -350,6 +418,76 @@ def test_loop_agent_is_cataloged():
     assert any(flow is loop.orelse for flow in unit.agents)
 
 
+def _recursion_germs(pre_pairs, builder) -> list[Graft]:
+    """Recursion grafts (Loop-expanding Grafts) in a true_case builder's
+    PRE-optimize pair list. Grafts sit as wire targets (connect(graft,
+    wire) points the wire at them), so ports and wire-target chains are
+    walked transitively, seeded from the pairs and the interface anchors
+    (interface wires plus their extension states, where the reads hang)."""
+    targets: list[Port | Wire] = [port for pair in pre_pairs for port in pair]
+    targets += [
+        builder.input_interface.interface,
+        builder.input_interface.state,
+        builder.output_interface.interface,
+        builder.output_interface.state,
+    ]
+    germs: list[Graft] = []
+    seen: set[int] = set()
+    while targets:
+        target = targets.pop()
+        if id(target) in seen:
+            continue
+        seen.add(id(target))
+        if isinstance(target, Graft):
+            germs.append(target)
+            continue
+        if isinstance(target, Port):
+            targets.extend(target.wires)
+        elif isinstance(target, Wire) and target.target is not None:
+            targets.append(target.target)
+    return [g for g in germs if isinstance(g.execute, Loop)]
+
+
+def test_no_reentry_body_prunes_true_case():
+    """A body that can neither fall through nor continue cannot drive
+    re-entry: its loop's true_case template must be built WITHOUT the
+    recursion graft (and far smaller) than a recurse-capable loop of the
+    same shape. The pre-reduction graph is what's measured — it is what
+    the template constructs, before optimize() reshapes it."""
+    captured: dict[int, list] = {}
+    original_close = ExpansionBuilder.close
+
+    def close_spy(self: ExpansionBuilder) -> None:
+        self.output_interface.close()
+        self.input_interface.close()
+        captured[id(self)] = list(self.active_pairs)
+        optimize(self, self.active_pairs)
+        self.active_pairs = tuple(self.active_pairs)  # type: ignore
+
+    ExpansionBuilder.close = close_spy  # type: ignore[method-assign]
+    try:
+        pruned_unit = capturing_lower(Program(for_return_first))
+        full_unit = capturing_lower(Program(for_sum))
+
+        pruned_loop = next(a for a in pruned_unit.agents if isinstance(a, Loop))
+        full_loop = next(a for a in full_unit.agents if isinstance(a, Loop))
+
+        pruned_template = pruned_loop.true_case
+        full_template = full_loop.true_case
+    finally:
+        ExpansionBuilder.close = original_close  # type: ignore[method-assign]
+
+    assert not (pruned_loop.ir.body.exits & (Exits.FALLTHROUGH | Exits.CONTINUE))
+    assert full_loop.ir.body.exits & Exits.FALLTHROUGH
+
+    pruned_pre = captured[id(pruned_template)]
+    full_pre = captured[id(full_template)]
+
+    assert not _recursion_germs(pruned_pre, pruned_template)
+    assert len(_recursion_germs(full_pre, full_template)) == 1
+    assert len(pruned_pre) < len(full_pre)
+
+
 # --- consolidation (old suite's infinite-value programs) -------------------
 # The old suite's non-terminating loops, copied from test_compiler.py.
 # The bodies deliberately never call the infinite functions directly —
@@ -394,7 +532,7 @@ def and_or_with_finites_and_infinites() -> list:
 
 def test_drops_infinite_loop_differential():
     program = Program(drops_infinite_loop, ignored_infinite_loop)
-    pytest.xfail("TODO: Address this issue")
+    # pytest.xfail("TODO: Address this issue")
     assert program.lower()() == 10
 
 

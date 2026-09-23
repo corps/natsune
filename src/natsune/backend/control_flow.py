@@ -53,7 +53,13 @@ from natsune.first_order.ports import (
     ValuePort,
     Wire,
 )
-from natsune.frontend.ir import Exits
+from natsune.frontend.ir import (
+    Exits,
+    IrBody,
+    IrFor,
+    IrIf,
+    IrWhile,
+)
 
 
 @dataclasses.dataclass(slots=True)
@@ -176,6 +182,19 @@ class FlowControlFrom:
     def pack_from(cls, from_register: FromInterfaceRegister) -> Self:
         return _pack_from(from_register, cls)
 
+    def shortcut(self, exits: Exits) -> None:
+        """Runtime counterpart of FlowControlInto.shortcut: annihilate the
+        production channels of an exit kind the expansion can never produce
+        (a sound may-analysis on the associated IrNode makes this safe)."""
+        if not (exits & Exits.FALLTHROUGH):
+            self.finish_variables.shortcut()
+        if not (exits & Exits.RETURN):
+            self.return_value.shortcut()
+        if not (exits & Exits.CONTINUE):
+            self.continue_variables.shortcut()
+        if not (exits & Exits.BREAK):
+            self.break_variables.shortcut()
+
 
 IfThenElseInputInto = ToInterfaceRegister
 IfThenElseInputFrom = FromInterfaceRegister
@@ -209,6 +228,16 @@ class IfThenElseStatementOutputInto:
     @classmethod
     def pack_into(cls, to_register: ToInterfaceRegister) -> Self:
         return _pack_into(to_register, cls)
+
+
+@dataclasses.dataclass(slots=True)
+class IfThenElseStatementOutputFrom:
+    """Runtime unpack of the statement conditional's output wires: the
+    branch input verbatim, and the four control outcome channels
+    individually — so dead ones can be shortcut before forwarding."""
+
+    context: FromInterfaceRegister
+    result: FlowControlFrom
 
 
 MergeInputTo = ToInterfaceRegister
@@ -524,6 +553,11 @@ class Tracer:
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
     return_adapter: Adapter
+    # The frontend statement list this flow lowers, when the flow IS a body
+    # (layer/iteration flows leave it None). Carried so the flow — and
+    # composites invoking it — can consult body.exits and shortcut dead
+    # control channels instead of relying on lowering-side bookkeeping.
+    ir: IrBody | None = None
     exceptions: FlowRegister = dataclasses.field(init=False)
 
     input_adapter: Adapter = dataclasses.field(init=False)
@@ -681,6 +715,11 @@ class Loop(ExpansionWithAdapters):
     iteration: VariablesFlow
     body: VariablesFlow
     orelse: VariablesFlow
+    # The frontend loop node this expansion implements. The loop reads
+    # .exits off it to shortcut its own control outputs (in __call__), and
+    # .body/.orelse to shortcut subcomponent invocations (in true_case),
+    # instead of receiving pre-computed exits from the lowering.
+    ir: IrFor | IrWhile | None = dataclasses.field(default=None, compare=False)
 
     @cached_property
     def input_adapter(self) -> Adapter:
@@ -707,13 +746,40 @@ class Loop(ExpansionWithAdapters):
 
     @cached_property
     def true_case(self) -> ExpansionWithAdapters:
+        # The loop re-enters only through an iteration COMPLETING: the body
+        # finishing (fell through, flow continues) or continuing (re-test).
+        # If the body can do neither, re-entry is provably dead and the
+        # whole recursion machinery below — synchronizer, recursion graft,
+        # outcome merges — is pruned from the template entirely.
+        can_recurse = self.ir is None or bool(
+            self.ir.body.exits & (Exits.FALLTHROUGH | Exits.CONTINUE)
+        )
         with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
-
             with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
                 input_variables = inputs.variables.readout()
                 input_iter = inputs.value.readout()
 
             with self.body.invocation(builder, internal=True) as body_invocation:
+                # Subcomponent shortcut: the body's IrBody says which exit
+                # kinds its control output can produce. Channels for the
+                # impossible ones are annihilated before the recursion
+                # machinery below taps them (shortcut-then-readout leaves a
+                # dead arm that can never fire — the same pattern
+                # ControlBranchFlow.close uses).
+                if self.ir is not None:
+                    body_exits = self.ir.body.exits
+                    if not (body_exits & Exits.RETURN):
+                        body_invocation.wire.return_value.shortcut()
+                    if not (body_exits & Exits.CONTINUE):
+                        body_invocation.wire.continue_variables.shortcut()
+                    if not (body_exits & Exits.BREAK):
+                        body_invocation.wire.break_variables.shortcut()
+                    # finish_variables is live while re-entry is possible:
+                    # a body able to CONTINUE re-enters the loop through the
+                    # same merge that FINISH drives. Under the no-re-entry
+                    # pruning below it is provably dead as well.
+                    if not can_recurse:
+                        body_invocation.wire.finish_variables.shortcut()
                 send_value(
                     input_variables,
                     body_invocation.port.variables.readin(),
@@ -724,6 +790,40 @@ class Loop(ExpansionWithAdapters):
                 )
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
+
+            if not can_recurse:
+                # The body's outcome is final: route the surviving exit
+                # kinds straight to their outputs — return stays return,
+                # break is promoted to the loop's finish — with no choice,
+                # synchronizer, or recursion agents. The loop's break and
+                # continue outputs stay unwired here (provably silent:
+                # body break promotes to finish, and re-entry — the only
+                # producer of outward break/continue — is pruned). The
+                # iterator is never re-read, so its tap is annihilated.
+                assert self.ir is not None
+                body_exits = self.ir.body.exits
+                returns = bool(body_exits & Exits.RETURN)
+                breaks = bool(body_exits & Exits.BREAK)
+                # The premise guarantees at least one exit kind survives:
+                # IrBody.exits is never BOTTOM, and FALLTHROUGH/CONTINUE
+                # are excluded.
+                assert returns or breaks
+                if returns and breaks:
+                    body_return, body_break_variables = body_return.choice(
+                        body_break_variables
+                    )
+                with closer(
+                    pack_into(builder.output_interface, FlowControlFrom)
+                ) as outputs:
+                    if returns:
+                        send_value(body_return, outputs.return_value.readin())
+                    if breaks:
+                        send_value(
+                            body_break_variables,
+                            outputs.finish_variables.readin(),
+                        )
+                input_iter.close()
+                return builder
 
             body_return, body_break_variables = body_return.choice(body_break_variables)
             body_break_variables, body_finish_variables = body_break_variables.choice(
@@ -740,6 +840,15 @@ class Loop(ExpansionWithAdapters):
                     recurse.port.variables.readin(),
                 )
                 send_value(recurse_iter, recurse.port.value.readin())
+
+                # The recursion graft IS this loop — same ir, same exits —
+                # so shortcutting its control channels here dissolves dead
+                # wires in the template itself, and every runtime copy
+                # inherits the smaller shape. __call__ stays the semantic
+                # owner (its runtime shortcut covers this graft too); this
+                # is the same pre-reduce hint the lowering site makes.
+                if self.ir is not None:
+                    recurse.wire.shortcut(self.ir.exits)
 
                 recurse_return = recurse.wire.return_value.readout()
                 recurse_finish = recurse.wire.finish_variables.readout()
@@ -773,16 +882,45 @@ class Loop(ExpansionWithAdapters):
         with (
             ExpansionBuilder(self.input_adapter, self.output_adapter) as builder,
             expansion_invocation(
-                self.orelse, builder, FlowInputInto, FromInterfaceRegister
+                self.orelse, builder, FlowInputInto, FlowControlInto
             ) as else_body,
             closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs,
         ):
-            outputs = builder.output_interface
-            send_value(
-                inputs.variables.readout(),
-                else_body.port.variables.readin(),
-            )
-            send_value(else_body.wire.readout(), outputs.readin())
+            # Subcomponent shortcut, symmetric with true_case: channels the
+            # orelse can never produce annihilate instead of riding the
+            # pass-through. The ROUTING is unchanged — every live channel
+            # still forwards positionally to the loop's matching output — so
+            # this is pure dead-wire dissolution. Unlike true_case, the mask
+            # method applies wholesale: the orelse's finish is a pure
+            # pass-through here (no shared merge with continue), so shortcut
+            # it when the orelse cannot fall through.
+            if self.ir is not None:
+                else_body.wire.shortcut(self.ir.orelse.exits)
+
+            with closer(
+                pack_into(builder.output_interface, FlowControlFrom)
+            ) as outputs:
+                send_value(
+                    inputs.variables.readout(),
+                    else_body.port.variables.readin(),
+                )
+                send_value(
+                    else_body.wire.return_value.readout(),
+                    outputs.return_value.readin(),
+                )
+                send_value(
+                    else_body.wire.continue_variables.readout(),
+                    outputs.continue_variables.readin(),
+                )
+                send_value(
+                    else_body.wire.break_variables.readout(),
+                    outputs.break_variables.readin(),
+                )
+                send_value(
+                    else_body.wire.finish_variables.readout(),
+                    outputs.finish_variables.readin(),
+                )
+
             return builder
 
     def __call__(
@@ -800,6 +938,13 @@ class Loop(ExpansionWithAdapters):
             self.iteration.invocation(executor, internal=True) as iterable_invocation,
             self.conditional.invocation(executor) as conditional_invocation,
         ):
+            # Consumption-side shortcut, moved here from the lowering: the
+            # loop's own IrNode.exits say which exit kinds can ever reach
+            # its outputs; channels for the rest are annihilated before the
+            # outcomes below are forwarded to the enclosing net.
+            if self.ir is not None:
+                this_invocation.wire.shortcut(self.ir.exits)
+
             input_iter, synchronized_iter = (
                 this_invocation.port.value.readout().duplicate("share")
             )
@@ -916,8 +1061,13 @@ class IfThenElse(IfThenElseBase):
 
 @dataclasses.dataclass(frozen=True)
 class IfThenElseStatement(IfThenElseBase):
+    """The statement-level conditional. Carries the IrIf it implements so
+    __call__ can shortcut its own control outputs per .exits, instead of
+    the lowering doing it on the invocation from outside."""
+
     true_case: VariablesFlow
     false_case: VariablesFlow
+    ir: IrIf | None = dataclasses.field(default=None, compare=False)
 
     def invocation(
         self, invoker: Connector
@@ -925,3 +1075,54 @@ class IfThenElseStatement(IfThenElseBase):
         return expansion_invocation(
             self, invoker, IfThenElseInputInto, IfThenElseStatementOutputInto
         )
+
+    def __call__(self, exec: Connector, port: Port, wires: Sequence[Wire]) -> None:
+        if self.ir is None:
+            # No IR association: keep the base's opaque pass-through shape.
+            super().__call__(exec, port, wires)
+            return
+
+        if not isinstance(port, ValuePort):
+            for wire in wires:
+                exec.annihilate(wire, port)
+            for wire in port.wires:
+                exec.annihilate(wire, port)
+            return
+
+        if port.value:
+            case = self.true_case
+        else:
+            case = self.false_case
+
+        with (
+            unpack_wires(
+                self, wires, exec, IfThenElseStatementOutputFrom
+            ) as conditional,
+            expansion_invocation(
+                case, exec, ToInterfaceRegister, FlowControlInto
+            ) as invocation,
+        ):
+            send_value(conditional.context.readout(), invocation.port.readin())
+
+            # Consumption-side shortcut, moved here from the lowering: only
+            # the exit kinds the taken branch can produce are forwarded;
+            # the rest annihilate (a readout after shortcut yields a dead
+            # arm — the ControlBranchFlow.close pattern).
+            invocation.wire.shortcut(self.ir.exits)
+
+            send_value(
+                invocation.wire.return_value.readout(),
+                conditional.result.return_value.readin(),
+            )
+            send_value(
+                invocation.wire.continue_variables.readout(),
+                conditional.result.continue_variables.readin(),
+            )
+            send_value(
+                invocation.wire.break_variables.readout(),
+                conditional.result.break_variables.readin(),
+            )
+            send_value(
+                invocation.wire.finish_variables.readout(),
+                conditional.result.finish_variables.readin(),
+            )
