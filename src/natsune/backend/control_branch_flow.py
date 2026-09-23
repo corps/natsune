@@ -13,9 +13,6 @@ from natsune.first_order.ports import Erasure
 from natsune.frontend.ir import Exits, VariableUsage
 
 
-# TODO: On cutover, make this agree with VariablesFlow in terms of file positioning, esp when removing old concepts
-#  like FlowMap.  I think VariablesFlow and ControlBranchFlow are conceptually related more to lowering than as atomic
-# units in control_flow are.
 @dataclasses.dataclass(slots=True)
 class ControlBranchFlow:
     containing_flow: VariablesFlow

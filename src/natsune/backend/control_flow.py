@@ -1,6 +1,6 @@
 import dataclasses
 from functools import cached_property
-from typing import Any, Callable, ClassVar, Self, Sequence
+from typing import Any, Callable, Self, Sequence
 
 from natsune.backend.connector import (
     Connector,
@@ -28,13 +28,11 @@ from natsune.backend.invocations import (
 from natsune.backend.optimizer import optimize
 from natsune.backend.registers import (
     FlowRegister,
-    FlowRegisterUsage,
     FromInterfaceRegister,
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
     as_from_register,
-    as_live_registers,
     as_to_register,
     borrow_registers,
     send_value,
@@ -511,53 +509,6 @@ class Tracer:
         executor.connect(wires[0], port)
 
 
-@dataclasses.dataclass
-class FlowMap:
-    usage: dict[str, FlowRegisterUsage]
-    finish_output: bool
-    continue_output: bool
-    break_output: bool
-    return_output: bool
-
-    def __bool__(self) -> bool:
-        return any(
-            (
-                self.finish_output,
-                self.continue_output,
-                self.break_output,
-                self.return_output,
-            )
-        )
-
-    def shortcut(self, flow_control: FlowControlInto) -> None:
-        if not self.finish_output:
-            flow_control.finish_variables.shortcut()
-        if not self.continue_output:
-            flow_control.continue_variables.shortcut()
-        if not self.break_output:
-            flow_control.break_variables.shortcut()
-        if not self.return_output:
-            flow_control.return_value.shortcut()
-        pass
-
-    def __or__(self, other: FlowMap) -> FlowMap:
-        return FlowMap(
-            {k: self.usage[k] | other.usage[k] for k in self.usage.keys()},
-            self.finish_output | other.finish_output,
-            self.continue_output | other.continue_output,
-            self.break_output | other.break_output,
-            self.return_output | other.return_output,
-        )
-
-    def update(self, other: FlowMap) -> None:
-        for k, v in other.usage.items():
-            self.usage[k] |= v
-        self.finish_output |= other.finish_output
-        self.continue_output |= other.continue_output
-        self.break_output |= other.break_output
-        self.return_output |= other.return_output
-
-
 @dataclasses.dataclass(kw_only=True)
 class VariablesFlow(ExpansionBuilder):
     variables: Variables
@@ -594,19 +545,14 @@ class VariablesFlow(ExpansionBuilder):
             send_value(variable_input.readout(), flow_register.interface_readin())
             variable_input.close()
 
-    def variables_readout(self, flow_map: FlowMap | None = None) -> FromRegister:
+    def variables_readout(self) -> FromRegister:
         x1, x2 = Wire.as_interface()
         readouts: list[FromRegister] = []
 
         readouts.append(self.exceptions.readout())
-        for k, r in self.variable_registers.items():
-            if flow_map is None or flow_map.usage[k].flow_write:
-                g, _ = r.extend()
-                readouts.append(as_from_register(g, r.adapter, r.connector))
-            elif flow_map is not None and flow_map.usage[k].flow_read:
-                readouts.append(r.readout())
-            else:
-                readouts.append(as_from_register(Erasure(), r.adapter, r.connector))
+        for r in self.variable_registers.values():
+            g, _ = r.extend()
+            readouts.append(as_from_register(g, r.adapter, r.connector))
 
         send_values(
             readouts,
@@ -618,44 +564,6 @@ class VariablesFlow(ExpansionBuilder):
             self.variables.adapter,
             self,
         )
-
-    @cached_property
-    def flow_map(self) -> FlowMap:
-        return FlowMap(
-            {k: v.usage for k, v in self.variable_registers.items()},
-            False,
-            False,
-            False,
-            False,
-        )
-
-    def mapped_variables_readin(
-        self,
-        flow_map: FlowMap,
-        target_readin: ToRegister,
-    ) -> ToRegister:
-        assert target_readin.connector == self
-
-        x1, x2 = Wire.as_interface()
-        readins: list[ToRegister] = []
-
-        targets = iter(target_readin.split())
-        readins.append(next(targets))
-
-        for k, target in zip(self.variables, targets):
-            if flow_map.usage[k].flow_write:
-                readins.append(target)
-            else:
-                readins.append(as_to_register(Erasure(), target.adapter, self))
-                g, _ = self.variable_registers[k].extend()
-                send_value(as_from_register(g, target.adapter, self), target)
-
-        send_values(
-            as_from_register(x2, self.variables.adapter, self).split(),
-            readins,
-        )
-
-        return as_to_register(x1, self.variables.adapter, self)
 
     @cached_property
     def control_output(self) -> FlowControlFrom:
@@ -671,9 +579,6 @@ class VariablesFlow(ExpansionBuilder):
     def invocation(
         self, invoker: Connector, internal: bool
     ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
-        if isinstance(invoker, VariablesFlow):
-            invoker.flow_map.update(self.flow_map)
-
         return expansion_invocation(
             self,
             invoker,
@@ -767,10 +672,6 @@ class Loop(ExpansionWithAdapters):
     orelse: VariablesFlow
 
     @cached_property
-    def flow_map(self) -> FlowMap:
-        return self.iteration.flow_map | self.body.flow_map | self.orelse.flow_map
-
-    @cached_property
     def input_adapter(self) -> Adapter:
         return flow_input_adapter(self.body.variables)
 
@@ -781,9 +682,6 @@ class Loop(ExpansionWithAdapters):
     def invocation(
         self, invoker: Connector
     ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
-        if isinstance(invoker, VariablesFlow):
-            invoker.flow_map.update(self.flow_map)
-
         return expansion_invocation(self, invoker, FlowInputInto, FlowControlInto)
 
     def __copy__(self) -> Self:
@@ -1010,16 +908,9 @@ class IfThenElseStatement(IfThenElseBase):
     true_case: VariablesFlow
     false_case: VariablesFlow
 
-    @cached_property
-    def flow_map(self) -> FlowMap:
-        return self.true_case.flow_map | self.false_case.flow_map
-
     def invocation(
         self, invoker: Connector
     ) -> closer[Invocation[IfThenElseInputInto, IfThenElseStatementOutputInto]]:
-        if isinstance(invoker, VariablesFlow):
-            invoker.flow_map.update(self.flow_map)
-
         return expansion_invocation(
             self, invoker, IfThenElseInputInto, IfThenElseStatementOutputInto
         )

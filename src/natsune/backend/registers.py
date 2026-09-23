@@ -10,7 +10,6 @@ from natsune.first_order.adapters import (
     VA,
     Adapter,
     ParValueAdapter,
-    ValueAdapter,
     to_accepts_from,
 )
 from natsune.first_order.ports import (
@@ -320,18 +319,6 @@ class ToInterfaceRegister(InterfaceRegister):
         return _ToRegister(taken, self.adapter, self.connector)
 
 
-@dataclasses.dataclass
-class FlowRegisterUsage:
-    flow_read: bool = False
-    flow_write: bool = False
-
-    def __or__(self, other: FlowRegisterUsage) -> FlowRegisterUsage:
-        return FlowRegisterUsage(
-            flow_read=self.flow_read or other.flow_read,
-            flow_write=self.flow_write or other.flow_write,
-        )
-
-
 # Unlike all other registers, a flow register supports the idea of "extension" and thus can be read out
 # or readin multiple times, producing an extension (sharing) for each.
 @dataclasses.dataclass(slots=True)
@@ -339,15 +326,7 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
     adapter: Adapter
     connector: Connector
 
-    usage: FlowRegisterUsage = dataclasses.field(default_factory=FlowRegisterUsage)
-
     def readout(self) -> FromRegister:
-        # TODO: This should be an adapter responsibility.
-        if isinstance(self.adapter, ValueAdapter):
-            self.usage.flow_read = True
-        else:
-            self.usage.flow_write = True
-
         taken, given = self.extend()
         return _FromRegister(
             (self.adapter.produce_egression(taken, given, self.connector)),
@@ -356,7 +335,6 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
         )
 
     def readin(self) -> ToRegister:
-        self.usage.flow_write = True
         taken, given = self.extend()
         return _ToRegister(
             self.adapter.produce_ingression(taken, given, self.connector),

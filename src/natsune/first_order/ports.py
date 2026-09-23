@@ -8,7 +8,6 @@ from typing import (
     Protocol,
     Self,
     Sequence,
-    cast,
 )
 
 if TYPE_CHECKING:

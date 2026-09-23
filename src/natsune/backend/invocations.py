@@ -4,7 +4,6 @@ from typing import (
     Any,
     Callable,
     Iterator,
-    Literal,
     Protocol,
     Sequence,
     cast,

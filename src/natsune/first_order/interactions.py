@@ -1,6 +1,5 @@
 import copy
 import dataclasses
-from typing import TYPE_CHECKING
 
 from natsune.first_order.ports import (
     CombPort,
