@@ -622,7 +622,7 @@ class VariablesFlow(ExpansionBuilder):
         return self
 
     def invocation(
-        self, invoker: Connector, internal: bool
+        self, invoker: Connector
     ) -> closer[Invocation[FlowInputInto, FlowControlInto]]:
         return expansion_invocation(
             self,
@@ -746,26 +746,12 @@ class Loop(ExpansionWithAdapters):
 
     @cached_property
     def true_case(self) -> ExpansionWithAdapters:
-        # The loop re-enters only through an iteration COMPLETING: the body
-        # finishing (fell through, flow continues) or continuing (re-test).
-        # If the body can do neither, re-entry is provably dead and the
-        # whole recursion machinery below — synchronizer, recursion graft,
-        # outcome merges — is pruned from the template entirely.
-        can_recurse = self.ir is None or bool(
-            self.ir.body.exits & (Exits.FALLTHROUGH | Exits.CONTINUE)
-        )
         with ExpansionBuilder(self.input_adapter, self.output_adapter) as builder:
             with closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs:
                 input_variables = inputs.variables.readout()
                 input_iter = inputs.value.readout()
 
-            with self.body.invocation(builder, internal=True) as body_invocation:
-                # Subcomponent shortcut: the body's IrBody says which exit
-                # kinds its control output can produce. Channels for the
-                # impossible ones are annihilated before the recursion
-                # machinery below taps them (shortcut-then-readout leaves a
-                # dead arm that can never fire — the same pattern
-                # ControlBranchFlow.close uses).
+            with self.body.invocation(builder) as body_invocation:
                 if self.ir is not None:
                     body_exits = self.ir.body.exits
                     if not (body_exits & Exits.RETURN):
@@ -774,11 +760,7 @@ class Loop(ExpansionWithAdapters):
                         body_invocation.wire.continue_variables.shortcut()
                     if not (body_exits & Exits.BREAK):
                         body_invocation.wire.break_variables.shortcut()
-                    # finish_variables is live while re-entry is possible:
-                    # a body able to CONTINUE re-enters the loop through the
-                    # same merge that FINISH drives. Under the no-re-entry
-                    # pruning below it is provably dead as well.
-                    if not can_recurse:
+                    if not (body_exits & Exits.FALLTHROUGH):
                         body_invocation.wire.finish_variables.shortcut()
                 send_value(
                     input_variables,
@@ -790,40 +772,6 @@ class Loop(ExpansionWithAdapters):
                 )
                 body_break_variables = body_invocation.wire.break_variables.readout()
                 body_return = body_invocation.wire.return_value.readout()
-
-            if not can_recurse:
-                # The body's outcome is final: route the surviving exit
-                # kinds straight to their outputs — return stays return,
-                # break is promoted to the loop's finish — with no choice,
-                # synchronizer, or recursion agents. The loop's break and
-                # continue outputs stay unwired here (provably silent:
-                # body break promotes to finish, and re-entry — the only
-                # producer of outward break/continue — is pruned). The
-                # iterator is never re-read, so its tap is annihilated.
-                assert self.ir is not None
-                body_exits = self.ir.body.exits
-                returns = bool(body_exits & Exits.RETURN)
-                breaks = bool(body_exits & Exits.BREAK)
-                # The premise guarantees at least one exit kind survives:
-                # IrBody.exits is never BOTTOM, and FALLTHROUGH/CONTINUE
-                # are excluded.
-                assert returns or breaks
-                if returns and breaks:
-                    body_return, body_break_variables = body_return.choice(
-                        body_break_variables
-                    )
-                with closer(
-                    pack_into(builder.output_interface, FlowControlFrom)
-                ) as outputs:
-                    if returns:
-                        send_value(body_return, outputs.return_value.readin())
-                    if breaks:
-                        send_value(
-                            body_break_variables,
-                            outputs.finish_variables.readin(),
-                        )
-                input_iter.close()
-                return builder
 
             body_return, body_break_variables = body_return.choice(body_break_variables)
             body_break_variables, body_finish_variables = body_break_variables.choice(
@@ -841,12 +789,6 @@ class Loop(ExpansionWithAdapters):
                 )
                 send_value(recurse_iter, recurse.port.value.readin())
 
-                # The recursion graft IS this loop — same ir, same exits —
-                # so shortcutting its control channels here dissolves dead
-                # wires in the template itself, and every runtime copy
-                # inherits the smaller shape. __call__ stays the semantic
-                # owner (its runtime shortcut covers this graft too); this
-                # is the same pre-reduce hint the lowering site makes.
                 if self.ir is not None:
                     recurse.wire.shortcut(self.ir.exits)
 
@@ -862,9 +804,9 @@ class Loop(ExpansionWithAdapters):
                     body_return | recurse_return,
                     outputs.return_value.readin(),
                 )
-                send_value(
-                    (body_break_variables | recurse_finish),
-                    outputs.finish_variables.readin(),
+                send_values(
+                    (body_break_variables | recurse_finish).split(),
+                    outputs.finish_variables.readin().split(),
                 )
                 send_value(
                     recurse_break,
@@ -881,9 +823,7 @@ class Loop(ExpansionWithAdapters):
     def false_case(self) -> ExpansionWithAdapters:
         with (
             ExpansionBuilder(self.input_adapter, self.output_adapter) as builder,
-            expansion_invocation(
-                self.orelse, builder, FlowInputInto, FlowControlInto
-            ) as else_body,
+            self.orelse.invocation(builder) as else_body,
             closer(pack_from(builder.input_interface, FlowInputFrom)) as inputs,
         ):
             # Subcomponent shortcut, symmetric with true_case: channels the
@@ -935,7 +875,7 @@ class Loop(ExpansionWithAdapters):
             unpack_port_and_wires(
                 self, port, wires, executor, FlowInputFrom, FlowControlFrom
             ) as this_invocation,
-            self.iteration.invocation(executor, internal=True) as iterable_invocation,
+            self.iteration.invocation(executor) as iterable_invocation,
             self.conditional.invocation(executor) as conditional_invocation,
         ):
             # Consumption-side shortcut, moved here from the lowering: the
@@ -1061,10 +1001,6 @@ class IfThenElse(IfThenElseBase):
 
 @dataclasses.dataclass(frozen=True)
 class IfThenElseStatement(IfThenElseBase):
-    """The statement-level conditional. Carries the IrIf it implements so
-    __call__ can shortcut its own control outputs per .exits, instead of
-    the lowering doing it on the invocation from outside."""
-
     true_case: VariablesFlow
     false_case: VariablesFlow
     ir: IrIf | None = dataclasses.field(default=None, compare=False)

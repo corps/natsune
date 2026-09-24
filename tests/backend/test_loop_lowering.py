@@ -1,12 +1,3 @@
-from natsune.backend.connector import (
-    ExpansionBuilder,
-    Graft,
-    serialize_active_pairs,
-)
-from natsune.backend.optimizer import optimize
-from natsune.first_order.ports import Port, Wire
-from natsune.frontend.ir import Exits
-from natsune.inet import build_ir_for_function
 import pytest
 
 from natsune.backend.control_flow import Loop
@@ -15,12 +6,7 @@ from tests.backend.helpers import (
     Program,
     capturing_lower,
     program_ids,
-    markers_attached,
 )
-
-# --- case programs -------------------------------------------------------
-# Each function below is a program under test; the comment above it says
-# what the case pins.
 
 
 def while_sum(start: int, end: int) -> int:
@@ -32,8 +18,6 @@ def while_sum(start: int, end: int) -> int:
     return total
 
 
-# two-arg range with effect statements interleaved in the body (the old
-# suite's sum_it_up)
 def sum_it_up(start: int, end: int) -> int:
     total = 0
     for i in range(start, end):
@@ -50,8 +34,6 @@ def for_sum(a: int) -> int:
     return total
 
 
-# continue through an if: the if composite forwards the continue slot to
-# the enclosing layer (the slot-forwarding path new in this slice)
 def while_continue(a: int) -> int:
     total = 0
     i = 0
@@ -72,7 +54,6 @@ def for_continue(a: int) -> int:
     return total
 
 
-# continue as the body's closer (nothing after it in the statement list)
 def while_continue_closer(a: int) -> int:
     total = 0
     i = 0
@@ -90,9 +71,6 @@ def for_continue_closer(a: int) -> int:
     return total
 
 
-# break through an if — the §6.1 headline: break rides the loop's finish
-# slot and the trailing region still sequences (legacy runs the loop to
-# its bound instead — see the divergence test below)
 def while_break_bound(a: int) -> int:
     total = 0
     i = 0
@@ -113,7 +91,6 @@ def for_break(a: int) -> int:
     return total
 
 
-# break as the body's closer
 def while_break_closer(a: int) -> int:
     total = 0
     i = 0
@@ -123,20 +100,12 @@ def while_break_closer(a: int) -> int:
     return total
 
 
-# break with no if mediating it
 def while_direct_break(a: int) -> int:
     total = 0
     while a > 0:
         total = 5
         break
     return total
-
-
-# --- no-reentry bodies -----------------------------------------------------
-# The body can never complete an iteration — no fallthrough, no continue —
-# so the loop's re-entry machinery is provably dead. These cases pin the
-# SEMANTICS of that shape (against the full machinery first, then against
-# the pruned template once it lands).
 
 
 def for_return_first(a: int) -> int:
@@ -160,8 +129,6 @@ def for_break_only(a: int) -> int:
 
 
 def for_if_always_exits(a: int) -> int:
-    # the if is the body's closer: both arms return, so the body itself can
-    # only RETURN — the loop cannot iterate past its first element
     for i in range(a):
         if i > 10:
             return 1
@@ -171,9 +138,6 @@ def for_if_always_exits(a: int) -> int:
 
 
 def outer_recurse_inner_no_recurse(outer: int) -> int:
-    # composed: the inner loop's body is break-only (its re-entry is
-    # prunable) while the outer body falls through and must keep its own
-    # recursion machinery
     total = 0
     for i in range(outer):
         for j in range(3):
@@ -221,8 +185,6 @@ def for_break_orelse(a: int) -> int:
     return total
 
 
-# every path returns through an if inside the body (the shape legacy's
-# wire_continuation historically starves on)
 def loop_early_return(a: int) -> int:
     for i in range(a):
         if i > 2:
@@ -230,8 +192,6 @@ def loop_early_return(a: int) -> int:
     return -1
 
 
-# nesting: break in the INNER loop must only exit the inner one (legacy
-# starves on this shape — see the divergence test below)
 def nested_break(a: int) -> int:
     total = 0
     for i in range(a):
@@ -242,7 +202,6 @@ def nested_break(a: int) -> int:
     return total
 
 
-# a loop with a while inside a for: cross-composite nesting
 def nested_while_in_for(a: int) -> int:
     total = 0
     for i in range(a):
@@ -253,8 +212,6 @@ def nested_while_in_for(a: int) -> int:
     return total
 
 
-# the §6.1 headline claim: statements after the loop sequence as a fresh
-# layer off the loop's finish (= exhaustion), no absorption needed
 def loop_then_trailing(a: int) -> int:
     total = 0
     for i in range(a):
@@ -273,8 +230,6 @@ def while_then_trailing(a: int) -> int:
     return total
 
 
-# a loop with no trailing statements and no explicit return: the
-# implicit-None tail (legacy starves here — divergence test below)
 def loop_implicit_none(a: int) -> None:
     total = 0
     for i in range(a):
@@ -315,12 +270,7 @@ def while_true_if_break(a: int) -> int:
     return total
 
 
-# --- execution matrix ------------------------------------------------------
-
-
 _CASES = [
-    # (program, args) — the expected value comes from calling the case's
-    # own Python function; the lowering must match it.
     (Program(while_sum), (2, 6)),
     (Program(for_sum), (5,)),
     (Program(sum_it_up), (1, 10)),
@@ -359,35 +309,18 @@ def test_matches_source_execution(program: Program, args: tuple) -> None:
     expected = program.call(*args)
     assert program.lower()(*args) == expected
 
-
-# --- pinned divergences (§5: the IR is the spec) --------------------------
-# The pre-cutover legacy compiler's loop break/continue handling starved
-# or miscounted on these; the lowering is asserted against the source's
-# own Python semantics directly, and each docstring records the legacy
-# behavior as the reason the case is not in the execution matrix.
-
-
-def test_break_inside_if_legacy_miscount():
-    """Legacy ignores the if-mediated break and runs the loop to its
-    bound (it returns sum(range(100)) = 4950 where the source returns
-    10); ours breaks correctly."""
     program = Program(while_break_bound)
     assert program.call(5) == 10
     assert program.lower()(5) == 10
 
 
 def test_implicit_none_after_loop_legacy_starves():
-    """A loop followed by the implicit-None tail starves legacy's output
-    entirely; ours returns None (the §5 mixed-if divergence's loop
-    analogue)."""
     program = Program(loop_implicit_none)
     assert program.call(3) is None
     assert program.lower()(3) is None
 
 
 def test_flag_loop_legacy_starves():
-    """A flag-variable while with the mutation inside an if/else starves
-    legacy's output; ours terminates with the correct sum."""
     program = Program(flag_break)
     assert program.call(5) == 10
     assert program.lower()(5) == 10
@@ -403,97 +336,13 @@ def test_while_true_break():
     assert program.lower()(5) == 5
 
 
-# --- introspection ---------------------------------------------------------
-
-
 def test_loop_agent_is_cataloged():
-    """The Loop composite (and its three subflows) must survive the
-    post-hoc agent catalog — walk_agents descends iteration/body/orelse
-    and catalogs the Loop itself."""
     unit = capturing_lower(Program(for_sum))
     loops = [agent for agent in unit.agents if isinstance(agent, Loop)]
     assert len(loops) == 1
     loop = loops[0]
     assert any(flow is loop.body for flow in unit.agents)
     assert any(flow is loop.orelse for flow in unit.agents)
-
-
-def _recursion_germs(pre_pairs, builder) -> list[Graft]:
-    """Recursion grafts (Loop-expanding Grafts) in a true_case builder's
-    PRE-optimize pair list. Grafts sit as wire targets (connect(graft,
-    wire) points the wire at them), so ports and wire-target chains are
-    walked transitively, seeded from the pairs and the interface anchors
-    (interface wires plus their extension states, where the reads hang)."""
-    targets: list[Port | Wire] = [port for pair in pre_pairs for port in pair]
-    targets += [
-        builder.input_interface.interface,
-        builder.input_interface.state,
-        builder.output_interface.interface,
-        builder.output_interface.state,
-    ]
-    germs: list[Graft] = []
-    seen: set[int] = set()
-    while targets:
-        target = targets.pop()
-        if id(target) in seen:
-            continue
-        seen.add(id(target))
-        if isinstance(target, Graft):
-            germs.append(target)
-            continue
-        if isinstance(target, Port):
-            targets.extend(target.wires)
-        elif isinstance(target, Wire) and target.target is not None:
-            targets.append(target.target)
-    return [g for g in germs if isinstance(g.execute, Loop)]
-
-
-def test_no_reentry_body_prunes_true_case():
-    """A body that can neither fall through nor continue cannot drive
-    re-entry: its loop's true_case template must be built WITHOUT the
-    recursion graft (and far smaller) than a recurse-capable loop of the
-    same shape. The pre-reduction graph is what's measured — it is what
-    the template constructs, before optimize() reshapes it."""
-    captured: dict[int, list] = {}
-    original_close = ExpansionBuilder.close
-
-    def close_spy(self: ExpansionBuilder) -> None:
-        self.output_interface.close()
-        self.input_interface.close()
-        captured[id(self)] = list(self.active_pairs)
-        optimize(self, self.active_pairs)
-        self.active_pairs = tuple(self.active_pairs)  # type: ignore
-
-    ExpansionBuilder.close = close_spy  # type: ignore[method-assign]
-    try:
-        pruned_unit = capturing_lower(Program(for_return_first))
-        full_unit = capturing_lower(Program(for_sum))
-
-        pruned_loop = next(a for a in pruned_unit.agents if isinstance(a, Loop))
-        full_loop = next(a for a in full_unit.agents if isinstance(a, Loop))
-
-        pruned_template = pruned_loop.true_case
-        full_template = full_loop.true_case
-    finally:
-        ExpansionBuilder.close = original_close  # type: ignore[method-assign]
-
-    assert not (pruned_loop.ir.body.exits & (Exits.FALLTHROUGH | Exits.CONTINUE))
-    assert full_loop.ir.body.exits & Exits.FALLTHROUGH
-
-    pruned_pre = captured[id(pruned_template)]
-    full_pre = captured[id(full_template)]
-
-    assert not _recursion_germs(pruned_pre, pruned_template)
-    assert len(_recursion_germs(full_pre, full_template)) == 1
-    assert len(pruned_pre) < len(full_pre)
-
-
-# --- consolidation (old suite's infinite-value programs) -------------------
-# The old suite's non-terminating loops, copied from test_compiler.py.
-# The bodies deliberately never call the infinite functions directly —
-# EXECUTION is the shared limitation (a constant-while never resolves its
-# output). and_or rides the contingent-gate machinery: the finite side of
-# the Or/And decides, the never-arriving side is dropped.
 
 
 def infinite_value() -> int:
@@ -532,7 +381,6 @@ def and_or_with_finites_and_infinites() -> list:
 
 def test_drops_infinite_loop_differential():
     program = Program(drops_infinite_loop, ignored_infinite_loop)
-    # pytest.xfail("TODO: Address this issue")
     assert program.lower()() == 10
 
 

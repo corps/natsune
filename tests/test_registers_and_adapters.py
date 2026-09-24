@@ -195,7 +195,7 @@ def test_variables_flow_invocation(c: Calculus) -> None:
         flow.control_output.return_value.readin(),
     )
     optimize(flow, flow.active_pairs)
-    with flow.invocation(c.executor, internal=True) as invocation:
+    with flow.invocation(c.executor) as invocation:
         # The input packing merges the variables and value slots through a
         # SerialAnd that fires on the variables bundle, so the invocation
         # only forwards once the variables side arrives (as run_legacy

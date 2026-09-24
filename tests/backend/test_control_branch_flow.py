@@ -152,7 +152,7 @@ def _send_variables(
     variables_input: tuple,
 ) -> Calculus:
     c = Calculus()
-    with flow.containing_flow.invocation(c.executor, internal=False) as invocation:
+    with flow.containing_flow.invocation(c.executor) as invocation:
         send_value(
             c.const(variables_input),
             invocation.port.variables.readin(),

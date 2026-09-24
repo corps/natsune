@@ -1,9 +1,12 @@
 import pytest
 
-from natsune.first_order.adapters import ValueAdapter, Variables, ParValueAdapter
-from tests.calculus import Calculus
 from natsune.backend.connector import ExpansionBuilder
-from natsune.backend.control_flow import SerialOr, IfThenElse, Loop, VariablesFlow
+from natsune.backend.control_flow import (
+    SerialOr,
+    IfThenElse,
+    Loop,
+    VariablesFlow,
+)
 from natsune.backend.invocations import (
     filter_invocation,
     send_parameter,
@@ -16,6 +19,8 @@ from natsune.backend.registers import (
     ToInterfaceRegister,
     FromInterfaceRegister,
 )
+from natsune.first_order.adapters import ValueAdapter, Variables
+from tests.calculus import Calculus
 
 
 @pytest.fixture(scope="function")
@@ -197,7 +202,7 @@ def test_variables_readout(c: Calculus) -> None:
         )
         send_value(vf.variables_readout(), vf.control_output.finish_variables.readin())
 
-    with vf.invocation(c.executor, internal=True) as invocation:
+    with vf.invocation(c.executor) as invocation:
         send_value(
             as_constant_register((None, 10, 20), c.executor),
             invocation.port.variables.readin(),

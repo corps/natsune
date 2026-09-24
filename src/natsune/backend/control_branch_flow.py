@@ -89,7 +89,7 @@ class ControlBranchFlow:
             variables=self.containing_flow.variables,
             return_adapter=self.containing_flow.return_adapter,
         )
-        with result.invocation(self.containing_flow, internal=True) as invocation:
+        with result.invocation(self.containing_flow) as invocation:
             send_value(
                 self.cur_control.finish_variables.readout(),
                 invocation.port.variables.readin(),
