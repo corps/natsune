@@ -51,10 +51,6 @@ class PythonBackend:
         context = send_parameters(
             serialize_values(connector, 2),
             (
-                # The function's global namespace: globals referenced by
-                # the dynamic resolve through it (legacy passed the
-                # compiled function's globals too). eval auto-injects
-                # builtins on top.
                 as_constant_register(function_globals, connector),
                 send_parameters(
                     merge_invocation(construct_locals, connector),

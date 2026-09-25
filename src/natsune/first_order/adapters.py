@@ -42,18 +42,6 @@ def to_accepts_from(a: AdapterWiringType, b: AdapterWiringType) -> bool:
 
 
 def read_independently(t: AdapterWiringType) -> bool:
-    """Whether a read of a value with this wiring type is an independent
-    copy — cell identity preserved, usage "read" — or a linearization of
-    the cell — usage "write" (the variable_usage semantics, §1).
-
-    Deliberately conservative while Par reads linearize: a read today is
-    a readout of the whole Par with the neighbor elements closed, so even
-    an all-VALUE Par advances the cell and the rule is the VALUE leaf
-    only. Post-cutover, element-pass-through reads relax this to the true
-    discipline rule — VALUE recursively (a Par is a read iff every
-    constituent is); marked in COMPILER_REFACTOR.md §6.
-    """
-
     return t is LinearWiringType.VALUE
 
 

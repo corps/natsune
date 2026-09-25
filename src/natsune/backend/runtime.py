@@ -1,9 +1,3 @@
-"""Pure runtime helpers executed inside compiled nets: the dynamic exec
-fallback's eval/exec context builders (CUTOVER.md §1) and the exception
-split for future try-star lowering. Everything here runs as an agent
-function through `merge_invocation`/`split_invocation` — plain data in,
-plain data out."""
-
 from typing import Any
 
 
@@ -24,11 +18,6 @@ def eval_expression(expr_str: str, context: tuple[dict, dict]) -> Any:
 def match_exception_group(
     exceptions: list[Exception], handler_group: tuple | type | None
 ) -> tuple[list, list]:
-    """Split raised exceptions against a try-star handler's type bundle.
-
-    Parked until IrTry lowering lands; carried over verbatim from the
-    legacy compiler so the future lowering keeps the same semantics.
-    """
     if handler_group is None:
         return exceptions, []
 

@@ -566,12 +566,6 @@ class _FunctionLowering:
                 flow,
             )
         elif isinstance(expr, IrCallInet):
-            # Mirror old compiler.py:405–425: wire args left-to-right,
-            # return the output register. Arity/keywords are
-            # frontend-validated (§3.3); the zip is strict anyway. The
-            # ref's expansion is promise-or-frozen (CUTOVER.md §2) — the
-            # driver compiled every non-cyclic callee before lowering,
-            # and cyclic ones graft the promise the same way.
             expansion = expr.ref.expansion
             assert isinstance(
                 expansion, (FrozenExpansion, ExpansionBuilder, PromiseExpansion)
@@ -579,17 +573,8 @@ class _FunctionLowering:
             inputs, output = callee_invocation(expansion, expr.arity, flow)
             for input_register, arg in zip(inputs, expr.args, strict=True):
                 send_value(self.from_expr(arg, flow), input_register)
-            # should_capture_exceptions is False for now: IrTry does not
-            # exist yet, so no body can request capture. When it lands, its
-            # presence in the body decides the gate (legacy: the identity
-            # when False, an ExceptionSink invocation when True).
             return output
         elif isinstance(expr, IrTuple):
-            # Par construction, mirroring old compiler.py's
-            # evaluate_from_expression ast.Tuple branch: the tuple's
-            # adapter derives from the ELEMENT registers (not the
-            # frontend-inferred annotation), the elements fan out into
-            # the Par's split, and the interface's far side is the value.
             return join_from_registers(
                 [self.from_expr(element, flow) for element in expr.elements],
                 flow,
@@ -609,16 +594,6 @@ class _FunctionLowering:
 
             return acc
         elif isinstance(expr, IrParIndex):
-            # Par element read, mirroring old compiler.py's
-            # evaluate_from_expression ast.Subscript branch: split the
-            # base's Par and keep the indexed element, closing the
-            # neighbors — a linearizing read of the whole cell, exactly
-            # what the usage cross-check's "Par reads linearize" pin
-            # documents (element-pass-through reads are the marked
-            # post-cutover relaxation, not this). The frontend only
-            # builds IrParIndex for constant in-range integer subscripts
-            # of Par-typed bases, so the guards below fire on net
-            # corruption, not on user input.
             inner = self.from_expr(expr.base, flow)
             assert isinstance(
                 inner.adapter, ParValueAdapter
@@ -639,13 +614,6 @@ class _FunctionLowering:
                 raise NotImplementedError("global assignment is refused (§10.10)")
             return flow.variable_registers[target.name].readin()
         elif isinstance(target, IrTargetTuple):
-            # Par deconstruction, mirroring old compiler.py's
-            # evaluate_to_expression ast.Tuple branch: the element
-            # targets' readins join into a Par-typed ToRegister, and
-            # send_value fans the incoming Par out through its split.
-            # Element adapters come from the bundle (the frontend marks
-            # unpack targets with the value Par's concurrent items), so
-            # a matching-shape Par wires port-for-port.
             return join_to_registers(
                 [self.to_target(element, flow) for element in target.elements],
                 flow,
@@ -654,7 +622,7 @@ class _FunctionLowering:
             used: dict[str, FromRegister] = {}
             for name, sub in target.captures:
                 if isinstance(sub, IrVar) and sub.is_global:
-                    continue  # stays in the source; resolves through globals
+                    continue
                 used[name] = self.from_expr(sub, flow)
             return self.backend.materialize_dynamic_to(
                 target.ast_node,

@@ -37,23 +37,6 @@ type AgentImpl = (
 
 
 class PromiseExpansion:
-    """Late-bound callee net (CUTOVER.md §2): stands in for a
-    FrozenExpansion that is still being compiled — recursive and mutually
-    recursive inet calls. Call-site grafts baked with the promise
-    materialize through it once the owning compile fills `target`.
-
-    The adapters must match what the finished net will expose: the owner
-    builds them from its collected symbols through the same
-    flow_input_adapter/flow_control_adapter constructors the real net's
-    VariablesFlow uses, and the fill asserts the match (CUTOVER.md §2).
-
-    By-reference mutation of the promise is the accepted Python-target
-    semantics. Fills always land before any net runs: a promise is only
-    requested during its owner's callee pass, and a nested compile — fill
-    included — completes before the caller's own lowering starts, while
-    nets execute only from entry points after compilation.
-    """
-
     def __init__(
         self, name: str, input_adapter: Adapter, output_adapter: Adapter
     ) -> None:
@@ -63,7 +46,7 @@ class PromiseExpansion:
         self.target: FrozenExpansion | None = None
 
     def __copy__(self) -> "PromiseExpansion":
-        return self  # every baked graft shares the promise; fills are global
+        return self
 
     def __call__(
         self, executor: Connector, port: Port, wires: Sequence[Wire], /

@@ -224,9 +224,6 @@ class FrozenExpansion(Expansion):
         return self
 
     def __eq__(self, other: object) -> bool:
-        # Identity semantics: the template's fields hold ports and wires
-        # (list-bearing, unhashable); equality-by-identity is what agent
-        # catalogs and graft copies want anyway.
         return self is other
 
     def __hash__(self) -> int:
