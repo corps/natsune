@@ -1,7 +1,7 @@
 import ast
 import dataclasses
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, assert_never
 
 from natsune.first_order.adapters import VA, ParValueAdapter
 from natsune.frontend.diagnostics import DiagnosticSink, Position
@@ -15,6 +15,7 @@ from natsune.frontend.ir.nodes import (
     IrCallInet,
     IrConst,
     IrContinue,
+    IrDelete,
     IrDynamic,
     IrExpr,
     IrExprStmt,
@@ -208,21 +209,52 @@ def _build_stmt(node: ast.stmt, builder: IrBuilder) -> IrStmt | None:
             return IrContinue(position=position)
         case ast.Pass():
             return None
+        case ast.Delete():
+            return IrDelete(
+                values=tuple(
+                    target
+                    for node_target in node.targets
+                    for target in (_build_target(node_target, builder),)
+                    if target
+                ),
+                position=position,
+            )
+        case (
+            ast.FunctionDef()
+            | ast.AsyncFunctionDef()
+            | ast.ClassDef()
+            | ast.TypeAlias()
+            | ast.AsyncFor()
+            | ast.With()
+            | ast.AsyncWith()
+            | ast.Try()
+            | ast.TryStar()
+            | ast.Raise()
+            | ast.Assert()
+            | ast.Import()
+            | ast.ImportFrom()
+            | ast.Global()
+            | ast.Nonlocal()
+            | ast.Match()
+        ):
+            builder.error("Unsupported statement type", node)
+            return None
         case _:
             builder.error("Unsupported statement type", node)
             return None
 
 
-# --- targets ------------------------------------------------------------------
-
-
 def _build_target(node: ast.expr, builder: IrBuilder) -> IrTarget | None:
     position = builder.position_of(node)
     if isinstance(node, ast.Name):
+        if node.id in builder.symbols.used_as_globals:
+            builder.error(f"Global variable {node.id} cannot be target", node)
+            return None
+
         return IrTargetName(
             name=node.id,
             adapter=builder.symbols.variables.get(node.id, VA),
-            is_global=node.id in builder.symbols.used_as_globals,
+            is_global=False,
             position=position,
         )
     if isinstance(node, ast.Tuple):
@@ -232,9 +264,11 @@ def _build_target(node: ast.expr, builder: IrBuilder) -> IrTarget | None:
             if built is not None:
                 elements.append(built)
         return IrTargetTuple(elements=tuple(elements), position=position)
+
     if isinstance(node, ast.List):
         builder.error("List deconstructors in assignment not supported", node)
         return None
+
     # Attribute/Subscript lvalues: the old lowering routed them through the
     # exec fallback; IrTargetDynamic carries what that fallback needs.
     dynamic = _scan_dynamic(node, builder)
@@ -345,16 +379,20 @@ def _try_typed(node: ast.expr, builder: IrBuilder) -> IrExpr | None:
             base_adapter = infer_adapter(
                 node.value, builder.symbols.variables, builder.links
             )
-            if not isinstance(base_adapter, ParValueAdapter):
+            # The base may carry its Par under linear wrappers (a
+            # Ref[Par[...]] dereferences to the Par; only the reference
+            # cell is ever linearized by the indexing).
+            par_adapter = base_adapter.find_par_adapter()
+            if par_adapter is None:
                 return None
-            index = par_subscript_index(base_adapter, node.slice)
+            index = par_subscript_index(par_adapter, node.slice)
             if isinstance(index, ParSubscriptError):
                 builder.error(index.message, node.slice)
                 return None
             return IrParIndex(
                 base=_build_expr(node.value, builder),
                 index=index,
-                adapter=base_adapter.concurrent_items[index],
+                adapter=par_adapter.concurrent_items[index],
                 position=position,
             )
         case ast.Call():

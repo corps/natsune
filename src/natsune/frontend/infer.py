@@ -48,10 +48,11 @@ def infer_adapter(
             )
         case ast.Subscript():
             base = infer_adapter(node.value, variables, links)
-            if isinstance(base, ParValueAdapter):
-                index = par_subscript_index(base, node.slice)
+            par_adapter = base.find_par_adapter()
+            if par_adapter is not None:
+                index = par_subscript_index(par_adapter, node.slice)
                 if isinstance(index, int):
-                    return base.concurrent_items[index]
+                    return par_adapter.concurrent_items[index]
             return VA
         case _:
             return VA

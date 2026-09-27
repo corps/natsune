@@ -29,21 +29,32 @@ the spec):
   consumer that writes the inverse (test_par_of_inverse_write_back),
   which retro-propagates through the Par — the time-travel payoff.
 
-Since IrParIndex lowering landed, element reads work too: `p[i]` splits
-the base's Par and keeps the indexed element, closing the neighbors
-(old evaluate_from_expression ast.Subscript shape). That is a
-linearizing read of the whole cell — the usage cross-check's "Par reads
-linearize" pin documents it, and stays accurate; element-pass-through
-reads are the marked post-cutover relaxation, not this. The frontend
-only builds IrParIndex for constant in-range integer subscripts of
-Par-typed bases (tuple literals and linked-call results included).
+Since IrParIndex lowering landed, element reads work too: `p[i]` keeps
+the indexed element of the base's Par (old evaluate_from_expression
+ast.Subscript shape).
+
+That shape reads pass-through now: a bare Par VARIABLE is read one
+element at a time — the indexed element goes out through its own
+adapter's egression (a copy for VALUE wiring, a linear alias for a Ref
+element) and every other element flows verbatim back into the
+variable's retained cell, so no sibling is ever consumed. Values under
+Ref wrappers index too (Ref[Par[...]]): the reference cell is
+linearized WHOLE — only the wrapper moves; the wrapped Par passes
+through untouched — and the indexed element is read from the exposed
+temporary, whose leftover elements are closed. The usage cross-check's
+element-wise classification pins ride along (per-indexed-element
+discipline, recursively over nesting). The frontend builds IrParIndex
+for constant in-range integer subscripts of Par-carrying bases (tuple
+literals, linked-call results, and Ref-wrapped pars included).
 """
 
 import pytest
 
+from natsune.backend.connector import Connector
+from natsune.backend.lowering import lower_function
 from natsune.frontend.ir.nodes import IrAssign, IrCallInet
-from natsune.special_forms import Inverse, Par
-from tests.backend.helpers import Program, program_ids
+from natsune.special_forms import Inverse, Par, Ref
+from tests.backend.helpers import CapturingBackend, Program, program_ids
 
 # --- case programs -------------------------------------------------------
 # Each function below is a program under test; the comment above it says
@@ -146,6 +157,113 @@ def use_delayed_inverse() -> int:
     return a
 
 
+# --- par-index sibling handling: pass-through reads -------------------------
+
+
+# The ref element reads first AND the value sibling survives the value
+# element read — pass-through keeps every sibling in the variable's
+# retained cell, in both orders.
+def ref_element_then_value_element(p: Par[Ref[int], int]) -> int:
+    y = p[0]
+    return y + p[1]
+
+
+def value_element_then_ref_element(p: Par[Ref[int], int]) -> int:
+    x = p[1]
+    y = p[0]
+    return x + y
+
+
+# The variable's whole cell survives an element read: `return p` after
+# `x = p[1]` flows the retained Par out intact.
+def value_element_then_whole(p: Par[Ref[int], int]) -> Par[Ref[int], int]:
+    x = p[1]
+    return p
+
+
+# The same pass-through through a linked callee's Par result.
+def make_ref_pair(a: int) -> Par[Ref[int], int]:
+    r: Ref[int] = a
+    return r, a + 1
+
+
+def call_value_then_ref(a: int) -> int:
+    pair = make_ref_pair(a)
+    x = pair[1]
+    y = pair[0]
+    return x + y
+
+
+# Ref[Par[...]]: indexing linearizes only the reference cell — it moves
+# out whole and the wrapped Par passes through untouched; the indexed
+# element is then read from the exposed temporary (whose leftover
+# elements close with the temporary).
+def ref_par_string_element(s: str, n: int) -> str:
+    pair: Par[Ref[str], int] = (s, n)
+    r: Ref[Par[Ref[str], int]] = pair
+    return r[0]
+
+
+def ref_par_int_element(s: str, n: int) -> int:
+    pair: Par[Ref[str], int] = (s, n)
+    r: Ref[Par[Ref[str], int]] = pair
+    return r[1]
+
+
+# The Ref element of a Ref[Par] stays a usable cell: write through it
+# after reading it out of the wrapper.
+def ref_par_ref_element_write(s: str, n: int) -> str:
+    pair: Par[Ref[str], int] = (s, n)
+    r: Ref[Par[Ref[str], int]] = pair
+    inner: Ref[str] = r[0]
+    inner += "!"
+    return inner
+
+
+# Nested indexing: p[0] is itself a Par — the pass-through read hands
+# the element to the next index step, both directly and through a typed
+# local.
+def nested_index(p: Par[Par[int, int], int]) -> int:
+    return p[0][1]
+
+
+def nested_index_local(p: Par[Par[int, int], int]) -> int:
+    inner: Par[int, int] = p[0]
+    return inner[1]
+
+
+# Double reference wrapper: indexing linearizes wrapper cells one at a
+# time until the Par is exposed.
+def double_ref(s: int) -> int:
+    pair: Par[int, int] = (s, s + 1)
+    inner: Ref[Par[int, int]] = pair
+    outer: Ref[Ref[Par[int, int]]] = inner
+    return outer[1]
+
+
+# Ref-par whose indexed element is itself a Par: two index steps, the
+# first through the wrapper.
+def ref_par_nested(s: int) -> int:
+    inner_pair: Par[int, int] = (s, s + 1)
+    r: Ref[Par[Par[int, int], int]] = (inner_pair, s + 2)
+    return r[0][1]
+
+
+# Three-element pars: reads are index-independent — every non-indexed
+# element passes through, so any index reads the same machinery (the
+# differential pin below).
+def pick_first_of_three(p: Par[int, int, int]) -> int:
+    return p[0]
+
+
+def pick_second_of_three(p: Par[int, int, int]) -> int:
+    return p[1]
+
+
+def pick_third_of_three(p: Par[int, int, int]) -> int:
+    return p[2]
+
+
 # --- tests -----------------------------------------------------------------
 
 
@@ -164,6 +282,16 @@ def use_delayed_inverse() -> int:
         (Program(call_element, pair_call), (3,), 4),
         (Program(printed_element), ((4, 5),), 5),
         (Program(use_delayed_inverse, delayed_inverse), (), 40),
+        # pass-through regression guards: ref element first, value
+        # element first, and three-element indexes
+        (Program(ref_element_then_value_element), ((3, 4),), 7),
+        (Program(pick_first_of_three), ((1, 2, 3),), 1),
+        (Program(pick_second_of_three), ((1, 2, 3),), 2),
+        (Program(pick_third_of_three), ((1, 2, 3),), 3),
+        (Program(nested_index), (((1, 2), 3),), 2),
+        (Program(nested_index_local), (((1, 2), 3),), 2),
+        (Program(double_ref), (1,), 2),
+        (Program(ref_par_nested), (1,), 2),
     ],
     ids=program_ids,
 )
@@ -207,3 +335,81 @@ def test_par_of_inverse_construction_is_incomplete_alone():
     program = Program(delayed_inverse)
     with pytest.raises(RuntimeError):
         program.lower()()
+
+
+# --- par-index sibling handling: pass-through pins --------------------------
+
+
+def test_par_index_reads_are_index_independent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pass-through reads are index-independent: every non-indexed element
+    passes through into the retained cell, so the lowering performs no
+    sibling closes at all — and no index does more or less work than
+    another. (The pre-pass-through lowering returned the indexed element
+    from the middle of its close-loop: p[0] leaked two trailing siblings
+    on a three-element Par, p[1] one, p[2] none — 180/181/182
+    annihilations.) The annihilate count is an implementation-agnostic
+    stand-in: any fix style must keep the counts equal."""
+    calls = 0
+    original = Connector.annihilate
+
+    def counting(self, target, erasure=None):
+        nonlocal calls
+        calls += 1
+        return original(self, target, erasure)
+
+    monkeypatch.setattr(Connector, "annihilate", counting)
+
+    def lowered_annihilations(prog: Program) -> int:
+        nonlocal calls
+        calls = 0
+        lower_function(prog.build_ir(), CapturingBackend())
+        return calls
+
+    first = lowered_annihilations(Program(pick_first_of_three))
+    second = lowered_annihilations(Program(pick_second_of_three))
+    third = lowered_annihilations(Program(pick_third_of_three))
+
+    assert first == second == third
+
+
+def test_par_value_read_keeps_ref_sibling_usable() -> None:
+    """Reading the VALUE element of Par[Ref[int], int] leaves the Ref
+    sibling live in the retained cell: the subsequent `p[0]` read moves
+    the ref out and its content joins the sum. (Pre-pass-through, the
+    whole-Par readout aliased the ref into a readout that the sibling
+    close then annihilated — the ref cell was destroyed and the second
+    read starved.)"""
+    program = Program(value_element_then_ref_element)
+    assert program.lower()((3, 4)) == 7
+
+
+def test_par_value_read_keeps_whole_par_usable() -> None:
+    """After an element read the variable's retained cell is intact: the
+    whole Par still flows out. (Pre-pass-through, the destroyed sibling
+    slot starved the reassembly.)"""
+    program = Program(value_element_then_whole)
+    assert program.lower()((3, 4)) == (3, 4)
+
+
+def test_call_value_read_keeps_ref_sibling_usable() -> None:
+    """The same pass-through through a LINKED callee's Par result."""
+    program = Program(call_value_then_ref, make_ref_pair)
+    assert program.lower()(3) == 7
+
+
+def test_ref_par_element_reads() -> None:
+    """Ref[Par[Ref[str], int]]: indexing linearizes only the reference
+    cell — it moves out whole and the wrapped Par passes through
+    untouched — so both elements read correctly out of the wrapper, each
+    in its own discipline (the Ref element's content reads as the str;
+    the int element reads as a copy)."""
+    assert Program(ref_par_string_element).lower()("hello", 4) == "hello"
+    assert Program(ref_par_int_element).lower()("hello", 4) == 4
+
+
+def test_ref_par_ref_element_write() -> None:
+    """The Ref element of a Ref[Par] is a live cell after the read: the
+    wrapper moved out whole, the element moved into `inner`, and writes
+    through it are visible on the way back out."""
+    program = Program(ref_par_ref_element_write)
+    assert program.lower()("hello", 4) == "hello!"

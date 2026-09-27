@@ -294,11 +294,12 @@ def test_inverse_adapter_with_close(c: Calculus) -> None:
 
     send_value(inv1.readout(), value.readin())
     send_value(inv1.readout(), inv2.readin())
-    inv1.close()
     send_value(c.const(1), inv2.readin())
+    send_value(value.readout(), c.to_key(0))
+
+    inv1.close()
     inv2.close()
 
-    send_value(value.readout(), c.to_key(0))
     assert c.readout(0) == [1]
 
 

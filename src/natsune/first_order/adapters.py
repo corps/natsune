@@ -42,6 +42,8 @@ def to_accepts_from(a: AdapterWiringType, b: AdapterWiringType) -> bool:
 
 
 def read_independently(t: AdapterWiringType) -> bool:
+    if isinstance(t, tuple):
+        return all(read_independently(item) for item in t)
     return t is LinearWiringType.VALUE
 
 
@@ -63,6 +65,22 @@ class Adapter(Protocol):
     def unpack(self, target: Target, connector: Connector) -> Target: ...
 
     def repack(self, target: Target, connector: Connector) -> Target: ...
+
+    def find_par_adapter(self) -> "ParValueAdapter | None":
+        """The outermost Par value this adapter carries, looking through
+        linear wrappers (Reference); None when there is no indexable Par
+        (values, unknowns, and Inverse — whose reads are loans completed
+        by writes, not dereferenceable cells)."""
+        ...
+
+    def linearize(
+        self, target: Target, connector: Connector
+    ) -> tuple[Target, "Adapter"]:
+        """Consume this adapter's wrapper cell around an inner value and
+        return the inner cell, moved out WHOLE, with the adapter to keep
+        using for it: only the wrapper is linearized; the contents pass
+        through untouched."""
+        ...
 
     def __iter__(self) -> Iterator[Adapter]: ...
 
@@ -98,6 +116,12 @@ class ValueAdapter(Adapter):
     def repack(self, target: Target, connector: Connector) -> Target:
         return target
 
+    def find_par_adapter(self) -> ParValueAdapter | None:
+        return None
+
+    def linearize(self, target: Target, connector: Connector) -> tuple[Target, Adapter]:
+        return target, self
+
     def __iter__(self) -> Iterator[Adapter]:
         yield self
 
@@ -129,6 +153,12 @@ class UnknownAdapter(Adapter):
         raise NotImplementedError
 
     def repack(self, target: Target, connector: Connector) -> Target:
+        raise NotImplementedError
+
+    def find_par_adapter(self) -> ParValueAdapter | None:
+        return None
+
+    def linearize(self, target: Target, connector: Connector) -> tuple[Target, Adapter]:
         raise NotImplementedError
 
     def __iter__(self) -> Iterator[Adapter]:
@@ -205,6 +235,40 @@ class ParValueAdapter(Adapter):
     def repack(self, target: Target, connector: Connector) -> Target:
         raise SyntaxError("Implicit repack for par unsupported")
 
+    def find_par_adapter(self) -> ParValueAdapter | None:
+        return self
+
+    def linearize(self, target: Target, connector: Connector) -> tuple[Target, Adapter]:
+        return target, self
+
+    def produce_partial_egression(
+        self, taken: Wire, given: Wire, connector: Connector, index: int
+    ) -> Port:
+        """Egress only the `index` element: it is read out through its own
+        adapter (a copy for VALUE wiring, an alias for REFERENCE — the
+        element's own discipline), while every other element passes
+        through VERBATIM into the retained cell assembled on `given`.
+        Unlike produce_egression, the cell is not copied wholesale and
+        no sibling is consumed: the holder keeps a live cell with the
+        indexed element's original in place."""
+        readout: Port | None = None
+        with (
+            connector.sequenced_tuplate_from(given) as given_iter,
+            connector.sequenced_tuplate_from(taken) as taken_iter,
+        ):
+            # Plain zip: the chain iterators are infinite; consumption
+            # stops at the item count and the context managers annihilate
+            # the open ends.
+            for i, (item, given_wire, taken_wire) in enumerate(
+                zip(self.concurrent_items, given_iter, taken_iter)
+            ):
+                if i == index:
+                    readout = item.produce_egression(taken_wire, given_wire, connector)
+                else:
+                    connector.connect(taken_wire, given_wire)
+        assert readout is not None, f"par index {index} out of range"
+        return readout
+
     def __iter__(self) -> Iterator[Adapter]:
         yield self
 
@@ -268,6 +332,16 @@ class ReferenceAdapter(Adapter):
     def repack(self, target: Target, connector: Connector) -> Target:
         return self.initialize(connector, connector.as_wire(target))
 
+    def find_par_adapter(self) -> ParValueAdapter | None:
+        return self.inner.find_par_adapter()
+
+    def linearize(self, target: Target, connector: Connector) -> tuple[Target, Adapter]:
+        # The reference cell is (content, rest): match it, pass the
+        # content through whole, and consume the rest side.
+        content, rest = connector.tuplate(target)
+        connector.annihilate(rest)
+        return content, self.inner
+
     def __iter__(self) -> Iterator[Adapter]:
         yield from self.inner
         yield self
@@ -280,6 +354,7 @@ class ReferenceAdapter(Adapter):
 class InverseAdapter(Adapter):
     inner: Adapter
 
+    # TODO: Drop initialize from the Adapter base class, use only the functional parts that are necessary
     def initialize(self, connector: Connector, initial: Wire | None = None) -> WirePort:
         if initial:
             self.inner.close(initial, connector)
@@ -338,6 +413,16 @@ class InverseAdapter(Adapter):
         connector.annihilate(x1)
         connector.connect(cx.wires[1], self.initialize(connector))
         return cx
+
+    def find_par_adapter(self) -> ParValueAdapter | None:
+        # Inverse reads are loans completed by writes — there is no cell
+        # here to dereference or index through.
+        return None
+
+    def linearize(self, target: Target, connector: Connector) -> tuple[Target, Adapter]:
+        raise NotImplementedError(
+            "Inverse-wrapped values have no consumable wrapper cell"
+        )
 
     def __iter__(self) -> Iterator[Adapter]:
         yield from self.inner

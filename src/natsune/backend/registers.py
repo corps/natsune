@@ -34,6 +34,7 @@ __all__ = [
     "as_from_register",
     "send_values",
     "send_value",
+    "linearize_register",
     "parallelize_value",
     "join_to_registers",
     "join_from_registers",
@@ -339,6 +340,19 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
             self.connector,
         )
 
+    def readout_element(self, index: int) -> FromRegister:
+        """Element-pass-through read of a Par-valued register: the indexed
+        element is read out through its own adapter, while every other
+        element passes through verbatim into the retained cell — the
+        register stays live and no sibling is consumed."""
+        adapter = self.adapter
+        assert isinstance(
+            adapter, ParValueAdapter
+        ), f"element read of non-Par register: {adapter}"
+        taken, given = self.extend()
+        readout = adapter.produce_partial_egression(taken, given, self.connector, index)
+        return _FromRegister(readout, adapter.concurrent_items[index], self.connector)
+
     def readin(self) -> ToRegister:
         taken, given = self.extend()
         return _ToRegister(
@@ -346,6 +360,11 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
             self.adapter,
             self.connector,
         )
+
+    def delete(self) -> None:
+        taken, given = self.extend()
+        self.adapter.close(taken, self.connector)
+        self.adapter.close(given, self.connector)
 
     def close(self) -> None:
         self.adapter.close(self.state, self.connector)
@@ -378,13 +397,21 @@ def send_values(
         send_value(from_register, to_register)
 
 
+def linearize_register(register: FromRegister) -> FromRegister:
+    """Consume `register`'s wrapper cell (Adapter.linearize) and return
+    the inner cell as a register: only the wrapper is linearized; the
+    contents pass through untouched."""
+    assert isinstance(register, _FromRegister)
+    target, adapter = register.adapter.linearize(register.port, register.connector)
+    return _FromRegister(target, adapter, register.connector)
+
+
 def send_value(from_register: FromRegister, to_register: ToRegister) -> None:
     assert isinstance(from_register, _FromRegister)
     assert isinstance(to_register, _ToRegister)
     assert (
         from_register.connector is to_register.connector
     ), f"Registers {from_register} and {to_register} are not native to the same connector"
-
     from_parts = list(from_register.adapter)
     to_parts = list(to_register.adapter)
 

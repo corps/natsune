@@ -20,6 +20,7 @@ class LoweredUnit:
 
 @runtime_checkable
 class Backend(Protocol):
+    # TODO: adapter should just be assumed VA for all dynamics, so drop it
     def materialize_dynamic(
         self,
         node: ast.expr,
@@ -30,6 +31,7 @@ class Backend(Protocol):
         connector: Connector,
     ) -> FromRegister: ...
 
+    # TODO: adapter should just be assumed VA for all dynamics, so drop it
     def materialize_dynamic_to(
         self,
         node: ast.expr,

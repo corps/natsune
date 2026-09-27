@@ -4,7 +4,8 @@ Semantics (§1): usage classifies the EFFECT on the variable's cell, not
 the syntactic position — "read" = independent copy (cell identity
 preserved), "write" = linear use that advances the cell. Classification
 is adapter-declared via adapters.read_independently over the wiring
-type; deliberately VALUE-leaf-only while Par reads linearize (§6).
+type, consulted per INDEXED element for par reads (the element-wise
+discipline the pass-through lowering implements).
 
 Historical note (pre-cutover): this suite cross-checked the IR against
 the legacy compiler's flow_map flags, which were NOT a complete usage
@@ -20,6 +21,8 @@ IR usage pins themselves.
 
 import linecache
 import textwrap
+
+import pytest
 
 from natsune.frontend.diagnostics import DiagnosticSink
 from natsune.frontend.ir import build_ir
@@ -99,27 +102,73 @@ def test_ref_read_normalizes_to_write():
     assert dict(ir.body.variable_usage) == {"a": "write"}
 
 
-def test_par_reads_linearize():
-    # Par is the conservative edge (§6): even an all-copyable Par
-    # linearizes on read, because reads go through a readout of the whole
-    # Par with the neighbor elements closed. Post-cutover,
-    # element-pass-through reads relax this to the recursive discipline
-    # rule; this pin (and the doc marker) is what that improvement
-    # updates.
-    source = "def second(p: Par[int, int]) -> int:\n    return p[1]"
-
-    text = textwrap.dedent(source)
-    filename = "usage_par_case.py"
-    ns: dict = {"Par": Par}
-    exec(compile(text, filename, "exec"), ns)  # noqa: S102 — test source
-    linecache.cache[filename] = (
-        len(text),
-        None,
-        text.splitlines(keepends=True),
-        filename,
+def test_par_whole_value_read_classifies_read():
+    ir, sink = build_ir_for(
+        "def identity(p: Par[int, int]) -> Par[int, int]:\n    return p",
+        namespace={"Par": Par},
     )
+    assert not sink.diagnostics
 
-    ir, sink = build_ir_for(source, namespace={"Par": Par})
+    assert dict(ir.body.variable_usage) == {"p": "read"}
+
+    ir, sink = build_ir_for(
+        "def identity(p: Par[Ref[int], int]) -> Par[Ref[int], int]:\n    return p",
+        namespace={"Par": Par, "Ref": Ref},
+    )
     assert not sink.diagnostics
 
     assert dict(ir.body.variable_usage) == {"p": "write"}
+
+
+def test_par_ref_element_read_still_linearizes():
+    # The element-wise counterpart of the Ref rule: reading the Ref
+    # ELEMENT of a par moves the cell out — a linear use, "write" — even
+    # though the sibling int element read beside it would be a copy.
+    ir, sink = build_ir_for(
+        "def first(p: Par[Ref[int], int]) -> int:\n    return p[0]",
+        namespace={"Par": Par, "Ref": Ref},
+    )
+    assert not sink.diagnostics
+
+    assert dict(ir.body.variable_usage) == {"p": "write"}
+
+
+def test_par_value_element_read_classifies_read():
+    ir, sink = build_ir_for(
+        "def second(p: Par[int, int]) -> int:\n    return p[1]",
+        namespace={"Par": Par},
+    )
+    assert not sink.diagnostics
+
+    assert dict(ir.body.variable_usage) == {"p": "read"}
+
+
+def test_par_element_read_is_elementwise_over_ref_pairs():
+    ir, sink = build_ir_for(
+        "def second(p: Par[Ref[int], int]) -> int:\n    return p[1]",
+        namespace={"Par": Par, "Ref": Ref},
+    )
+    assert not sink.diagnostics
+
+    assert dict(ir.body.variable_usage) == {"p": "read"}
+
+
+def test_ref_par_element_read_classifies_by_element():
+    # Ref[Par[Ref[str], int]]: r[0] reads the Ref element — a linear
+    # move of that element ("write"); r[1] reads the int element — a
+    # copy ("read"). The wrapper's presence doesn't change either.
+    ir, sink = build_ir_for(
+        "def elem(p: Ref[Par[Ref[str], int]]) -> str:\n    return p[0]",
+        namespace={"Par": Par, "Ref": Ref},
+    )
+    assert not sink.diagnostics
+
+    assert dict(ir.body.variable_usage) == {"p": "write"}
+
+    ir, sink = build_ir_for(
+        "def elem(p: Ref[Par[Ref[str], int]]) -> int:\n    return p[1]",
+        namespace={"Par": Par, "Ref": Ref},
+    )
+    assert not sink.diagnostics
+
+    assert dict(ir.body.variable_usage) == {"p": "read"}

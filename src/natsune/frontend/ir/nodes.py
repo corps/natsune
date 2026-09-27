@@ -223,6 +223,11 @@ class IrContinue(IrNode):
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class IrDelete(IrNode):
+    values: tuple[IrTarget, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class IrExprStmt(IrNode):
     value: IrExpr
 
@@ -237,6 +242,7 @@ type IrStmt = (
     | IrBreak
     | IrContinue
     | IrExprStmt
+    | IrDelete
 )
 
 type IrBodyExit = IrIf | IrWhile | IrFor | IrReturn | IrContinue | IrBreak
@@ -295,7 +301,7 @@ def iter_child_expressions(node: IrExpr | IrStmt) -> Iterator[IrExpr]:
         case IrReturn(value=value):
             if value is not None:
                 yield value
-        case IrBreak() | IrContinue():
+        case IrBreak() | IrContinue() | IrDelete():
             return
         case _:
             assert_never(node)
@@ -324,6 +330,26 @@ def _collect_expr_usage(
     usage: dict[str, VariableUsage],
     adapters: Mapping[str, Adapter],
 ) -> None:
+    if isinstance(expr, IrParIndex):
+        # Element reads classify per INDEXED element, not per containing
+        # Par: a pass-through read touches only that element, in the
+        # element's own discipline (a VALUE element is a copy; a Ref
+        # element is a linear move). The classification recurses through
+        # nesting because the element adapter's wiring type does.
+        base = expr.base
+        par_adapter = base.adapter.find_par_adapter()
+        if par_adapter is not None and isinstance(base, IrVar) and not base.is_global:
+            element = par_adapter.concurrent_items[expr.index]
+            _record_variable_usage(
+                usage,
+                base.name,
+                (
+                    "read"
+                    if read_independently(element.adapter_wiring_type())
+                    else "write"
+                ),
+            )
+            return
     if isinstance(expr, IrVar) and not expr.is_global:
         adapter = adapters.get(expr.name)
         how = (
@@ -371,6 +397,7 @@ def _iter_child_bodies(stmt: IrStmt) -> Iterator[IrBody]:
             | IrBreak()
             | IrContinue()
             | IrExprStmt()
+            | IrDelete()
         ):
             return
         case _:
@@ -390,6 +417,9 @@ def _collect_stmt_usage(
             _collect_target_usage(target, usage, adapters)
         case IrFor(target=target):
             _collect_target_usage(target, usage, adapters)
+        case IrDelete(values=values):
+            for target in values:
+                _collect_target_usage(target, usage, adapters)
         case IrIf() | IrWhile() | IrBreak() | IrContinue() | IrReturn() | IrExprStmt():
             pass
         case _:

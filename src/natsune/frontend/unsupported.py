@@ -38,5 +38,4 @@ UNSUPPORTED_STMT: tuple[type[ast.stmt], ...] = (
     ast.Try,
     ast.TryStar,
     ast.TypeAlias,
-    ast.Delete,
 )

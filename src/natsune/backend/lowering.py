@@ -42,6 +42,7 @@ from natsune.backend.registers import (
     as_from_register,
     join_from_registers,
     join_to_registers,
+    linearize_register,
     send_value,
 )
 from natsune.first_order.adapters import VA, Adapter, ParValueAdapter, Variables
@@ -55,6 +56,7 @@ from natsune.frontend.ir.nodes import (
     IrCallInet,
     IrConst,
     IrContinue,
+    IrDelete,
     IrDynamic,
     IrExpr,
     IrExprStmt,
@@ -184,6 +186,9 @@ class _FunctionLowering:
                 self.collect_from_statements(stmt.orelse.statements, variables)
             elif isinstance(stmt, (IrReturn, IrBreak, IrContinue, IrExprStmt)):
                 continue
+            elif isinstance(stmt, IrDelete):
+                for target in stmt.values:
+                    self.collect_from_target(target, variables)
             else:
                 assert_never(stmt)
 
@@ -248,6 +253,9 @@ class _FunctionLowering:
                 self.lower_augassign(stmt, flow)
             elif isinstance(stmt, IrExprStmt):
                 self.from_expr(stmt.value, flow).close()
+            elif isinstance(stmt, IrDelete):
+                for target in stmt.values:
+                    self.lower_delete(flow, target)
             else:
                 assert_never(stmt)
 
@@ -265,6 +273,21 @@ class _FunctionLowering:
                 )
 
         flow.close()
+
+    def lower_delete(self, flow: VariablesFlow, target: IrTarget) -> None:
+        if isinstance(target, IrTargetDynamic):
+            # TODO: Can we make this an error during the frontend by checking dynamic targets associated with deletes?
+            raise NotImplementedError("deleting dynamics is invalid")
+        elif isinstance(target, IrTargetName):
+            # TODO: Can IrTargetName.is_global be dropped?  I think that all global targets should be rejected by the frontend.
+            if target.is_global:
+                raise NotImplementedError(f"deleting global {target.name} is invalid")
+            flow.variable_registers[target.name].delete()
+        elif isinstance(target, IrTargetTuple):
+            for target in target.elements:
+                self.lower_delete(flow, target)
+        else:
+            assert_never(target)
 
     def lower_if(self, flow: VariablesFlow, stmt: IrIf) -> None:
         true_flow = self.branch_flow(stmt.then_body, exits=stmt.then_body.exits)
@@ -473,6 +496,7 @@ class _FunctionLowering:
         return branch_flow.containing_flow
 
     def lower_assign(self, stmt: IrAssign, flow: VariablesFlow) -> None:
+        # TODO: FIX ME.
         # The old chain: value -> target[0] -> target[1] -> ...
         # (target[i] wires from target[i-1]'s register — §8-open aliasing
         # question; the prototype mirrors legacy.)
@@ -594,24 +618,54 @@ class _FunctionLowering:
 
             return acc
         elif isinstance(expr, IrParIndex):
+            # Element reads (§: Par). Two regimes:
+            #
+            # - a bare Par VARIABLE is read pass-through: the indexed
+            #   element goes out through its own adapter's egression
+            #   (copy for VALUE, alias for REFERENCE) and every other
+            #   element flows verbatim back into the variable's retained
+            #   cell — no sibling is consumed, and the variable stays
+            #   live for further reads;
+            # - anything else (tuple literals, call results, or values
+            #   under Ref wrappers) is a temporary: linearize Ref
+            #   wrappers whole (only the wrapper cell is consumed — its
+            #   contents pass through untouched), then read the indexed
+            #   element out of the temporary and close the leftovers.
+            if (
+                isinstance(expr.base, IrVar)
+                and not expr.base.is_global
+                and isinstance(
+                    flow.variable_registers[expr.base.name].adapter,
+                    ParValueAdapter,
+                )
+            ):
+                return flow.variable_registers[expr.base.name].readout_element(
+                    expr.index
+                )
+
             inner = self.from_expr(expr.base, flow)
-            assert isinstance(
-                inner.adapter, ParValueAdapter
+            par_adapter = inner.adapter.find_par_adapter()
+            assert (
+                par_adapter is not None
             ), f"Par index into non-Par register: {inner.adapter}"
-            for index, element in enumerate(inner.split()):
-                if index == expr.index:
-                    return element
-                element.close()
-            raise AssertionError(
-                f"Par index {expr.index} out of range for {inner.adapter}"
-            )
+            while not isinstance(inner.adapter, ParValueAdapter):
+                inner = linearize_register(inner)
+            elements = inner.split()
+            assert expr.index < len(
+                elements
+            ), f"Par index {expr.index} out of range for {inner.adapter}"
+            element = elements[expr.index]
+            for index, sibling in enumerate(elements):
+                if index != expr.index:
+                    sibling.close()
+            return element
         else:
             assert_never(expr)
 
     def to_target(self, target: IrTarget, flow: VariablesFlow) -> ToRegister:
         if isinstance(target, IrTargetName):
             if target.is_global:
-                raise NotImplementedError("global assignment is refused (§10.10)")
+                raise NotImplementedError("global assignment is refused")
             return flow.variable_registers[target.name].readin()
         elif isinstance(target, IrTargetTuple):
             return join_to_registers(

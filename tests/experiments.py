@@ -1,10 +1,8 @@
-import random
 import threading
 from typing import Self
 import dataclasses
 from natsune.inet import inet
 from natsune.executor import ThreadPoolExecutor
-from natsune.special_forms import Par, Ref, Inverse
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -63,7 +61,6 @@ class SortingWorld:
 
     def ask_self(self, identity: int) -> int:
         with self.lock:
-            print("meee?")
             return self.words[self.agent_positions[identity]]
 
     def ask_point(self, identity: int, delta: int) -> tuple[int, int] | None:
@@ -77,7 +74,6 @@ class SortingWorld:
 @inet
 def bubble_sort(world: SortingWorld, identity: int, universe: Universe) -> None:
     while True:
-        print("looping")
         self_val = world.ask_self(0)
         right = world.ask_point(identity, 1)
 
