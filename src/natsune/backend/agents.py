@@ -14,10 +14,14 @@ from natsune.backend.control_flow import (
 )
 from natsune.backend.invocations import Invocation, closer, pack_from, pack_into
 from natsune.backend.registers import (
+    FlowRegister,
     FromInterfaceRegister,
     FromRegister,
     ToInterfaceRegister,
     ToRegister,
+    as_from_register,
+    as_to_register,
+    send_value,
 )
 from natsune.first_order.adapters import Adapter
 from natsune.first_order.ports import Graft, Port, Wire
@@ -36,6 +40,7 @@ type AgentImpl = (
 )
 
 
+# TODO: Rename this to a DelayedExpansion?  And convert to dataclass likely.
 class PromiseExpansion:
     def __init__(
         self, name: str, input_adapter: Adapter, output_adapter: Adapter
@@ -45,7 +50,7 @@ class PromiseExpansion:
         self.output_adapter = output_adapter
         self.target: FrozenExpansion | None = None
 
-    def __copy__(self) -> "PromiseExpansion":
+    def __copy__(self) -> PromiseExpansion:
         return self
 
     def __call__(
@@ -100,7 +105,26 @@ def callee_invocation(
         for extra in variable_inputs[arity + 1 :]:
             extra.close()
 
+        flow_reads: list[ToRegister] = []
+        for variable_input in variable_inputs[1 : arity + 1]:
+            state, given = Wire.as_interface()
+            adapter = variable_input.adapter
+            input_connector = variable_input.connector
+            send_value(
+                as_from_register(state, adapter, input_connector),
+                variable_input,
+            )
+            taken = Wire()
+            input_connector.annihilate(taken)
+            flow_reads.append(
+                as_to_register(
+                    adapter.produce_ingression(taken, given, input_connector),
+                    adapter,
+                    input_connector,
+                )
+            )
+
         return (
-            variable_inputs[1 : arity + 1],
+            flow_reads,
             invocation.wire.return_value.readout(),
         )

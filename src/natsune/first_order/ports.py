@@ -46,6 +46,7 @@ class Wire:
             target=copy.copy(self.target) if self.target else None,
         )
 
+    # TODO: I wonder if this can be converted into a single shared Wire?
     @classmethod
     def as_interface(cls) -> tuple[WirePort, Wire]:
         wp = WirePort()

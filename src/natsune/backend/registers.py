@@ -217,7 +217,7 @@ class _ToRegister:
     def set(self, p: Target) -> None:
         self.connector.connect(p, self.port)
 
-    def close(self, initial: Wire | None = None) -> None:
+    def close(self) -> None:
         self.connector.annihilate(self.port)
 
     def split(self) -> Sequence[ToRegister]:
@@ -361,10 +361,14 @@ class FlowRegister(FromInterfaceRegister, ToInterfaceRegister):
             self.connector,
         )
 
+    # TODO: Maybe remove this?  Not confident yet of its use.
     def delete(self) -> None:
         taken, given = self.extend()
         self.adapter.close(taken, self.connector)
         self.adapter.close(given, self.connector)
+
+    def interface_readin(self) -> ToRegister:
+        return _ToRegister(self.interface, self.adapter, self.connector)
 
     def close(self) -> None:
         self.adapter.close(self.state, self.connector)

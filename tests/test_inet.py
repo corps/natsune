@@ -1,13 +1,3 @@
-"""The post-cutover decorator suite (CUTOVER.md §4a): the behavioral
-contract of `@inet` through the deferred pipeline.
-
-The decorated cases below are ported verbatim from the old
-tests/test_compiler.py — same programs, same assertions. The tests after
-them cover what deferral and the `PromiseExpansion` add: forward
-references, mutual recursion, cycles, cross-module and circular-import
-programs, compile-once memoization, and concurrent first calls.
-"""
-
 import threading
 
 import pytest
@@ -16,8 +6,6 @@ from natsune.backend.agents import PromiseExpansion
 from natsune.executor import DeterministicSerialExecutor, ThreadPoolExecutor
 from natsune.inet import inet
 from natsune.special_forms import Inverse, Par, Ref
-
-# --- ported decorator cases (verbatim programs, verbatim assertions) ------
 
 
 @inet
@@ -199,23 +187,9 @@ def test_compiled_functions() -> None:
 
 
 def test_drops_infinite_loop() -> None:
-    # Same pinned divergence as tests/backend/test_loop_lowering.py:
-    # the callee's trailing return after `while True` starves under the
-    # restructured lowering until the erasure-superposition topology is
-    # reproduced (CUTOVER.md §5). The program, expectation, and old-suite
-    # origin are kept verbatim so the fix lands against the real case.
-    pytest.xfail(
-        "lowering: loop-continuation erasure superposition not yet "
-        "reproduced — trailing code after a never-firing loop starves"
-    )
     assert drops_infinite_loop() == 10
 
 
-# --- deferral: order independence ------------------------------------------
-
-
-# The callee is defined BELOW the caller: eager compilation would die at
-# decoration; deferral resolves it on first call.
 @inet
 def forward_caller(x: int) -> int:
     return forward_callee(x) + 1
@@ -228,9 +202,6 @@ def forward_callee(x: int) -> int:
 
 def test_forward_reference_compiles_on_first_call() -> None:
     assert forward_caller(5) == 11
-
-
-# --- recursion through the PromiseExpansion ---------------------------------
 
 
 @inet
@@ -304,8 +275,6 @@ def test_self_recursion() -> None:
 
 
 def test_recursion_inside_conditional() -> None:
-    # sum_to/factorial recurse under `if`; this pins the conditional body
-    # as the recursion site (the promise graft lives inside a branch flow).
     assert factorial(0) == 1
 
 
@@ -316,13 +285,10 @@ def test_mutual_recursion() -> None:
 
 
 def test_three_function_cycle() -> None:
-    # cycle_a(4): a -> b -> c -> a(-2) -> b(-3) -> c(-4) -> a(-4) -> 100
     assert cycle_a(4) == 100
 
 
 def test_recursive_callee_of_third_function() -> None:
-    # The first call anywhere in the cycle compiles the whole reachable
-    # graph; entering through the non-recursive wrapper must too.
     assert call_factorial(4) == 24
     assert factorial(6) == 720
 
@@ -342,8 +308,6 @@ def test_compile_once_and_reuse() -> None:
 
 
 def test_concurrent_first_calls() -> None:
-    # Two threads first-call a mutually recursive pair: the global compile
-    # lock serializes, nobody deadlocks, nobody sees a torn promise.
     barrier = threading.Barrier(2)
     results: dict[str, object] = {}
 
@@ -369,9 +333,6 @@ def test_per_call_executor_override() -> None:
     assert basic(29, executor=ThreadPoolExecutor()) == 39
 
 
-# --- cross-module and circular-import programs ------------------------------
-
-
 def test_cross_module_callee_compiles_on_demand() -> None:
     from tests.inet_modules.cross_caller import quadruple
 
@@ -379,9 +340,6 @@ def test_cross_module_callee_compiles_on_demand() -> None:
 
 
 def test_circular_import_modules() -> None:
-    # circular_a and circular_b import each other at module level; the
-    # inet calls cross the boundary through attribute access. Compilation
-    # only happens on first call, after both modules fully loaded.
     from tests.inet_modules import circular_a, circular_b
 
     assert circular_a.ping(3) == 4

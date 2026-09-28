@@ -94,15 +94,14 @@ def int_loan_across_callee(s: int) -> int:
     return total
 
 
-def consume_int_with_ref_inverse(inv: Inverse[int]) -> None:
-    inv = 10
+def set_loaned_inv_int(inv: Inverse[int]) -> None:
+    inv = 11
 
 
-def int_loan_across_callee_with_ref(s: int) -> int:
+def int_load_into_write_callee(s: int) -> int:
     b: Inverse[int] = s
-    s = b + 10
-    consume_int_with_ref_inverse(b)
-    del b
+    s = b + 8
+    set_loaned_inv_int(b)
     return s
 
 
@@ -168,9 +167,9 @@ def test_inverse_loan_does_not_cross_callees() -> None:
         program.lower()(1)
 
 
-def test_inverse_loan_with_ref() -> None:
-    program = Program(int_loan_across_callee_with_ref, consume_int_with_ref_inverse)
-    assert program.lower()(1) == 1
+def test_inverse_loan_writes_in_callee() -> None:
+    program = Program(int_load_into_write_callee, set_loaned_inv_int)
+    assert program.lower()(1) == 19
 
 
 def test_inverse_par_index_unsupported() -> None:
